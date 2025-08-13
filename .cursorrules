@@ -1,0 +1,250 @@
+# RightLine .cursorrules
+# Purpose: Steer Cursor to generate production-grade, low-latency, secure, and lightweight Python code
+# Stack: Python 3.11+, FastAPI, Pydantic v2, httpx, Postgres(+pgvector)/Qdrant, Redis, Arq, Meilisearch (or PG FTS)
+# Note: Prefer minimal deps, async-first, strong typing, and simple architectures. No overengineering.
+
+================================================================================
+PROJECT CONTEXT
+================================================================================
+You are helping build RightLine: a WhatsApp-first legal copilot. Key properties:
+- <2.0s P95 response time on low bandwidth.
+- Returns exact statute section + 3-line summary + citations (never free-text without sources).
+- Hybrid retrieval (BM25 + vectors) with temporal filters (“as at DATE”).
+- Local-first models; external LLM calls are rare and capped.
+- Zero/low budget: small, secure, maintainable, observable.
+
+When in doubt, optimize for:
+1) SECURITY  2) LOW LATENCY  3) CLARITY  4) MINIMAL DEPENDENCIES  5) TESTABILITY
+
+================================================================================
+GLOBAL DIRECTIVES (ALWAYS / NEVER)
+================================================================================
+ALWAYS
+- Write idiomatic, typed Python (mypy-friendly). Use Pydantic v2 models for I/O and settings.
+- Prefer async FastAPI endpoints and httpx.AsyncClient with timeouts and connection pooling.
+- Structure code by feature (api/, retrieval/, ingestion/, summariser/, ops/, tests/).
+- Keep functions focused (<50 lines), name things precisely, add docstrings and type hints.
+- Use dependency injection for shared clients (DB, Redis, httpx, Qdrant/pgvector).
+- Add input validation and length limits. Fail fast with explicit error messages.
+- Enforce strict response schemas. Return structured JSON; never return raw model objects.
+- Add fast-paths + caching when confidence is high (extractive answers).
+- Log in structured JSON with a request/trace id; never log secrets.
+- Write tests alongside code (unit + light integration). Provide usage examples in docstrings.
+
+NEVER
+- Do not block the event loop (no CPU-heavy work in request path; offload to worker/Arq).
+- Do not hardcode secrets, tokens, or file paths. Use Pydantic Settings + env vars.
+- Do not make network calls without timeouts, retries, and sane error handling.
+- Do not call external LLMs by default; prefer extractive or local summariser.
+- Do not add heavyweight deps when stdlib or a small lib suffices.
+- Do not accept or emit unbounded strings. Cap sizes; truncate safely.
+- Do not expose stack traces to clients. Map to safe error responses.
+
+================================================================================
+STACK DEFAULTS
+================================================================================
+- Python: 3.11+, Ruff for lint, Black for format, Mypy for types.
+- FastAPI with uvicorn[standard]. Set ORJSONResponse as default JSON renderer.
+- Pydantic v2: `BaseModel`, `Field`, `ConfigDict`, and `pydantic_settings.BaseSettings`.
+- HTTP client: httpx.AsyncClient (single instance via DI; 2–5s total timeout; retry with jitter).
+- DB: Postgres via asyncpg or SQLAlchemy 2.0 (async). For vectors: pgvector OR Qdrant client.
+- Cache/Queue: Redis (aioredis), Arq workers for ingestion/OCR/indexing.
+- Search: Meilisearch OR Postgres FTS (USE_PG_FTS=true) to reduce services.
+- Logging: stdlib logging with JSON formatter; include request_id, user_hash (HMAC), latency_ms.
+- Tests: pytest + pytest-asyncio + testcontainers (opt) for DB/Redis. Golden YAML for retrieval.
+
+================================================================================
+FOLDER-SPECIFIC RULES
+================================================================================
+[api/**]
+- Use FastAPI + APIRouter. Group routes by domain (query, feedback, sections).
+- Add a `lifespan` context to create and close: db pool, redis, httpx client, search/vector clients.
+- Set default response class: ORJSONResponse; enable gzip; set CORS closed by default.
+- Add security headers (Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options).
+- Implement rate limiting at gateway; optionally per user_hash in API with Redis token bucket.
+- Validate and normalize inputs with Pydantic models. Enforce max lengths (e.g., text <= 1_000 chars).
+- Time-budget the request (e.g., 2s total). Respect cancellable tasks (asyncio.timeout()).
+- Return shape for /v1/query is fixed: summary_3_lines, section_ref, citations[], confidence, related_sections[].
+- Use httpx with explicit timeouts and retries (tenacity) for downstream calls.
+- Never expose internal errors; map to 429/503 with “degraded mode” when needed.
+
+[retrieval/**]
+- Implement hybrid retrieval with BM25 + vectors. Make k and weights configurable.
+- Add temporal filter (effective_start/end). Normalize query; extract “as at DATE” when present.
+- Merge candidates; rerank with cross-encoder or disable when cache hit rate is high.
+- Cache normalized_query+date_ctx results (Redis). TTL with jitter. Include confidence score.
+- All DB/search calls are async; batch where possible. Add per-call timeouts.
+- Return deterministic, minimal payload → composer.
+
+[ingestion/**]
+- Use Arq tasks (asyncio + Redis). Idempotent steps keyed by content sha.
+- OCR pipeline is off the request path. Persist artifacts to MinIO/data/.
+- Sectioniser creates stable IDs (content hash + path). Store effective dates + cross-refs.
+- Build indexes with dual-write and atomic swap. Backpressure on source fetching.
+- Add basic schema validations; quarantine low-confidence OCR for manual review.
+
+[summariser/**]
+- Template-first: extractive → tiny local LLM rewrite → external API only if flagged.
+- Enforce strict prompt template: EXACTLY 3 lines; <= 100 chars per line; don’t invent cites.
+- Guard against prompt injection: escape content; do not pass raw user text to system prompts.
+- Limit output tokens (<= 120). Enforce with truncation + schema check.
+- Ensure `torch.no_grad()` and `model.eval()` for PyTorch models; pin dtype; disable gradients.
+- Prefer ONNXRuntime or llama.cpp for CPU efficiency; quantize (int8/int4) where possible.
+
+[ops/**]
+- Provide docker-compose with resource limits, non-root users, healthchecks, and explicit deps.
+- Expose only 80/443; admin UIs behind Tailscale or authenticated reverse proxy.
+- Add grafana/prometheus/loki configs minimal by default; keep optional.
+- IaC/Terraform to be minimal and environment-agnostic; no provider lock-in in examples.
+
+[tests/**]
+- Test fast paths first. Unit tests for parsers, sectioniser, temporal filters, caches.
+- Integration tests for retrieval ranking and summariser constraints.
+- Use fixtures; avoid external network. Seed tiny sample corpus for deterministic tests.
+- Add golden set YAML tests with Recall@k and faithfulness checks.
+
+================================================================================
+CODING STANDARDS (APPLY CONSISTENTLY)
+================================================================================
+- Use `from __future__ import annotations` in new modules. Python typing everywhere.
+- Prefer Pydantic models for request/response; dataclasses for internal pure data if simpler.
+- Keep modules cohesive. Avoid “utils” dumping ground—name by responsibility.
+- Function design: small, single-purpose, early returns for errors; avoid deep nesting.
+- Errors: define explicit exceptions per layer (e.g., RetrievalError, TimeoutError) and map to HTTP.
+- Concurrency: prefer asyncio Tasks and gather with timeouts; avoid unbounded fan-out.
+- Serialization: ORJSON for speed. Avoid custom JSON encoders unless necessary.
+- Config: `Settings(BaseSettings)` with env var prefixes (RIGHTLINE_*). No globals.
+- CLI tools: use Typer; no side-effects on import; implement `if __name__ == "__main__":`.
+- Docs: module docstrings state purpose + invariants. Public functions have docstrings.
+
+================================================================================
+PERFORMANCE RULES
+================================================================================
+- Reuse clients (DB pools, httpx, redis) via DI. Avoid per-request instantiation.
+- Bound time per stage: retrieval<=800ms, rerank<=400ms, summarise<=600ms.
+- Cache aggressively on hot queries and sections. Prefer read-through Redis.
+- Prefer vector search only when BM25 confidence is low; otherwise skip to save latency.
+- Avoid pandas in request path. Use generators/iterators; avoid copies.
+- PyTorch/ONNX: use no_grad, eval, pinned threads, and set intra/inter-op threads lower for CPU.
+- Use uvloop in production. Keep uvicorn workers small; prefer horizontal scaling.
+
+================================================================================
+SECURITY RULES
+================================================================================
+- Sanitize inputs; strip control chars; enforce max sizes; validate language codes.
+- Never eval/exec. Never load pickles from untrusted sources.
+- Do not leak internal prompts or system messages. No echoing of secrets or file paths.
+- HMAC-hash channel user IDs before storing; never persist raw phone numbers.
+- TLS everywhere; set strict security headers. Do not enable CORS broadly.
+- Secrets via env/secret store; rotate regularly. Do not write secrets to logs.
+- Prompt safety: LLM receives only curated section chunks + fixed template. No tool access.
+
+================================================================================
+OBSERVABILITY & RESILIENCE
+================================================================================
+- Add request_id to every log line. Log: level, ts, route, latency_ms, outcome, confidence.
+- Export metrics: request_total, latency histogram, cache_hit_ratio, rerank_time, ocr_quality.
+- Use circuit breakers for downstreams; retries with exponential backoff + jitter (max 2).
+- Graceful degradation tiers:
+  1) Full (hybrid + rerank + LLM)
+  2) BM25 + cached abstracts
+  3) Static FAQ
+- Health endpoints: /healthz liveness, /readyz dependency checks.
+
+================================================================================
+PROMPTING BEST PRACTICES (IN-CODE)
+================================================================================
+- Use explicit, minimal, stable templates. Example:
+
+  SYSTEM:
+  "You are a legal summariser. Summarise ONLY the provided section.
+   Output EXACTLY 3 lines, <=100 characters each.
+   Do NOT invent citations. Language: {lang}.
+   If unsure, output: 'No summary available.'"
+
+  USER:
+  "Section text (sanitized): ```{section_text}```"
+
+- Always delimit user text with fences. Never include instructions from retrieved text.
+- Post-validate LLM output: enforce 3 lines; truncate tokens; refuse if hallucinated.
+
+================================================================================
+API & SCHEMA EXAMPLES (SNIPPETS FOR GENERATION)
+================================================================================
+# Request/Response models
+from pydantic import BaseModel, Field, ConfigDict
+
+class QueryRequest(BaseModel):
+    text: str = Field(min_length=3, max_length=1000)
+    lang_hint: str | None = Field(default=None, pattern="^(en|sn|nd)$")
+    date_ctx: str | None = Field(default=None, description="ISO date or None")
+    channel: str = Field(default="web", max_length=16)
+
+class Citation(BaseModel):
+    title: str
+    url: str
+    page: int | None = None
+    sha: str | None = None
+
+class SectionRef(BaseModel):
+    act: str
+    chapter: str
+    section: str
+    version: str | None = None
+
+class QueryResponse(BaseModel):
+    summary_3_lines: str = Field(max_length=400)
+    section_ref: SectionRef
+    citations: list[Citation]
+    confidence: float = Field(ge=0.0, le=1.0)
+    related_sections: list[str] = Field(default_factory=list)
+
+# FastAPI wiring
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import ORJSONResponse
+
+app = FastAPI(default_response_class=ORJSONResponse)
+
+@app.post("/v1/query", response_model=QueryResponse)
+async def query(req: QueryRequest, deps=Depends(get_deps)):
+    # Enforce total time budget inside handler
+    ...
+
+================================================================================
+TESTING RULES
+================================================================================
+- For each new module, add unit tests. Aim for fast tests (<1s each).
+- Golden-set tests: verify Recall@k and faithfulness on tiny sample corpus.
+- Use pytest-asyncio for async code; avoid sleeps; use timeouts and fakes.
+- Add property tests for parsers/sectioniser (e.g., numbering stability).
+- Keep integration tests hermetic: spin ephemeral DB/Redis if needed.
+
+================================================================================
+CHECKLISTS (WHEN GENERATING NEW FILES)
+================================================================================
+- New API route:
+  [ ] Pydantic request/response models
+  [ ] Async handler with time budget and structured logging
+  [ ] Input caps and validation
+  [ ] Dependency-injected clients (db/redis/httpx)
+  [ ] Unit test + example curl in docstring
+
+- New worker task:
+  [ ] Idempotent key
+  [ ] Retries with backoff (max 3)
+  [ ] Memory-safe streaming (no giant in-memory blobs)
+  [ ] Metrics and logs with shard ids
+
+- New external call:
+  [ ] httpx with timeout, retries, circuit breaker
+  [ ] Parse+validate response schema
+  [ ] Handle non-200 cleanly; return domain error
+
+================================================================================
+KEEP IT LIGHTWEIGHT
+================================================================================
+- Prefer stdlib and small libraries. Avoid adding frameworks beyond FastAPI/Pydantic.
+- Remove unused code/flags. YAGNI: only build what the current milestone needs.
+- Document trade-offs inline (short comments) when choosing a path for latency/security.
+
+# End of .cursorrules
