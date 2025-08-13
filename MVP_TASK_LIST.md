@@ -34,13 +34,14 @@ Build a functional legal information system that:
 - **Effort**: 1 hour
 - **Completed**: 2024-08-13
 
-#### 0.1.2 Setup Python project
-- [ ] Initialize Poetry/pyproject.toml with Python 3.11
-- [ ] Configure project metadata and dependencies
-- [ ] Setup development dependencies (pytest, ruff, mypy, black)
-- [ ] Create requirements.txt for production
+#### 0.1.2 Setup Python project ✅
+- [x] Initialize Poetry/pyproject.toml with Python 3.11
+- [x] Configure project metadata and dependencies
+- [x] Setup development dependencies (pytest, ruff, mypy, black)
+- [x] Create requirements.txt for production
 - **Acceptance**: `poetry install` works, all tools configured
 - **Effort**: 2 hours
+- **Completed**: 2024-08-13
 
 #### 0.1.3 Configure pre-commit hooks
 - [ ] Setup pre-commit config with ruff, black, mypy
