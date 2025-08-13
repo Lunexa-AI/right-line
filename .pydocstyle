@@ -1,0 +1,6 @@
+[pydocstyle]
+inherit = false
+convention = google
+match-dir = ^(?!tests|migrations|scripts|docs|build|dist).*
+match = .*\.py
+add-ignore = D100,D101,D102,D103,D104,D107,D202,D213

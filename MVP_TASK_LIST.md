@@ -34,29 +34,32 @@ Build a functional legal information system that:
 - **Effort**: 1 hour
 - **Completed**: 2024-08-13
 
-#### 0.1.2 Setup Python project
-- [ ] Initialize Poetry/pyproject.toml with Python 3.11
-- [ ] Configure project metadata and dependencies
-- [ ] Setup development dependencies (pytest, ruff, mypy, black)
-- [ ] Create requirements.txt for production
+#### 0.1.2 Setup Python project ✅
+- [x] Initialize Poetry/pyproject.toml with Python 3.11
+- [x] Configure project metadata and dependencies
+- [x] Setup development dependencies (pytest, ruff, mypy, black)
+- [x] Create requirements.txt for production
 - **Acceptance**: `poetry install` works, all tools configured
 - **Effort**: 2 hours
+- **Completed**: 2024-08-13
 
-#### 0.1.3 Configure pre-commit hooks
-- [ ] Setup pre-commit config with ruff, black, mypy
-- [ ] Add security checks (bandit, safety)
-- [ ] Configure conventional commits
-- [ ] Add secrets scanning (detect-secrets)
+#### 0.1.3 Configure pre-commit hooks ✅
+- [x] Setup pre-commit config with ruff, black, mypy
+- [x] Add security checks (bandit, safety)
+- [x] Configure conventional commits (optional - can enable later)
+- [x] Add secrets scanning (detect-secrets)
 - **Acceptance**: Pre-commit runs on all commits
 - **Effort**: 1 hour
+- **Completed**: 2024-08-13
 
-#### 0.1.4 Create Makefile
-- [ ] Add common commands (setup, test, lint, format)
-- [ ] Add Docker commands (build, up, down, logs)
-- [ ] Add deployment commands
-- [ ] Document all commands
+#### 0.1.4 Create Makefile ✅
+- [x] Add common commands (setup, test, lint, format)
+- [x] Add Docker commands (build, up, down, logs)
+- [x] Add deployment commands
+- [x] Document all commands
 - **Acceptance**: All make targets work
 - **Effort**: 2 hours
+- **Completed**: 2024-08-13
 
 ### 0.2 CI/CD Pipeline 🔴
 
