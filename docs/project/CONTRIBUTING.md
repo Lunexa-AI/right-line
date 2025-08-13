@@ -383,6 +383,16 @@ Your contribution should maintain our performance standards:
 - Memory usage: < 1GB per service
 - Database queries: < 100ms
 
+## 🔧 CI/CD Management
+
+**Current Status**: Pre-commit hooks and GitHub Actions are **disabled** for rapid MVP development.
+
+- **Pre-commit hooks**: Disabled to avoid friction during solo development
+- **GitHub Actions**: Workflows exist but are `.disabled` for later activation
+- **Manual checks**: Use `make lint`, `make test`, `make security` for quality checks
+
+See [CI Management Guide](docs/development/ci-management.md) for how to enable/disable CI features.
+
 ## 🆘 Getting Help
 
 - **Discord**: [Join our Discord](https://discord.gg/rightline) (coming soon)

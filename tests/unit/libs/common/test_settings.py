@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -20,8 +19,8 @@ class TestSettings:
             "RIGHTLINE_DATABASE_URL": "postgresql://user:pass@localhost/db",
             "RIGHTLINE_REDIS_URL": "redis://localhost:6379/0",
         }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
             for key, value in env_vars.items():
                 f.write(f"{key}={value}\n")
             env_file = f.name
@@ -42,8 +41,8 @@ class TestSettings:
             "RIGHTLINE_DATABASE_URL": "postgresql://user:pass@localhost/db",
             "RIGHTLINE_REDIS_URL": "redis://localhost:6379/0",
         }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
             for key, value in env_vars.items():
                 f.write(f"{key}={value}\n")
             env_file = f.name
@@ -63,8 +62,8 @@ class TestSettings:
             "RIGHTLINE_REDIS_URL": "redis://localhost:6379/0",
             "RIGHTLINE_CORS_ORIGINS": "http://localhost:3000,http://localhost:8080",
         }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
             for key, value in env_vars.items():
                 f.write(f"{key}={value}\n")
             env_file = f.name
@@ -82,7 +81,7 @@ class TestSettings:
             secret_key="a" * 32,
             database_url="postgresql://user:pass@localhost/db",
             redis_url="redis://localhost:6379/0",
-            app_env="development"
+            app_env="development",
         )
         assert dev_settings.is_development is True
         assert dev_settings.is_production is False
@@ -92,7 +91,7 @@ class TestSettings:
             secret_key="a" * 32,
             database_url="postgresql://user:pass@localhost/db",
             redis_url="redis://localhost:6379/0",
-            app_env="production"
+            app_env="production",
         )
         assert prod_settings.is_development is False
         assert prod_settings.is_production is True
@@ -102,7 +101,7 @@ class TestSettings:
         settings = Settings(
             secret_key="a" * 32,
             database_url="postgresql+asyncpg://user:pass@localhost/db",
-            redis_url="redis://localhost:6379/0"
+            redis_url="redis://localhost:6379/0",
         )
         assert settings.database_url_sync == "postgresql://user:pass@localhost/db"
 
@@ -111,9 +110,9 @@ class TestSettings:
         settings = Settings(
             secret_key="a" * 32,
             database_url="postgresql://user:pass@localhost/db",
-            redis_url="redis://localhost:6379/0"
+            redis_url="redis://localhost:6379/0",
         )
-        
+
         # Check some defaults
         assert settings.app_env == "development"
         assert settings.log_level == "INFO"
@@ -126,12 +125,12 @@ class TestSettings:
         """Test that environment variables use RIGHTLINE_ prefix."""
         # Set environment variable
         os.environ["RIGHTLINE_API_PORT"] = "9000"
-        
+
         try:
             settings = Settings(
                 secret_key="a" * 32,
                 database_url="postgresql://user:pass@localhost/db",
-                redis_url="redis://localhost:6379/0"
+                redis_url="redis://localhost:6379/0",
             )
             assert settings.api_port == 9000
         finally:

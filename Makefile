@@ -95,10 +95,10 @@ up-dev:
 	docker-compose up -d
 
 up-staging:
-	docker-compose -f docker-compose.staging.yml up -d
+	docker-compose -f deploy/docker-compose.staging.yml up -d
 
 up-prod:
-	docker-compose -f docker-compose.production.yml up -d
+	docker-compose -f deploy/docker-compose.production.yml up -d
 
 down:
 	docker-compose down
@@ -125,7 +125,7 @@ build-summarizer:
 	docker build -f services/summarizer/Dockerfile -t rightline/summarizer:dev .
 
 build-prod:
-	docker-compose -f docker-compose.production.yml build
+	docker-compose -f deploy/docker-compose.production.yml build
 
 health:
 	@echo "Checking service health..."
