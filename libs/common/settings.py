@@ -139,7 +139,7 @@ class Settings(BaseSettings):
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()

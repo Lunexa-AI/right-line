@@ -90,11 +90,11 @@ curl -X POST http://localhost:8000/v1/query \
 
 ## 📚 Documentation
 
-- [**Architecture**](ARCHITECTURE.md) - System design and technical specifications
+- [**Architecture**](docs/project/ARCHITECTURE.md) - System design and technical specifications
 - [**API Reference**](docs/api/README.md) - Complete API documentation
 - [**Deployment Guide**](docs/deployment/README.md) - Production deployment instructions
-- [**Contributing**](CONTRIBUTING.md) - How to contribute to RightLine
-- [**Roadmap**](ROADMAP.md) - Development milestones and progress
+- [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to RightLine
+- [**Roadmap**](docs/project/ROADMAP.md) - Development milestones and progress
 
 ## 🛠️ Development
 
@@ -105,12 +105,14 @@ make test
 # Format and lint
 make format lint
 
-# Run pre-commit hooks
-pre-commit run --all-files
+# Security checks
+make security
 
 # View all commands
 make help
 ```
+
+> **Note**: Pre-commit hooks are currently disabled for rapid MVP development. See [CI Management Guide](docs/development/ci-management.md) for details.
 
 ## 🏗️ Architecture
 
