@@ -1,0 +1,114 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.tox
+.hypothesis
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Development files
+*.log
+*.sqlite
+*.db
+.env.*
+!.env.example
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Node (for web UI)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Model files (will be downloaded during build)
+*.bin
+*.onnx
+*.pt
+*.pth
+models/*.safetensors
+
+# Data files
+data/raw/
+data/processed/
+*.csv
+*.json
+*.parquet
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
