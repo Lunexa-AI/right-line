@@ -1,0 +1,45 @@
+# CodeQL configuration for advanced security scanning
+# This file configures which queries to run and paths to scan
+
+name: "RightLine CodeQL config"
+
+# Paths to include in analysis
+paths:
+  - services
+  - libs
+
+# Paths to exclude from analysis
+paths-ignore:
+  - tests
+  - docs
+  - scripts
+  - "**/*.test.py"
+  - "**/*_test.py"
+
+# Query suites to run
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+  - uses: security-experimental
+
+# Custom query patterns for legal/financial code
+query-filters:
+  - include:
+      tags: 
+        - "security"
+        - "correctness"
+        - "maintainability"
+  - exclude:
+      tags:
+        - "experimental"
+        - "deprecated"
+
+# Language-specific settings
+languages:
+  python:
+    # Additional Python-specific queries
+    queries:
+      - uses: python/ql/src/Security/CWE-078/CommandInjection.ql
+      - uses: python/ql/src/Security/CWE-089/SqlInjection.ql
+      - uses: python/ql/src/Security/CWE-502/UnsafeDeserialization.ql
+      - uses: python/ql/src/Security/CWE-611/XXE.ql

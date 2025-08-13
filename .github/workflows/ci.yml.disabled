@@ -1,0 +1,347 @@
+# Comprehensive CI Pipeline for RightLine
+# 
+# CURRENTLY DISABLED FOR SOLO DEVELOPMENT
+# To enable: Rename this file from ci.yml.disabled to ci.yml
+#
+# This workflow runs on every push and PR to ensure code quality,
+# run tests, and check security. Optimized for <5 min total runtime.
+
+name: CI Pipeline
+
+on:
+  # Uncomment these triggers when ready to enable
+  # push:
+  #   branches: [main, develop]
+  #   paths-ignore:
+  #     - '**.md'
+  #     - 'docs/**'
+  #     - '.gitignore'
+  #     - 'LICENSE'
+  # pull_request:
+  #   branches: [main]
+  #   types: [opened, synchronize, reopened]
+  
+  # For now, only manual trigger
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.7.1'
+  # Performance: skip UI updates
+  POETRY_NO_INTERACTION: '1'
+  POETRY_VIRTUALENVS_IN_PROJECT: 'true'
+  POETRY_VIRTUALENVS_CREATE: 'true'
+  # Cache config
+  PIP_NO_CACHE_DIR: 'false'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+
+jobs:
+  # Quick checks that should fail fast
+  lint-and-format:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better blame info
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Poetry installation
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-${{ env.POETRY_VERSION }}-${{ runner.os }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-root --only main,dev
+
+      - name: Run Ruff linter
+        run: |
+          poetry run ruff check services/ libs/ tests/ --output-format=github
+
+      - name: Run Black formatter check
+        run: |
+          poetry run black --check --diff services/ libs/ tests/
+
+      - name: Run isort import checker
+        run: |
+          poetry run isort --check-only --diff services/ libs/ tests/
+
+      - name: Run mypy type checker
+        run: |
+          poetry run mypy services/ libs/ --ignore-missing-imports
+
+  # Security scanning (SAST)
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Poetry installation
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-${{ env.POETRY_VERSION }}-${{ runner.os }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-root --only main,dev
+
+      - name: Run Bandit security linter
+        run: |
+          poetry run bandit -r services/ libs/ -f json -o bandit-report.json || true
+          poetry run bandit -r services/ libs/ -f txt
+
+      - name: Upload Bandit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-results
+          path: bandit-report.json
+
+      - name: Run Safety dependency check
+        run: |
+          poetry run safety check --json > safety-report.json || true
+          poetry run safety check
+
+      - name: Check for secrets with detect-secrets
+        run: |
+          poetry run detect-secrets scan --baseline .secrets.baseline
+          poetry run detect-secrets audit .secrets.baseline
+
+  # Test suite with coverage
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+        os: [ubuntu-latest]
+        include:
+          # Test on macOS with one Python version
+          - python-version: '3.11'
+            os: macos-latest
+    
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: rightline_test
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: rightline_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache Poetry installation
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-${{ env.POETRY_VERSION }}-${{ runner.os }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ matrix.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            venv-${{ matrix.os }}-py${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-root
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://rightline_test:test_password@localhost:5432/rightline_test
+          REDIS_URL: redis://localhost:6379/0
+          APP_ENV: test
+        run: |
+          poetry run pytest tests/unit/ \
+            --cov=services \
+            --cov=libs \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junit-xml=junit.xml \
+            -v
+
+      - name: Run integration tests
+        if: matrix.os == 'ubuntu-latest'  # Only on Linux due to service containers
+        env:
+          DATABASE_URL: postgresql://rightline_test:test_password@localhost:5432/rightline_test
+          REDIS_URL: redis://localhost:6379/0
+          APP_ENV: test
+        run: |
+          poetry run pytest tests/integration/ \
+            --cov=services \
+            --cov=libs \
+            --cov-append \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-py${{ matrix.python-version }}-${{ matrix.os }}
+          path: |
+            junit.xml
+            coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-py${{ matrix.python-version }}
+          fail_ci_if_error: false  # Don't fail CI if codecov is down
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Build check (ensure Docker builds work)
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: rightline:ci-${{ github.sha }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          build-args: |
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+  # Summary job for branch protection rules
+  ci-success:
+    name: CI Success
+    needs: [lint-and-format, security-scan, test, build-check]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.lint-and-format.result }}" != "success" || \
+                "${{ needs.security-scan.result }}" != "success" || \
+                "${{ needs.test.result }}" != "success" || \
+                "${{ needs.build-check.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed! ✅"
+
+      - name: Comment PR (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ All CI checks passed!'
+            })
