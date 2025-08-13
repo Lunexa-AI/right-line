@@ -1,5 +1,3 @@
----
-
 # RightLine
 
 **Get the law right, on the line.**
