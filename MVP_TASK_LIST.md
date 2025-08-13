@@ -95,29 +95,35 @@ Build a functional legal information system that:
 
 ### 0.3 Development Environment 🔴
 
-#### 0.3.1 Create Docker setup
-- [ ] Write Dockerfile for each service
-- [ ] Optimize for layer caching
-- [ ] Add multi-stage builds
-- [ ] Configure non-root users
+#### 0.3.1 Create Docker setup ✅
+- [x] Write Dockerfile for each service
+- [x] Optimize for layer caching
+- [x] Add multi-stage builds
+- [x] Configure non-root users
 - **Acceptance**: All services build successfully
 - **Effort**: 4 hours
+- **Completed**: 2024-08-13
+- **Note**: Individual Dockerfiles created for api, ingestion, retrieval, and summarizer services
 
-#### 0.3.2 Setup Docker Compose
-- [ ] Create docker-compose.yml for local dev
-- [ ] Configure service dependencies
-- [ ] Add volume mounts for hot-reload
-- [ ] Setup networking
+#### 0.3.2 Setup Docker Compose ✅
+- [x] Create docker-compose.yml for local dev
+- [x] Configure service dependencies
+- [x] Add volume mounts for hot-reload
+- [x] Setup networking
 - **Acceptance**: `docker-compose up` starts all services
 - **Effort**: 3 hours
+- **Completed**: 2024-08-13
+- **Note**: Complete Docker Compose setup with override file for development
 
-#### 0.3.3 Configure environment variables
-- [ ] Create .env.example with all variables
-- [ ] Setup env validation with pydantic
-- [ ] Add environment-specific configs
-- [ ] Document all variables
+#### 0.3.3 Configure environment variables ✅
+- [x] Create .env.example with all variables
+- [x] Setup env validation with pydantic
+- [x] Add environment-specific configs
+- [x] Document all variables
 - **Acceptance**: Services start with example env
 - **Effort**: 2 hours
+- **Completed**: 2024-08-13
+- **Note**: Pydantic Settings with RIGHTLINE_ prefix and validation
 
 ## Milestone 1: Core Infrastructure (Week 2)
 

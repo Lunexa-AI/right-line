@@ -89,19 +89,43 @@ security-check: security
 
 # Docker commands
 up:
-	docker-compose -f infra/docker/docker-compose.yml up -d
+	docker-compose up -d
+
+up-dev:
+	docker-compose up -d
+
+up-staging:
+	docker-compose -f docker-compose.staging.yml up -d
+
+up-prod:
+	docker-compose -f docker-compose.production.yml up -d
 
 down:
-	docker-compose -f infra/docker/docker-compose.yml down
+	docker-compose down
 
 logs:
-	docker-compose -f infra/docker/docker-compose.yml logs -f
+	docker-compose logs -f
 
 logs-api:
-	docker-compose -f infra/docker/docker-compose.yml logs -f api
+	docker-compose logs -f api
 
 build:
-	docker-compose -f infra/docker/docker-compose.yml build
+	docker-compose build
+
+build-api:
+	docker build -f services/api/Dockerfile -t rightline/api:dev .
+
+build-ingestion:
+	docker build -f services/ingestion/Dockerfile -t rightline/ingestion:dev .
+
+build-retrieval:
+	docker build -f services/retrieval/Dockerfile -t rightline/retrieval:dev .
+
+build-summarizer:
+	docker build -f services/summarizer/Dockerfile -t rightline/summarizer:dev .
+
+build-prod:
+	docker-compose -f docker-compose.production.yml build
 
 health:
 	@echo "Checking service health..."

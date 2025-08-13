@@ -1,0 +1,290 @@
+# Default Docker Compose for Local Development
+# Usage: docker-compose up
+version: '3.9'
+
+x-common-env: &common-env
+  APP_ENV: development
+  LOG_LEVEL: DEBUG
+  PYTHONDEBUG: 1
+  PYTHONUNBUFFERED: 1
+
+x-healthcheck: &default-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+services:
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: rightline-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rightline_dev
+      POSTGRES_USER: rightline
+      POSTGRES_PASSWORD: rightline
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "pg_isready -U rightline -d rightline_dev"]
+    networks:
+      - rightline-network
+
+  # Redis for caching and queue
+  redis:
+    image: redis:7-alpine
+    container_name: rightline-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "redis-cli", "ping"]
+    networks:
+      - rightline-network
+
+  # Meilisearch for full-text search
+  meilisearch:
+    image: getmeili/meilisearch:v1.9
+    container_name: rightline-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: masterKey
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_LOG_LEVEL: INFO
+    volumes:
+      - meilisearch-data:/meili_data
+    ports:
+      - "7700:7700"
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+    networks:
+      - rightline-network
+
+  # Qdrant for vector search
+  qdrant:
+    image: qdrant/qdrant:v1.10.1
+    container_name: rightline-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+    volumes:
+      - qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"  # gRPC port
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+    networks:
+      - rightline-network
+
+  # MinIO for object storage
+  minio:
+    image: minio/minio:latest
+    container_name: rightline-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"  # Console
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "mc", "ready", "local"]
+    networks:
+      - rightline-network
+
+  # API Gateway Service
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: runtime
+      args:
+        VERSION: dev
+        BUILD_DATE: ${BUILD_DATE:-now}
+    image: rightline/api:dev
+    container_name: rightline-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline_dev
+      REDIS_URL: redis://redis:6379/0
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_KEY: masterKey
+      QDRANT_URL: http://qdrant:6333
+      SECRET_KEY: dev-secret-key-change-in-production
+      # Enable hot reload
+      RELOAD: "true"
+    volumes:
+      # Mount source code for hot reload
+      - ./services/api:/app/services/api:ro
+      - ./libs:/app/libs:ro
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    networks:
+      - rightline-network
+
+  # Ingestion Worker Service
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+      target: runtime
+      args:
+        VERSION: dev
+    image: rightline/ingestion:dev
+    container_name: rightline-ingestion
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline_dev
+      REDIS_URL: redis://redis:6379/0
+      MINIO_URL: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      WORKER_CONCURRENCY: 2
+    volumes:
+      # Mount source code for development
+      - ./services/ingestion:/app/services/ingestion:ro
+      - ./libs:/app/libs:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - rightline-network
+
+  # Retrieval Service
+  retrieval:
+    build:
+      context: .
+      dockerfile: services/retrieval/Dockerfile
+      target: runtime
+      args:
+        VERSION: dev
+    image: rightline/retrieval:dev
+    container_name: rightline-retrieval
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline_dev
+      REDIS_URL: redis://redis:6379/0
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_KEY: masterKey
+      QDRANT_URL: http://qdrant:6333
+      PORT: 8001
+      CACHE_TTL_SECONDS: 600
+    volumes:
+      # Mount source code for hot reload
+      - ./services/retrieval:/app/services/retrieval:ro
+      - ./libs:/app/libs:ro
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+    networks:
+      - rightline-network
+
+  # Summarizer Service
+  summarizer:
+    build:
+      context: .
+      dockerfile: services/summarizer/Dockerfile
+      target: runtime
+      args:
+        VERSION: dev
+    image: rightline/summarizer:dev
+    container_name: rightline-summarizer
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      <<: *common-env
+      MODEL_PATH: /app/models
+      DEVICE: cpu
+      BATCH_SIZE: 4
+      MAX_LENGTH: 512
+      PORT: 8002
+    volumes:
+      # Mount source code for hot reload
+      - ./services/summarizer:/app/services/summarizer:ro
+      - ./libs:/app/libs:ro
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+    networks:
+      - rightline-network
+
+# Network configuration
+networks:
+  rightline-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+# Volume configuration
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  meilisearch-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  minio-data:
+    driver: local
