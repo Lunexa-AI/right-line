@@ -23,15 +23,16 @@ Build a functional legal information system that:
 
 ## Milestone 0: Project Foundation (Week 1)
 
-### 0.1 Repository Setup 🔴
+### 0.1 Repository Setup 🟡
 
-#### 0.1.1 Initialize project structure
-- [ ] Create directory structure as per architecture
-- [ ] Initialize git repository with .gitignore
-- [ ] Add LICENSE (MIT) and code of conduct
-- [ ] Create initial README with badges
+#### 0.1.1 Initialize project structure ✅
+- [x] Create directory structure as per architecture
+- [x] Initialize git repository with .gitignore
+- [x] Add LICENSE (MIT) and code of conduct
+- [x] Create initial README with badges
 - **Acceptance**: Repository structure matches architecture doc
 - **Effort**: 1 hour
+- **Completed**: 2024-08-13
 
 #### 0.1.2 Setup Python project
 - [ ] Initialize Poetry/pyproject.toml with Python 3.11
