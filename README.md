@@ -1,327 +1,321 @@
 # RightLine
 
-**Get the law right, on the line.**
+**Get the law right, on the line.**  
 A WhatsApp-first legal copilot for Zimbabwe that returns the **exact section + 3-line summary + citations** in Shona, Ndebele, or English.
 
 <p align="left">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <img alt="Status" src="https://img.shields.io/badge/status-MVP-blue">
+  <img alt="Status" src="https://img.shields.io/badge/status-Pre--MVP-orange">
+  <img alt="Architecture" src="https://img.shields.io/badge/architecture-v2.0-blue">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-pending-yellow">
   <img alt="PRs" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg">
 </p>
 
 > ⚠️ **Not legal advice.** RightLine provides statute sections and citations for information only.
 
----
-
-## ✨ What it does
-
-* **Plain-language questions → exact statute section** (with citation + page anchors).
-* **Three-line summary** (extractive → lightly rewritten), rendered for WhatsApp.
-* **Hybrid retrieval**: BM25 + vector ANN + cross-encoder re-rank.
-* **Temporal queries**: ask “as at 1 Jan 2023” and get the right version.
-* **WhatsApp, Telegram, and Web** (PWA) adapters.
-* **Zero/low budget** by using public data and local models.
-
-See the full design in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+> 📝 **Ready to build?** Check out **[MVP_TASK_LIST.md](MVP_TASK_LIST.md)** for the detailed implementation roadmap.
 
 ---
 
-## 🧱 Repository layout
+## ✨ Features
+
+### Core Functionality
+* **Plain-language questions → exact statute section** with citations & page anchors
+* **Three-line summary** via multi-tier pipeline (extractive → local LLM → API fallback)
+* **Hybrid retrieval**: BM25 + vector search + cross-encoder reranking (<2s P95)
+* **Temporal queries**: "as at 1 Jan 2023" returns historically accurate versions
+* **Multi-channel**: WhatsApp, Telegram, Web PWA with channel-optimized responses
+
+### Production Features
+* **🔄 Resilience**: Circuit breakers, retries, graceful degradation
+* **⚡ Performance**: 3-level caching, request coalescing, read replicas
+* **🔒 Security**: Zero-trust, WAF, secret rotation, prompt injection defense
+* **📊 Observability**: Distributed tracing, structured logging, SLO alerts
+* **💰 Cost-optimized**: Runs on $5 VPS, scales to enterprise
+
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the complete technical specification.
+
+---
+
+## 🧱 Repository structure
 
 ```
 right-line/
-├─ api/                 # FastAPI gateway + orchestration
-├─ retrieval/           # Hybrid search (BM25 + vectors + reranker)
-├─ ingestion/           # Scrapers, OCR, sectioniser, versioning
-├─ summariser/          # Local LLM server (templated composing)
-├─ web/                 # Minimal PWA (optional)
-├─ ops/                 # Docker, compose, k8s, Grafana, migrations
-├─ data/                # Local cache: PDFs, OCR artifacts (gitignored)
-├─ tests/               # Unit/integration/e2e
-├─ README.md
-└─ ARCHITECTURE.md
+├─ services/            # Microservices
+│  ├─ api/             # FastAPI gateway + orchestration
+│  ├─ retrieval/       # Hybrid search engine
+│  ├─ ingestion/       # Document processing pipeline
+│  └─ summarizer/      # Multi-tier summarization
+├─ libs/               # Shared libraries
+│  ├─ common/          # Types, config, utilities
+│  ├─ database/        # Models, migrations
+│  └─ telemetry/       # Logging, metrics, tracing
+├─ web/                # Progressive Web App
+├─ infra/              # Infrastructure as Code
+│  ├─ docker/          # Docker configurations
+│  ├─ k8s/            # Kubernetes manifests
+│  └─ terraform/       # Cloud resources
+├─ tests/              # Test suites
+│  ├─ unit/           # Fast, isolated tests
+│  ├─ integration/    # Service integration
+│  └─ e2e/            # Full system tests
+├─ scripts/            # Automation scripts
+├─ docs/               # Documentation
+├─ .github/            # CI/CD workflows
+├─ Makefile            # Common commands
+├─ README.md           # This file
+├─ ARCHITECTURE.md     # Technical specification
+└─ MVP_TASK_LIST.md   # Implementation roadmap
 ```
-
-> If a folder isn’t present yet in your repo, create it as you implement that component.
 
 ---
 
-## 🚀 Quick start (single machine)
+## 🚀 Quick start
 
-**Requirements**
+### Prerequisites
+* Docker & Docker Compose v2+
+* Python 3.11+ (for development)
+* 8GB RAM, 10GB disk space
+* Linux/macOS (x86_64 or ARM64)
 
-* Linux/macOS (x86\_64)
-* Docker + Docker Compose
-* \~6–8 GB free disk (for OCR artifacts + indexes)
-
-**1) Clone & configure**
+### 1. Setup & Launch
 
 ```bash
+# Clone repository
 git clone https://github.com/<you>/right-line.git
 cd right-line
-cp ops/.env.example .env
-# Open .env and set the basics (ports, secrets, channel tokens if any)
+
+# Setup environment
+cp .env.example .env
+make setup              # Install deps, pre-commit hooks
+
+# Launch services
+make up                 # Start all services
+make health             # Verify health
+
+# Seed sample data
+make seed-sample        # Load Labour Act + sample Gazettes
+
+# Test the API
+curl -X POST http://localhost:8000/v1/query \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: dev-key" \
+  -d '{"text":"What is the minimum wage?","channel":"api"}' | jq
 ```
 
-**2) Bring the stack up**
+### 2. Development workflow
 
 ```bash
-docker compose -f ops/compose.yml up -d
-# Services: postgres+pgvector, meilisearch, qdrant, redis, minio, api, summariser
+# Start dev environment with hot-reload
+make dev
+
+# Run tests
+make test               # All tests
+make test-unit         # Unit tests only
+make test-watch        # Watch mode
+
+# Code quality
+make lint              # Run linters
+make format            # Auto-format
+make security          # Security scan
+
+# View logs
+make logs              # All services
+make logs-api          # API only
 ```
 
-**3) Seed a tiny sample corpus** (Labour Act + 1–2 Gazettes)
+### 3. Access services
 
-```bash
-docker compose exec api python -m ingestion.bootstrap.sample
-# Downloads sample PDFs/HTML to data/, runs OCR/sectioniser, builds indexes
-```
-
-**4) Ask your first question**
-
-```bash
-curl -s http://localhost:8080/v1/query \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"If I quote USD can I add a ZiG premium?","channel":"dev"}' | jq
-```
-
-You should get JSON with `summary_3_lines`, `section_ref`, and `citations`.
+* **API**: http://localhost:8000 (OpenAPI docs at /docs)
+* **Web UI**: http://localhost:3000
+* **Grafana**: http://localhost:3001 (admin/admin)
+* **MinIO**: http://localhost:9001 (console)
 
 ---
 
 ## ⚙️ Configuration
 
-Create `.env` in the repo root (see `ops/.env.example`):
+### Environment setup
 
-```ini
-# Core
-APP_ENV=dev
-APP_PORT=8080
-APP_SECRET=change-me-please
-
-# Postgres (system of record)
-PG_HOST=postgres
-PG_PORT=5432
-PG_DB=rightline
-PG_USER=rightline
-PG_PASSWORD=rightline_pwd
-
-# Redis (cache/queues)
-REDIS_URL=redis://redis:6379/0
-
-# Meilisearch (BM25) - or set USE_PG_FTS=true to skip it
-MEILI_HOST=http://meili:7700
-MEILI_KEY=meili-master-key
-
-# Qdrant (vectors) - or set USE_PGVECTOR=true to skip it
-QDRANT_HOST=http://qdrant:6333
-
-# MinIO (object store for PDFs/OCR)
-MINIO_ENDPOINT=http://minio:9000
-MINIO_ACCESS_KEY=rightline
-MINIO_SECRET_KEY=rightline_secret
-MINIO_BUCKET=rightline
-
-# Summariser (local LLM)
-SUMMARISER_URL=http://summariser:8088
-SUMMARY_MAX_TOKENS=120
-
-# Channel adapters (optional for local dev)
-WHATSAPP_VERIFY_TOKEN=...
-WHATSAPP_BEARER_TOKEN=...
-TELEGRAM_BOT_TOKEN=...
-```
-
-**Minimalist mode:**
-
-* Set `USE_PGVECTOR=true` to drop Qdrant and store vectors in Postgres.
-* Set `USE_PG_FTS=true` to drop Meilisearch and use Postgres FTS.
-  This keeps a **single DB dependency** for small deployments.
-
----
-
-## 🧲 Ingestion pipeline
-
-RightLine ingests public domain sources (e.g., Veritas ZW, Government Gazette PDFs, ZimLII headnotes).
-
-**Run ingestion on demand**
+Copy `.env.example` to `.env` and configure:
 
 ```bash
-docker compose exec api python -m ingestion.run --source=veritas --since=2024-01-01
-docker compose exec api python -m ingestion.run --source=gazette --weekly
+# Core settings
+APP_ENV=development          # development|staging|production
+APP_SECRET=<generate-with-openssl-rand-hex-32>
+API_KEY=<your-api-key>
+
+# Database (PostgreSQL with pgvector)
+DATABASE_URL=postgresql://user:pass@localhost:5432/rightline
+DB_POOL_SIZE=20
+
+# Cache (Redis)
+REDIS_URL=redis://localhost:6379/0
+
+# Search engines
+MEILISEARCH_URL=http://localhost:7700
+MEILISEARCH_KEY=<master-key>
+QDRANT_URL=http://localhost:6333
+
+# Object storage (MinIO/S3)
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=<access-key>
+S3_SECRET_KEY=<secret-key>
+S3_BUCKET=rightline
+
+# LLM settings
+LLM_MODEL=llama3.2-3b        # or phi-3-mini
+LLM_MAX_TOKENS=150
+LLM_TEMPERATURE=0.3
+
+# Channel integrations
+WHATSAPP_API_TOKEN=<meta-token>
+WHATSAPP_PHONE_ID=<phone-id>
+TELEGRAM_BOT_TOKEN=<bot-token>
+
+# Monitoring
+SENTRY_DSN=<your-sentry-dsn>
+GRAFANA_API_KEY=<grafana-key>
 ```
 
-Pipeline stages:
+### Deployment modes
 
-1. fetch & diff → 2) OCR (Tesseract) → 3) sectioniser (stable IDs) →
-2. cross-references graph → 5) chunk & embed → 6) index BM25 + vectors
-
-> Idempotent by content hash; safe to retry. Artifacts stored in `data/` and MinIO.
+* **Minimal** ($5/month): Single PostgreSQL with pgvector + FTS
+* **Standard** ($30/month): Add dedicated search engines
+* **Production** ($100+/month): Full stack with redundancy
 
 ---
 
-## 🔎 API (minimal)
+## 📊 Performance & monitoring
 
-### `POST /v1/query`
+### Target SLOs
+| Metric | MVP | Production | Status |
+|--------|-----|------------|--------|
+| P95 latency | <2.5s | <2.0s | 🟡 Pending |
+| Availability | 99.0% | 99.9% | 🟡 Pending |
+| Error rate | <1% | <0.1% | 🟡 Pending |
+| Accuracy | >90% | >95% | 🟡 Pending |
 
-Ask a question.
-**Request**
+### Observability stack
+* **Metrics**: Prometheus + Grafana dashboards
+* **Logging**: Structured logs with Loki
+* **Tracing**: OpenTelemetry with Jaeger
+* **Errors**: Sentry with PII scrubbing
+* **Alerts**: PagerDuty/Opsgenie integration
 
-```json
-{ "text": "Can I pay wages in USD?", "lang_hint": "en", "date_ctx": null, "channel": "web" }
-```
-
-**Response**
-
-```json
-{
-  "summary_3_lines": "...",
-  "section_ref": { "act":"Labour Act", "chapter":"28:01", "section":"12A", "version":"2024-05-01" },
-  "citations": [
-    {"title":"SI 118 of 2024", "url":"https://...", "page":4, "sha":"..."}
-  ],
-  "confidence": 0.83,
-  "related_sections": ["28:01-12", "28:01-13"]
-}
-```
-
-### `POST /v1/feedback`
-
-```json
-{ "query_id":"...", "label":"wrong", "note":"Should cite §12A(2)" }
-```
-
-More endpoints are documented in **ARCHITECTURE.md**.
+Access dashboards at http://localhost:3001 (admin/admin)
 
 ---
 
-## 🤖 Local models (summariser/reranker)
+## 🗺️ Implementation roadmap
 
-* **Embeddings:** `bge-small` (CPU-friendly)
-* **Reranker:** `bge-reranker-base` (ONNX int8)
-* **Summariser:** `Llama 3.1 8B Instruct` or `Qwen2 7B Instruct` (4-bit via llama.cpp)
+### Phase 1: Foundation (Weeks 1-2) 🔴
+- [ ] Project setup & CI/CD pipeline
+- [ ] Database schema & migrations
+- [ ] Core API with health checks
+- [ ] Basic ingestion pipeline
+- [ ] Docker Compose configuration
 
-All are started by the `summariser` service. Set model names via env if you change them.
+### Phase 2: Core Search (Weeks 3-4) 🟡
+- [ ] BM25 search implementation
+- [ ] Vector embeddings & storage
+- [ ] Query parsing & normalization
+- [ ] Caching layer setup
+- [ ] API rate limiting
 
-**Cost guardrail:** the API routes to local models by default; external LLMs are optional and capped.
+### Phase 3: Intelligence (Weeks 5-6) 🟡
+- [ ] Cross-encoder reranking
+- [ ] Local LLM integration
+- [ ] Template-based responses
+- [ ] Confidence scoring
+- [ ] Performance optimization
 
----
+### Phase 4: Channels (Weeks 7-8) 🟡
+- [ ] WhatsApp adapter
+- [ ] Web UI (PWA)
+- [ ] Response formatting
+- [ ] Error handling
+- [ ] E2E testing
 
-## 📱 WhatsApp & Telegram (optional)
+### Phase 5: Production (Weeks 9-10) 🟡
+- [ ] Monitoring & alerting
+- [ ] Security hardening
+- [ ] Backup & recovery
+- [ ] Performance tuning
+- [ ] Launch preparation
 
-**WhatsApp (Meta Cloud API)**
-
-* Create an app → WhatsApp → configure webhook → point `POST /channels/whatsapp/webhook`
-* Set `WHATSAPP_VERIFY_TOKEN` and `WHATSAPP_BEARER_TOKEN`
-
-**Telegram**
-
-* @BotFather → get token → set `TELEGRAM_BOT_TOKEN`
-* Start polling worker:
-
-```bash
-docker compose exec api python -m api.channels.telegram_poll
-```
-
-Both adapters simply forward messages to `POST /v1/query` and render responses to channel-friendly templates.
-
----
-
-## 📊 Observability
-
-* **Prometheus + Grafana** (in `ops/`) track: total latency, retrieval hit-rate, reranker time, OCR quality.
-* **Loki** for logs (trace ID per request), **Sentry** for errors.
-* Health endpoints: `/healthz` (liveness), `/readyz` (dependencies).
-
-Open Grafana at [http://localhost:3000](http://localhost:3000) (default creds in `.env`).
-
----
-
-## ✅ Quality & evaluation
-
-* **Golden-set YAML** of 50–100 Q→section pairs (PAYE, Labour, currency rules).
-* Nightly job computes:
-
-  * **Recall\@k** (did the right section appear in top-k?)
-  * **Faithfulness** (summary vs section text)
-  * **P95 latency** breakdown
-
-Run locally:
-
-```bash
-docker compose exec api python -m eval.run --dataset=eval/golden.yml
-```
-
----
-
-## 🔐 Security & privacy
-
-* **No PII by default**: channel user IDs are hashed (HMAC).
-* TLS everywhere; **mTLS** inside the cluster.
-* Database at rest encryption (via disk/volume).
-* Strict output templates: summaries cannot omit citations.
-* **Delete my data** endpoint (telemetry) and 90-day log retention.
-
----
-
-## 🗺️ Roadmap (high level)
-
-* [ ] “As at DATE” queries (temporal filter UI affordance)
-* [ ] Cross-references graph (related sections suggestions)
-* [ ] Change alerts: “§12A amended — summary diff”
-* [ ] Offline Pi image for legal-aid clinics
-* [ ] USSD intents for top 50 queries
-
-See **ARCHITECTURE.md** for the deeper plan.
-
----
-
-## 🧪 Development
-
-* Python 3.11+, Ruff, Mypy, PyTest
-* Pre-commit hooks:
-
-```bash
-pipx install pre-commit
-pre-commit install
-```
-
-* Tests:
-
-```bash
-docker compose exec api pytest -q
-```
+**📝 See [MVP_TASK_LIST.md](MVP_TASK_LIST.md) for detailed task breakdown**
 
 ---
 
 ## 🤝 Contributing
 
-PRs welcome! Please:
+We welcome contributions! Areas we need help:
 
-1. Create a small, focused branch.
-2. Add tests where feasible.
-3. Update docs and keep commits tidy.
+* **OCR accuracy** for scanned Gazette PDFs
+* **Language models** for Shona/Ndebele
+* **Legal parsing** for citation extraction
+* **Performance** optimization
+* **Testing** expansion of golden dataset
 
-By contributing, you agree your code is MIT-licensed.
+### Contribution process
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Make changes with tests
+4. Commit using conventional commits (`feat:`, `fix:`, `docs:`)
+5. Push and create a Pull Request
+6. Address review feedback
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
-## 📝 License
+## 🔐 Security & privacy
 
-MIT — see **[LICENSE](LICENSE)**.
+### Security features
+* **Zero-trust architecture** with mTLS between services
+* **WAF protection** with OWASP Core Rule Set
+* **Automated secret rotation** via HashiCorp Vault
+* **Prompt injection defense** with input sanitization
+* **No PII storage** - user IDs are HMAC-hashed
+* **Encryption** at rest (AES-256) and in transit (TLS 1.3)
+
+### Privacy compliance
+* GDPR-style data rights
+* 90-day log retention
+* Right to deletion
+* Audit logging
+
+Report security issues to: security@rightline.zw
+
+---
+
+## 📚 Resources
+
+* **Documentation**: [docs/](docs/)
+* **API Reference**: http://localhost:8000/docs
+* **Architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
+* **Task List**: [MVP_TASK_LIST.md](MVP_TASK_LIST.md)
+* **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## 📄 License
+
+MIT — see **[LICENSE](LICENSE)**
 
 ---
 
 ## 🙏 Acknowledgements
 
-* Thanks to the maintainers of Meilisearch, Qdrant, llama.cpp, and the `bge` model family.
-* Data sources include Government Gazette PDFs, Veritas ZW, and ZimLII headnotes (where permitted).
+* Veritas Zimbabwe for legal texts
+* Zimbabwe Legal Information Institute
+* Government of Zimbabwe Gazette
+* Open-source community (Meilisearch, Qdrant, llama.cpp, BGE models)
 
 ---
 
-## 📫 Contact
+**⚠️ Disclaimer**: RightLine provides legal information, not legal advice. Always consult qualified legal professionals.
 
-Questions, security issues, or partnership requests: **open an issue** or email `<your-contact@domain>`.
-
----
-
+**🚀 Ready to build?** Start with **[MVP_TASK_LIST.md](MVP_TASK_LIST.md)** for step-by-step implementation.
