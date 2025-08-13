@@ -1,0 +1,409 @@
+# Production Deployment Pipeline with Approval Gates
+#
+# CURRENTLY DISABLED FOR SOLO DEVELOPMENT
+# To enable: Rename this file from deploy-production.yml.disabled to deploy-production.yml
+#
+# Requires manual approval and performs blue-green deployment
+
+name: Deploy to Production
+
+on:
+  # Uncomment when ready to enable
+  # release:
+  #   types: [published]
+  # workflow_dispatch:
+  #   inputs:
+  #     version:
+  #       description: 'Version tag to deploy (e.g., v1.0.0)'
+  #       required: true
+  #     strategy:
+  #       description: 'Deployment strategy'
+  #       required: true
+  #       type: choice
+  #       options:
+  #         - blue-green
+  #         - canary
+  #         - rolling
+  #       default: blue-green
+  
+  # For now, only manual trigger
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to deploy'
+        required: true
+      strategy:
+        description: 'Deployment strategy'
+        type: choice
+        options:
+          - blue-green
+          - canary
+        default: blue-green
+
+env:
+  ENVIRONMENT: production
+  DEPLOY_TIMEOUT: '900'  # 15 minutes
+  CANARY_PERCENTAGE: '10'
+  CANARY_DURATION: '600'  # 10 minutes
+
+jobs:
+  validate:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    outputs:
+      staging_tested: ${{ steps.check.outputs.staging_tested }}
+      version_exists: ${{ steps.check.outputs.version_exists }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version tag
+        id: check
+        run: |
+          # Check if version tag exists
+          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "version_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Version tag ${{ inputs.version }} does not exist"
+            exit 1
+          fi
+          
+          # Check if this version was deployed to staging
+          # This would check deployment history in your tracking system
+          echo "staging_tested=true" >> $GITHUB_OUTPUT
+
+      - name: Check staging deployment
+        run: |
+          if [ "${{ steps.check.outputs.staging_tested }}" != "true" ]; then
+            echo "::warning::Version ${{ inputs.version }} has not been tested in staging"
+          fi
+
+  approval:
+    name: Production Approval
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production-approval
+    steps:
+      - name: Request approval
+        run: |
+          echo "🔐 Production deployment requires approval"
+          echo "Version: ${{ inputs.version }}"
+          echo "Strategy: ${{ inputs.strategy }}"
+          echo "Please review and approve in GitHub Actions"
+
+  backup:
+    name: Backup Current State
+    needs: approval
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      backup_id: ${{ steps.backup.outputs.id }}
+    steps:
+      - name: Create database backup
+        id: backup
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          BACKUP_ID="backup-$(date +%Y%m%d-%H%M%S)"
+          echo "id=$BACKUP_ID" >> $GITHUB_OUTPUT
+          
+          # Create database backup
+          echo "Creating database backup: $BACKUP_ID"
+          # pg_dump command would go here
+          
+          # Backup configuration
+          echo "Backing up configuration..."
+          # Configuration backup commands
+
+      - name: Verify backup
+        run: |
+          echo "Verifying backup ${{ steps.backup.outputs.id }}..."
+          # Verification commands
+
+      - name: Upload backup metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-metadata-${{ steps.backup.outputs.id }}
+          path: |
+            backup-manifest.json
+            backup-verification.log
+
+  deploy-blue-green:
+    name: Blue-Green Deployment
+    needs: [approval, backup]
+    if: inputs.strategy == 'blue-green'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://rightline.zw
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine current environment
+        id: current
+        run: |
+          # Check which environment (blue/green) is currently live
+          CURRENT_ENV=$(curl -s https://rightline.zw/api/health | jq -r '.environment' || echo "blue")
+          TARGET_ENV="green"
+          if [ "$CURRENT_ENV" = "green" ]; then
+            TARGET_ENV="blue"
+          fi
+          echo "current=$CURRENT_ENV" >> $GITHUB_OUTPUT
+          echo "target=$TARGET_ENV" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ${{ steps.current.outputs.target }} environment
+        run: |
+          echo "Deploying version ${{ inputs.version }} to ${{ steps.current.outputs.target }} environment"
+          
+          if [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            echo "${{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
+            export KUBECONFIG=kubeconfig
+            
+            # Deploy to target environment
+            kubectl set image deployment/api-${{ steps.current.outputs.target }} \
+              api=ghcr.io/${{ github.repository }}/api:${{ inputs.version }} \
+              -n rightline-production
+            
+            kubectl rollout status deployment/api-${{ steps.current.outputs.target }} \
+              -n rightline-production \
+              --timeout=${DEPLOY_TIMEOUT}s
+          fi
+
+      - name: Health check target environment
+        run: |
+          TARGET_URL="https://${{ steps.current.outputs.target }}.rightline.zw"
+          
+          for i in $(seq 1 30); do
+            if curl -f "$TARGET_URL/health"; then
+              echo "Target environment is healthy!"
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Run smoke tests on target
+        run: |
+          pytest tests/smoke/ \
+            --env production \
+            --api-url "https://${{ steps.current.outputs.target }}.rightline.zw" \
+            -v
+
+      - name: Switch traffic to target
+        run: |
+          echo "Switching production traffic to ${{ steps.current.outputs.target }} environment"
+          
+          # Update load balancer or DNS
+          if [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            kubectl patch service api-production \
+              -p '{"spec":{"selector":{"environment":"${{ steps.current.outputs.target }}"}}}' \
+              -n rightline-production
+          fi
+
+      - name: Verify traffic switch
+        run: |
+          sleep 30  # Wait for DNS/LB propagation
+          
+          LIVE_ENV=$(curl -s https://rightline.zw/api/health | jq -r '.environment')
+          if [ "$LIVE_ENV" != "${{ steps.current.outputs.target }}" ]; then
+            echo "::error::Traffic switch failed!"
+            exit 1
+          fi
+
+      - name: Keep old environment for rollback
+        run: |
+          echo "Keeping ${{ steps.current.outputs.current }} environment available for quick rollback"
+
+  deploy-canary:
+    name: Canary Deployment
+    needs: [approval, backup]
+    if: inputs.strategy == 'canary'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://rightline.zw
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy canary version
+        run: |
+          echo "Deploying canary version ${{ inputs.version }} to ${{ env.CANARY_PERCENTAGE }}% of traffic"
+          
+          if [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            echo "${{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
+            export KUBECONFIG=kubeconfig
+            
+            # Deploy canary
+            kubectl apply -f - <<EOF
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: api-canary
+              namespace: rightline-production
+            spec:
+              selector:
+                app: api
+                version: ${{ inputs.version }}
+          EOF
+            
+            # Configure traffic split
+            kubectl apply -f - <<EOF
+            apiVersion: networking.istio.io/v1beta1
+            kind: VirtualService
+            metadata:
+              name: api-canary-routing
+              namespace: rightline-production
+            spec:
+              http:
+              - match:
+                - headers:
+                    canary:
+                      exact: "true"
+                route:
+                - destination:
+                    host: api-canary
+                  weight: 100
+              - route:
+                - destination:
+                    host: api
+                  weight: $((100 - CANARY_PERCENTAGE))
+                - destination:
+                    host: api-canary
+                  weight: ${CANARY_PERCENTAGE}
+          EOF
+          fi
+
+      - name: Monitor canary metrics
+        run: |
+          echo "Monitoring canary deployment for ${CANARY_DURATION} seconds..."
+          
+          START_TIME=$(date +%s)
+          while [ $(($(date +%s) - START_TIME)) -lt ${CANARY_DURATION} ]; do
+            # Check error rates
+            ERROR_RATE=$(curl -s http://prometheus:9090/api/v1/query \
+              --data-urlencode 'query=rate(http_requests_total{job="api-canary",status=~"5.."}[1m])' \
+              | jq -r '.data.result[0].value[1]' || echo "0")
+            
+            if (( $(echo "$ERROR_RATE > 0.05" | bc -l) )); then
+              echo "::error::Canary error rate too high: $ERROR_RATE"
+              exit 1
+            fi
+            
+            sleep 30
+          done
+
+      - name: Promote canary
+        run: |
+          echo "Promoting canary to full production"
+          
+          if [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            kubectl set image deployment/api \
+              api=ghcr.io/${{ github.repository }}/api:${{ inputs.version }} \
+              -n rightline-production
+            
+            kubectl rollout status deployment/api \
+              -n rightline-production
+            
+            # Remove canary deployment
+            kubectl delete service api-canary -n rightline-production
+            kubectl delete virtualservice api-canary-routing -n rightline-production
+          fi
+
+  post-deployment:
+    name: Post-deployment Tasks
+    needs: [deploy-blue-green, deploy-canary]
+    if: always() && (needs.deploy-blue-green.result == 'success' || needs.deploy-canary.result == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Run full E2E tests
+        run: |
+          pytest tests/e2e/ \
+            --env production \
+            --api-url "https://rightline.zw" \
+            -v \
+            --timeout 120
+
+      - name: Update monitoring dashboards
+        run: |
+          echo "Updating Grafana dashboards with new version..."
+          # Update dashboard annotations
+
+      - name: Create deployment record
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ inputs.version }}',
+              environment: 'production',
+              description: 'Production deployment ${{ inputs.version }}',
+              production_environment: true,
+              auto_merge: false
+            });
+
+      - name: Notify team
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "✅ Production deployment successful!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment Complete*\n*Version:* ${{ inputs.version }}\n*Strategy:* ${{ inputs.strategy }}\n*Deployed by:* ${{ github.actor }}\n*URL:* https://rightline.zw\n*Backup ID:* ${{ needs.backup.outputs.backup_id }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback:
+    name: Emergency Rollback
+    needs: [backup, deploy-blue-green, deploy-canary, post-deployment]
+    if: failure()
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Initiate rollback
+        run: |
+          echo "🚨 Initiating emergency rollback!"
+          
+          if [ "${{ inputs.strategy }}" = "blue-green" ]; then
+            # Switch back to previous environment
+            echo "Switching back to previous environment..."
+            
+          elif [ "${{ inputs.strategy }}" = "canary" ]; then
+            # Remove canary and restore full traffic to stable
+            echo "Removing canary deployment..."
+          fi
+
+      - name: Restore from backup if needed
+        if: needs.backup.outputs.backup_id != ''
+        run: |
+          echo "Restoring from backup ${{ needs.backup.outputs.backup_id }}..."
+          # Restoration commands
+
+      - name: Notify emergency rollback
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🚨 EMERGENCY: Production deployment rolled back!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*EMERGENCY ROLLBACK EXECUTED*\n*Failed Version:* ${{ inputs.version }}\n*Rollback triggered by:* Automated failure detection\n*Action Required:* Investigate failure immediately"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

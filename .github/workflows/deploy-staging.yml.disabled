@@ -1,0 +1,314 @@
+# Staging Deployment Pipeline
+#
+# CURRENTLY DISABLED FOR SOLO DEVELOPMENT
+# To enable: Rename this file from deploy-staging.yml.disabled to deploy-staging.yml
+#
+# Automatically deploys to staging on push to develop branch
+
+name: Deploy to Staging
+
+on:
+  # Uncomment when ready to enable
+  # push:
+  #   branches: [develop]
+  # workflow_run:
+  #   workflows: ["CI Pipeline"]
+  #   types: [completed]
+  #   branches: [develop]
+  
+  # For now, only manual trigger
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version/tag to deploy'
+        required: false
+        default: 'latest'
+      skip_tests:
+        description: 'Skip smoke tests'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  ENVIRONMENT: staging
+  DEPLOY_TIMEOUT: '600'  # 10 minutes
+  HEALTH_CHECK_RETRIES: '20'
+  HEALTH_CHECK_DELAY: '10'
+
+jobs:
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      deployment_id: ${{ steps.deployment.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ inputs.version }}" != "" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create deployment
+        id: deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'staging',
+              auto_merge: false,
+              required_contexts: [],
+              description: 'Staging deployment ${{ steps.version.outputs.version }}'
+            });
+            core.setOutput('id', deployment.data.id);
+            return deployment.data.id;
+
+  deploy-database:
+    name: Database Migrations
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.rightline.zw
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: '1.7.1'
+
+      - name: Install dependencies
+        run: |
+          poetry install --only main
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          echo "Running database migrations..."
+          poetry run alembic upgrade head
+          
+          echo "Verifying migration status..."
+          poetry run alembic current
+
+      - name: Seed test data (if needed)
+        if: github.event.inputs.seed_data == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          echo "Seeding staging data..."
+          poetry run python scripts/seed_staging_data.py
+
+  deploy-services:
+    name: Deploy Services
+    needs: [prepare, deploy-database]
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.rightline.zw
+    strategy:
+      matrix:
+        service: [api, ingestion, retrieval, summarizer]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy ${{ matrix.service }}
+        run: |
+          # For VPS deployment
+          if [ "${{ vars.DEPLOY_TARGET }}" = "vps" ]; then
+            echo "Deploying to VPS..."
+            ssh -o StrictHostKeyChecking=no ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }} << 'EOF'
+              cd /opt/rightline
+              git pull origin develop
+              docker-compose -f docker-compose.staging.yml pull ${{ matrix.service }}
+              docker-compose -f docker-compose.staging.yml up -d ${{ matrix.service }}
+              docker-compose -f docker-compose.staging.yml ps
+          EOF
+          
+          # For Kubernetes deployment
+          elif [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            echo "Deploying to Kubernetes..."
+            echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > kubeconfig
+            export KUBECONFIG=kubeconfig
+            
+            kubectl set image deployment/${{ matrix.service }} \
+              ${{ matrix.service }}=ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ needs.prepare.outputs.version }} \
+              -n rightline-staging
+            
+            kubectl rollout status deployment/${{ matrix.service }} \
+              -n rightline-staging \
+              --timeout=${DEPLOY_TIMEOUT}s
+          fi
+
+      - name: Health check
+        run: |
+          SERVICE_URL="${{ secrets.STAGING_URL }}/${{ matrix.service }}/health"
+          
+          for i in $(seq 1 $HEALTH_CHECK_RETRIES); do
+            echo "Health check attempt $i/$HEALTH_CHECK_RETRIES..."
+            
+            if curl -f -X GET "$SERVICE_URL" \
+              -H "Authorization: Bearer ${{ secrets.STAGING_HEALTH_TOKEN }}" \
+              --max-time 10; then
+              echo "Service ${{ matrix.service }} is healthy!"
+              exit 0
+            fi
+            
+            sleep $HEALTH_CHECK_DELAY
+          done
+          
+          echo "Health check failed for ${{ matrix.service }}"
+          exit 1
+
+  run-smoke-tests:
+    name: Smoke Tests
+    needs: deploy-services
+    if: github.event.inputs.skip_tests != 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          pip install httpx pytest pytest-asyncio
+
+      - name: Run smoke tests
+        env:
+          API_URL: ${{ secrets.STAGING_URL }}
+          API_KEY: ${{ secrets.STAGING_API_KEY }}
+        run: |
+          pytest tests/smoke/ \
+            --env staging \
+            --api-url "$API_URL" \
+            -v
+
+      - name: Run E2E tests (subset)
+        run: |
+          pytest tests/e2e/ \
+            -m "staging" \
+            --env staging \
+            --api-url "${{ secrets.STAGING_URL }}" \
+            -v \
+            --timeout 60
+
+  update-deployment-status:
+    name: Update Status
+    needs: [prepare, deploy-services, run-smoke-tests]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Update deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ needs.run-smoke-tests.result }}' === 'success' ? 'success' : 'failure';
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.prepare.outputs.deployment_id }},
+              state: status,
+              environment_url: 'https://staging.rightline.zw',
+              description: status === 'success' 
+                ? 'Deployment successful' 
+                : 'Deployment failed',
+            });
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "Staging Deployment: ${{ needs.run-smoke-tests.result }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Staging Deployment*\n*Status:* ${{ needs.run-smoke-tests.result }}\n*Version:* ${{ needs.prepare.outputs.version }}\n*Triggered by:* ${{ github.actor }}\n*URL:* https://staging.rightline.zw"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback-on-failure:
+    name: Auto Rollback
+    needs: [deploy-services, run-smoke-tests]
+    if: failure() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Rollback deployment
+        run: |
+          echo "Rolling back staging deployment..."
+          
+          if [ "${{ vars.DEPLOY_TARGET }}" = "vps" ]; then
+            ssh -o StrictHostKeyChecking=no ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }} << 'EOF'
+              cd /opt/rightline
+              docker-compose -f docker-compose.staging.yml down
+              git checkout HEAD~1
+              docker-compose -f docker-compose.staging.yml up -d
+          EOF
+          
+          elif [ "${{ vars.DEPLOY_TARGET }}" = "k8s" ]; then
+            echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > kubeconfig
+            export KUBECONFIG=kubeconfig
+            
+            kubectl rollout undo deployment/api -n rightline-staging
+            kubectl rollout undo deployment/ingestion -n rightline-staging
+            kubectl rollout undo deployment/retrieval -n rightline-staging
+            kubectl rollout undo deployment/summarizer -n rightline-staging
+          fi
+
+      - name: Notify rollback
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "⚠️ Staging deployment rolled back due to failures",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Automatic Rollback Executed*\n*Environment:* Staging\n*Reason:* Deployment or smoke tests failed"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
