@@ -19,7 +19,22 @@ from fastapi.responses import FileResponse, HTMLResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from libs.common.settings import get_settings
-from services.api.models import HealthResponse, QueryRequest, QueryResponse
+from services.api.analytics import (
+    get_analytics_summary,
+    get_common_queries,
+    init_database,
+    log_query,
+    save_feedback,
+)
+from services.api.models import (
+    AnalyticsResponse,
+    CommonQueriesResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+    HealthResponse,
+    QueryRequest,
+    QueryResponse,
+)
 from services.api.responses import get_hardcoded_response
 from services.api.whatsapp import (
     WhatsAppWebhookPayload,
@@ -53,6 +68,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     settings = get_settings()
     logger.info("Starting RightLine API", env=settings.app_env, version="0.1.0")
+    
+    # Initialize analytics database
+    await init_database()
     
     # Startup
     yield
@@ -229,6 +247,11 @@ async def query_legal_information(
         ```
     """
     request_id = getattr(request.state, "request_id", "unknown")
+    start_time = time.time()
+    
+    # Get user identifier (from header or generate session)
+    user_id = request.headers.get("x-user-id", request.client.host if request.client else "anonymous")
+    session_id = request.headers.get("x-session-id", None)
     
     logger.info(
         "Processing query",
@@ -242,16 +265,51 @@ async def query_legal_information(
         # Get hardcoded response based on query
         response = get_hardcoded_response(query_request.text, query_request.lang_hint)
         
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log query to analytics (async, non-blocking)
+        settings = get_settings()
+        await log_query(
+            request_id=request_id,
+            user_id=user_id,
+            channel=query_request.channel,
+            query_text=query_request.text,
+            response_topic=response.section_ref.act if response else None,
+            confidence=response.confidence if response else None,
+            response_time_ms=response_time_ms,
+            status="success" if response else "no_match",
+            session_id=session_id,
+            settings=settings
+        )
+        
         logger.info(
             "Query processed successfully",
             request_id=request_id,
             confidence=response.confidence,
             section_ref=f"{response.section_ref.act} §{response.section_ref.section}",
+            response_time_ms=response_time_ms,
         )
         
         return response
         
     except ValueError as e:
+        # Log failed query
+        response_time_ms = int((time.time() - start_time) * 1000)
+        settings = get_settings()
+        await log_query(
+            request_id=request_id,
+            user_id=user_id,
+            channel=query_request.channel,
+            query_text=query_request.text,
+            response_topic=None,
+            confidence=None,
+            response_time_ms=response_time_ms,
+            status="error",
+            session_id=session_id,
+            settings=settings
+        )
+        
         logger.warning(
             "Invalid query input",
             request_id=request_id,
@@ -263,6 +321,22 @@ async def query_legal_information(
         )
         
     except Exception as e:
+        # Log failed query
+        response_time_ms = int((time.time() - start_time) * 1000)
+        settings = get_settings()
+        await log_query(
+            request_id=request_id,
+            user_id=user_id,
+            channel=query_request.channel,
+            query_text=query_request.text,
+            response_topic=None,
+            confidence=None,
+            response_time_ms=response_time_ms,
+            status="error",
+            session_id=session_id,
+            settings=settings
+        )
+        
         logger.error(
             "Query processing failed",
             request_id=request_id,
@@ -273,6 +347,130 @@ async def query_legal_information(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error. Please try again later.",
         )
+
+
+@app.post("/v1/feedback", tags=["Feedback"])
+async def submit_feedback(
+    feedback: FeedbackRequest,
+    request: Request,
+) -> FeedbackResponse:
+    """Submit feedback for a query response.
+    
+    Allows users to rate and comment on the quality of responses.
+    
+    Args:
+        feedback: Feedback data including request_id, rating, and optional comment
+        request: FastAPI request object
+        
+    Returns:
+        FeedbackResponse with success status
+        
+    Example:
+        ```bash
+        curl -X POST http://localhost:8000/v1/feedback \\
+          -H "Content-Type: application/json" \\
+          -d '{"request_id": "req_123", "rating": 1, "comment": "Helpful!"}'
+        ```
+    """
+    # Get user identifier
+    user_id = request.headers.get("x-user-id", request.client.host if request.client else "anonymous")
+    settings = get_settings()
+    
+    success = await save_feedback(
+        request_id=feedback.request_id,
+        user_id=user_id,
+        rating=feedback.rating,
+        comment=feedback.comment,
+        settings=settings
+    )
+    
+    return FeedbackResponse(
+        success=success,
+        message="Feedback saved successfully" if success else "Failed to save feedback"
+    )
+
+
+@app.get("/v1/analytics", tags=["Analytics"])
+async def get_analytics(
+    hours: int = 24,
+    api_key: str | None = None,
+) -> AnalyticsResponse:
+    """Get analytics summary.
+    
+    Returns query statistics for the specified time period.
+    Protected endpoint - requires API key in production.
+    
+    Args:
+        hours: Number of hours to look back (default: 24)
+        api_key: Optional API key for authentication
+        
+    Returns:
+        Analytics summary with statistics
+        
+    Example:
+        ```bash
+        curl http://localhost:8000/v1/analytics?hours=24
+        ```
+    """
+    settings = get_settings()
+    
+    # Simple API key check for production
+    if settings.app_env == "production" and api_key != settings.secret_key[:16]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+    
+    summary = await get_analytics_summary(hours=hours, settings=settings)
+    
+    return AnalyticsResponse(
+        total_queries=summary.total_queries,
+        unique_users=summary.unique_users,
+        avg_response_time_ms=summary.avg_response_time_ms,
+        success_rate=summary.success_rate,
+        top_topics=summary.top_topics,
+        feedback_stats=summary.feedback_stats,
+        time_period=summary.time_period
+    )
+
+
+@app.get("/v1/analytics/common-queries", tags=["Analytics"])
+async def get_common_unmatched_queries(
+    limit: int = 20,
+    api_key: str | None = None,
+) -> CommonQueriesResponse:
+    """Get common unmatched queries.
+    
+    Returns queries that frequently don't match any hardcoded responses.
+    Useful for identifying gaps in coverage.
+    
+    Args:
+        limit: Maximum number of queries to return
+        api_key: Optional API key for authentication
+        
+    Returns:
+        List of common unmatched queries with counts
+        
+    Example:
+        ```bash
+        curl http://localhost:8000/v1/analytics/common-queries?limit=10
+        ```
+    """
+    settings = get_settings()
+    
+    # Simple API key check for production
+    if settings.app_env == "production" and api_key != settings.secret_key[:16]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+    
+    queries = await get_common_queries(limit=limit)
+    
+    return CommonQueriesResponse(
+        queries=queries,
+        total=len(queries)
+    )
 
 
 @app.get("/webhook", tags=["WhatsApp"])

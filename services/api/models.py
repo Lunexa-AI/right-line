@@ -253,3 +253,55 @@ class ErrorResponse(BaseModel):
         description="Request identifier for tracking",
         example="req_1234567890",
     )
+
+
+# Feedback Models
+class FeedbackRequest(BaseModel):
+    """Request model for submitting feedback."""
+    
+    request_id: str = Field(
+        description="Request ID to provide feedback for",
+        example="req_1234567890",
+    )
+    rating: int = Field(
+        ge=-1,
+        le=1,
+        description="Rating: -1 (negative), 0 (neutral), 1 (positive)",
+        example=1,
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional feedback comment",
+        example="Very helpful response!",
+    )
+
+
+class FeedbackResponse(BaseModel):
+    """Response model for feedback submission."""
+    
+    success: bool = Field(description="Whether feedback was saved successfully")
+    message: str = Field(description="Status message")
+    
+
+# Analytics Models
+class AnalyticsResponse(BaseModel):
+    """Response model for analytics summary."""
+    
+    total_queries: int = Field(description="Total number of queries")
+    unique_users: int = Field(description="Number of unique users")
+    avg_response_time_ms: float = Field(description="Average response time in milliseconds")
+    success_rate: float = Field(ge=0, le=100, description="Percentage of successful queries")
+    top_topics: list[tuple[str, int]] = Field(description="Most queried topics")
+    feedback_stats: dict[str, int] = Field(description="Feedback statistics")
+    time_period: str = Field(description="Time period for analytics")
+    
+
+class CommonQueriesResponse(BaseModel):
+    """Response model for common unmatched queries."""
+    
+    queries: list[tuple[str, int]] = Field(
+        description="List of (query_text, count) tuples",
+        example=[("pension calculation", 5), ("overtime rules", 3)],
+    )
+    total: int = Field(description="Total number of unmatched queries")
