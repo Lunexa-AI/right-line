@@ -1,0 +1,137 @@
+version: '3.8'
+
+# Lightweight MVP deployment - single server optimized
+# Designed for $5-10 VPS with 1-2GB RAM
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    image: rightline/api:mvp
+    container_name: rightline-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"  # Only expose to localhost for nginx
+    environment:
+      # Core settings
+      RIGHTLINE_APP_NAME: "RightLine MVP"
+      RIGHTLINE_APP_ENV: ${APP_ENV:-production}
+      RIGHTLINE_DEBUG: "false"
+      RIGHTLINE_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # Security
+      RIGHTLINE_SECRET_KEY: ${SECRET_KEY:?Secret key required}
+      RIGHTLINE_ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      RIGHTLINE_CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
+      
+      # Database - SQLite for MVP
+      RIGHTLINE_DATABASE_URL: "sqlite:////data/rightline.db"
+      
+      # Redis cache
+      RIGHTLINE_REDIS_URL: "redis://redis:6379/0"
+      
+      # WhatsApp
+      RIGHTLINE_WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
+      RIGHTLINE_WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      RIGHTLINE_WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      
+      # Rate limiting
+      RIGHTLINE_RATE_LIMIT_ENABLED: "true"
+      RIGHTLINE_RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT:-60}
+      
+      # Monitoring (optional)
+      RIGHTLINE_SENTRY_DSN: ${SENTRY_DSN:-}
+      RIGHTLINE_METRICS_ENABLED: ${METRICS_ENABLED:-false}
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+      - ./services/api/static:/app/static:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - rightline-mvp
+    # Resource limits for small VPS
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    container_name: rightline-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rightline-mvp
+    # Minimal Redis memory
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # Optional: Nginx for production
+  nginx:
+    image: nginx:alpine
+    container_name: rightline-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/sites:/etc/nginx/sites-enabled:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./services/api/static:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    networks:
+      - rightline-mvp
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles:
+      - production
+
+networks:
+  rightline-mvp:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  redis-data:
+    driver: local

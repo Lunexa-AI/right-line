@@ -1,0 +1,29 @@
+# Terraform Variables for RightLine Lightsail Deployment
+# Copy to terraform.tfvars and customize
+
+# AWS Region (choose closest to Zimbabwe)
+# Options: af-south-1 (Cape Town), eu-west-1 (Ireland), us-east-1 (Virginia)
+aws_region = "af-south-1"
+
+# Environment name
+environment = "production"
+
+# Instance configuration
+instance_name = "rightline-mvp"
+
+# Instance size (bundle_id options):
+# - nano_2_0: 512MB RAM, $3.50/month
+# - micro_2_0: 1GB RAM, $5/month
+# - small_2_0: 2GB RAM, $10/month (recommended for MVP)
+# - medium_2_0: 4GB RAM, $20/month
+# - large_2_0: 8GB RAM, $40/month
+bundle_id = "small_2_0"
+
+# Availability zone (must match region)
+availability_zone = "af-south-1a"
+
+# Enable automatic snapshots for backup
+enable_snapshots = true
+
+# Domain name (optional - leave empty to use IP only)
+domain_name = ""
