@@ -16,23 +16,111 @@
         :root {
             --primary: #2563EB;
             --primary-dark: #1D4ED8;
+            --primary-light: #60A5FA;
             --success: #10B981;
             --warning: #F59E0B;
             --error: #EF4444;
             --text-primary: #111827;
             --text-secondary: #6B7280;
+            --text-tertiary: #9CA3AF;
             --bg-primary: #FFFFFF;
             --bg-secondary: #F9FAFB;
+            --bg-tertiary: #F3F4F6;
             --bg-chat: #F3F4F6;
+            --border-color: #E5E7EB;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
             --transition-fast: 150ms;
             --transition-normal: 200ms;
+            --transition-slow: 300ms;
+        }
+
+        /* Dark mode theme */
+        [data-theme="dark"] {
+            --primary: #3B82F6;
+            --primary-dark: #2563EB;
+            --primary-light: #60A5FA;
+            --success: #34D399;
+            --warning: #FBBF24;
+            --error: #F87171;
+            --text-primary: #F9FAFB;
+            --text-secondary: #D1D5DB;
+            --text-tertiary: #9CA3AF;
+            --bg-primary: #111827;
+            --bg-secondary: #1F2937;
+            --bg-tertiary: #374151;
+            --bg-chat: #1F2937;
+            --border-color: #374151;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Auto-detect system preference */
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                --primary: #3B82F6;
+                --primary-dark: #2563EB;
+                --primary-light: #60A5FA;
+                --success: #34D399;
+                --warning: #FBBF24;
+                --error: #F87171;
+                --text-primary: #F9FAFB;
+                --text-secondary: #D1D5DB;
+                --text-tertiary: #9CA3AF;
+                --bg-primary: #111827;
+                --bg-secondary: #1F2937;
+                --bg-tertiary: #374151;
+                --bg-chat: #1F2937;
+                --border-color: #374151;
+                --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+                --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+                --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            }
+        }
+
+        /* Apply theme colors */
+        body {
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
         }
 
         /* Smooth transitions for all interactive elements */
         button, a, input, textarea, .transition-all {
             transition: all var(--transition-fast) ease-out;
+        }
+
+        /* Progressive disclosure animations */
+        @keyframes expandDown {
+            from {
+                max-height: 0;
+                opacity: 0;
+            }
+            to {
+                max-height: 500px;
+                opacity: 1;
+            }
+        }
+
+        .expand-enter {
+            animation: expandDown var(--transition-slow) ease-out;
+        }
+
+        /* Fade in animation for suggestions */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-0.5rem);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in {
+            animation: fadeIn var(--transition-normal) ease-out;
         }
 
         /* Pulsing dots loading animation */
@@ -71,7 +159,7 @@
         /* Typing indicator animation */
         .typing-indicator {
             padding: 0.75rem 1rem;
-            background: white;
+            background: var(--bg-primary);
             border-radius: 1rem 1rem 1rem 0.25rem;
             display: inline-block;
             box-shadow: var(--shadow-sm);
@@ -104,6 +192,7 @@
             overflow-y: auto;
             scroll-behavior: smooth;
             padding: 1.5rem;
+            background-color: var(--bg-chat);
         }
 
         /* Message bubble styles */
@@ -134,7 +223,7 @@
         }
 
         .message.bot .message-bubble {
-            background: white;
+            background: var(--bg-primary);
             color: var(--text-primary);
             border-bottom-left-radius: 0.25rem;
         }
@@ -157,8 +246,8 @@
             bottom: 0;
             left: 0;
             right: 0;
-            background: white;
-            border-top: 1px solid #E5E7EB;
+            background: var(--bg-primary);
+            border-top: 1px solid var(--border-color);
             box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05);
             z-index: 50;
             padding: 1rem;
@@ -175,6 +264,9 @@
             max-height: 8rem;
             resize: none;
             overflow-y: auto;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
         }
 
         /* Custom scrollbar for chat */
@@ -187,12 +279,12 @@
         }
 
         .chat-container::-webkit-scrollbar-thumb {
-            background: #D1D5DB;
+            background: var(--text-tertiary);
             border-radius: 3px;
         }
 
         .chat-container::-webkit-scrollbar-thumb:hover {
-            background: #9CA3AF;
+            background: var(--text-secondary);
         }
 
         /* Mobile-optimized touch targets (44px minimum) */
@@ -218,7 +310,7 @@
         /* Confidence meter styling */
         .confidence-bar {
             height: 0.5rem;
-            background: #E5E7EB;
+            background: var(--border-color);
             border-radius: 0.25rem;
             overflow: hidden;
             position: relative;
@@ -236,10 +328,113 @@
 
         /* Card depth with subtle shadows */
         .card {
-            background: white;
+            background: var(--bg-primary);
             border-radius: 0.75rem;
             box-shadow: var(--shadow-md);
             padding: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        /* Suggestion pills */
+        .suggestion-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            transition: all var(--transition-fast);
+            cursor: pointer;
+        }
+
+        .suggestion-pill:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* Source badge styles */
+        .source-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.625rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+
+        .source-badge.official {
+            background: var(--success);
+            color: white;
+        }
+
+        .source-badge.veritas {
+            background: var(--primary);
+            color: white;
+        }
+
+        .source-badge.interpreted {
+            background: var(--warning);
+            color: white;
+        }
+
+        /* Copy button toast */
+        .toast {
+            position: fixed;
+            bottom: 5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--border-color);
+            z-index: 100;
+            opacity: 0;
+            transition: opacity var(--transition-normal);
+        }
+
+        .toast.show {
+            opacity: 1;
+        }
+
+        /* Expandable details section */
+        .details-section {
+            overflow: hidden;
+            max-height: 0;
+            transition: max-height var(--transition-slow) ease-out;
+        }
+
+        .details-section.expanded {
+            max-height: 1000px;
+        }
+
+        /* Theme toggle button */
+        .theme-toggle {
+            position: relative;
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 50%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .theme-toggle:hover {
+            background: var(--bg-tertiary);
+            transform: scale(1.05);
         }
 
         /* Responsive spacing utilities */
@@ -256,25 +451,52 @@
             .message-bubble {
                 max-width: 85%;
             }
+
+            .suggestion-pills-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
         }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen flex flex-col">
-    <!-- Header (Minimal) -->
-    <header class="bg-white border-b border-gray-200 flex-shrink-0">
+<body>
+    <!-- Header (Minimal with theme toggle) -->
+    <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0" style="background: var(--bg-primary); border-color: var(--border-color);">
         <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-2">
-                <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="h-6 w-6" style="color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path>
                 </svg>
-                <h1 class="text-lg font-bold text-gray-900">RightLine</h1>
+                <h1 class="text-lg font-bold" style="color: var(--text-primary);">RightLine</h1>
                 <span class="text-xs px-2 py-0.5 bg-green-100 text-green-800 rounded-full font-medium">MVP</span>
             </div>
-            <button id="clearBtn" class="touch-target text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-md hover:bg-gray-100">
-                Clear
-            </button>
+            <div class="flex items-center gap-2">
+                <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
+                    <svg id="sunIcon" class="h-5 w-5" style="color: var(--text-secondary); display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                    </svg>
+                    <svg id="moonIcon" class="h-5 w-5" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+                    </svg>
+                </button>
+                <button id="clearBtn" class="touch-target text-sm px-3 py-1.5 rounded-md" style="color: var(--text-secondary); background: var(--bg-secondary);">
+                    Clear
+                </button>
+            </div>
         </div>
     </header>
+
+    <!-- Contextual Suggestions Bar -->
+    <div id="suggestionsBar" class="hidden border-b" style="background: var(--bg-primary); border-color: var(--border-color);">
+        <div class="max-w-4xl mx-auto px-4 py-2">
+            <div class="flex items-center gap-2 suggestion-pills-container" style="overflow-x: auto;">
+                <span class="text-xs font-medium" style="color: var(--text-secondary);">Suggested:</span>
+                <div id="suggestionPills" class="flex gap-2">
+                    <!-- Dynamic suggestions will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Main Chat Container -->
     <main class="flex-1 overflow-hidden">
@@ -282,12 +504,12 @@
             <!-- Welcome Message -->
             <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable">
                 <!-- Disclaimer -->
-                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                <div class="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 p-4 rounded-r-lg">
                     <div class="flex gap-3">
                         <svg class="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                             <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
                         </svg>
-                        <p class="text-sm text-yellow-700">
+                        <p class="text-sm text-yellow-700 dark:text-yellow-300">
                             <strong>Legal Information Only:</strong> This provides general legal information, not legal advice. Always consult a qualified lawyer for specific legal matters.
                         </p>
                     </div>
@@ -295,23 +517,23 @@
 
                 <!-- Welcome Card -->
                 <div class="card">
-                    <h2 class="text-2xl font-bold text-gray-900 mb-3">Welcome to RightLine</h2>
-                    <p class="text-gray-600 mb-6">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
+                    <h2 class="text-2xl font-bold mb-3" style="color: var(--text-primary);">Welcome to RightLine</h2>
+                    <p class="mb-6" style="color: var(--text-secondary);">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
                     
                     <!-- Popular Questions -->
                     <div class="space-y-2">
-                        <p class="text-sm font-semibold text-gray-700">Try asking:</p>
+                        <p class="text-sm font-semibold" style="color: var(--text-primary);">Try asking:</p>
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <button class="suggestion-btn text-left text-sm bg-gray-50 hover:bg-gray-100 text-gray-700 p-3 rounded-lg transition-all hover:shadow-sm">
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all" style="background: var(--bg-secondary); color: var(--text-primary);">
                                 💰 What is the minimum wage?
                             </button>
-                            <button class="suggestion-btn text-left text-sm bg-gray-50 hover:bg-gray-100 text-gray-700 p-3 rounded-lg transition-all hover:shadow-sm">
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all" style="background: var(--bg-secondary); color: var(--text-primary);">
                                 🏖️ How much annual leave am I entitled to?
                             </button>
-                            <button class="suggestion-btn text-left text-sm bg-gray-50 hover:bg-gray-100 text-gray-700 p-3 rounded-lg transition-all hover:shadow-sm">
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all" style="background: var(--bg-secondary); color: var(--text-primary);">
                                 👶 Can I get maternity leave?
                             </button>
-                            <button class="suggestion-btn text-left text-sm bg-gray-50 hover:bg-gray-100 text-gray-700 p-3 rounded-lg transition-all hover:shadow-sm">
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all" style="background: var(--bg-secondary); color: var(--text-primary);">
                                 ⚖️ What are my rights if I'm fired?
                             </button>
                         </div>
@@ -333,18 +555,19 @@
                 <div class="flex-1 relative">
                     <textarea
                         id="queryInput"
-                        class="auto-expand w-full px-4 py-2.5 pr-16 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        class="auto-expand w-full px-4 py-2.5 pr-16 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                         placeholder="Ask a legal question..."
                         rows="1"
                         maxlength="1000"
                         aria-label="Legal question input"
                     ></textarea>
-                    <span id="charCount" class="absolute bottom-2 right-3 text-xs text-gray-400">0/1000</span>
+                    <span id="charCount" class="absolute bottom-2 right-3 text-xs" style="color: var(--text-tertiary);">0/1000</span>
                 </div>
                 <button
                     type="submit"
                     id="sendBtn"
-                    class="touch-target px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    style="background: var(--primary);"
                     aria-label="Send message"
                 >
                     <span id="sendText">Send</span>
@@ -358,11 +581,16 @@
                     </div>
                 </button>
             </form>
-            <div class="mt-2 text-xs text-gray-500 text-center">
-                Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-700">Enter</kbd> to send, 
-                <kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-700">Shift+Enter</kbd> for new line
+            <div class="mt-2 text-xs text-center" style="color: var(--text-tertiary);">
+                Press <kbd class="px-1.5 py-0.5 rounded" style="background: var(--bg-secondary); color: var(--text-secondary);">Enter</kbd> to send, 
+                <kbd class="px-1.5 py-0.5 rounded" style="background: var(--bg-secondary); color: var(--text-secondary);">Shift+Enter</kbd> for new line
             </div>
         </div>
+    </div>
+
+    <!-- Copy Toast Notification -->
+    <div id="copyToast" class="toast">
+        <span>✓ Copied to clipboard</span>
     </div>
 
     <script>
@@ -382,10 +610,58 @@
         const sendLoading = document.getElementById('sendLoading');
         const clearBtn = document.getElementById('clearBtn');
         const suggestionBtns = document.querySelectorAll('.suggestion-btn');
+        const themeToggle = document.getElementById('themeToggle');
+        const sunIcon = document.getElementById('sunIcon');
+        const moonIcon = document.getElementById('moonIcon');
+        const suggestionsBar = document.getElementById('suggestionsBar');
+        const suggestionPills = document.getElementById('suggestionPills');
+        const copyToast = document.getElementById('copyToast');
 
         // Chat state (max 3 exchanges in memory)
         let chatHistory = [];
         const MAX_HISTORY = 3;
+
+        // Seed suggestions for contextual help
+        const SEED_SUGGESTIONS = [
+            'Working hours limits',
+            'Overtime pay rates',
+            'Dismissal procedures',
+            'Medical leave requirements'
+        ];
+
+        // Initialize theme
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            
+            if (savedTheme) {
+                document.documentElement.setAttribute('data-theme', savedTheme);
+                updateThemeIcon(savedTheme === 'dark');
+            } else {
+                updateThemeIcon(systemPrefersDark);
+            }
+        }
+
+        // Update theme icon
+        function updateThemeIcon(isDark) {
+            if (isDark) {
+                sunIcon.style.display = 'block';
+                moonIcon.style.display = 'none';
+            } else {
+                sunIcon.style.display = 'none';
+                moonIcon.style.display = 'block';
+            }
+        }
+
+        // Toggle theme
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeIcon(newTheme === 'dark');
+        });
 
         // Auto-expand textarea functionality
         function autoExpand(textarea) {
@@ -416,6 +692,7 @@
             chatHistory = [];
             messagesContainer.innerHTML = '';
             welcomeMessage.style.display = 'block';
+            suggestionsBar.classList.add('hidden');
             queryInput.value = '';
             autoExpand(queryInput);
             charCount.textContent = '0/1000';
@@ -431,6 +708,62 @@
                 queryForm.dispatchEvent(new Event('submit'));
             });
         });
+
+        // Handle suggestion pill clicks
+        function handleSuggestionClick(text) {
+            queryInput.value = text;
+            autoExpand(queryInput);
+            charCount.textContent = `${text.length}/1000`;
+            queryForm.dispatchEvent(new Event('submit'));
+        }
+
+        // Update suggestions bar
+        function updateSuggestions(relatedSections) {
+            suggestionPills.innerHTML = '';
+            
+            const suggestions = relatedSections && relatedSections.length > 0 
+                ? relatedSections.slice(0, 4)
+                : SEED_SUGGESTIONS;
+            
+            suggestions.forEach(suggestion => {
+                const pill = document.createElement('button');
+                pill.className = 'suggestion-pill';
+                pill.textContent = suggestion;
+                pill.onclick = () => handleSuggestionClick(
+                    relatedSections ? `Tell me about section ${suggestion}` : suggestion
+                );
+                suggestionPills.appendChild(pill);
+            });
+            
+            suggestionsBar.classList.remove('hidden');
+        }
+
+        // Copy to clipboard functionality
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast();
+            } catch (err) {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast();
+            }
+        }
+
+        // Show toast notification
+        function showToast() {
+            copyToast.classList.add('show');
+            setTimeout(() => {
+                copyToast.classList.remove('show');
+            }, 2000);
+        }
 
         // Form submission
         queryForm.addEventListener('submit', async (e) => {
@@ -482,8 +815,11 @@
                 // Remove typing indicator
                 removeTypingIndicator(typingId);
                 
-                // Add bot response
+                // Add bot response with progressive disclosure
                 addBotResponse(data);
+                
+                // Update suggestions based on response
+                updateSuggestions(data.related_sections);
                 
                 // Manage chat history (keep last 3 exchanges)
                 chatHistory.push({ user: question, bot: data });
@@ -528,7 +864,7 @@
             
             const bubbleClass = type === 'user' 
                 ? 'message-bubble' 
-                : `message-bubble ${isError ? 'bg-red-50 border border-red-200' : ''}`;
+                : `message-bubble ${isError ? 'border-red-300' : ''}`;
             
             messageDiv.innerHTML = `
                 <div class="${bubbleClass}">
@@ -541,7 +877,7 @@
             scrollToBottom();
         }
 
-        // Add bot response with rich formatting
+        // Add bot response with progressive disclosure
         function addBotResponse(data) {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message bot message-enter';
@@ -557,61 +893,123 @@
                                    data.confidence > 0.4 ? 'confidence-medium' : 
                                    'confidence-low';
             
+            // Determine source type
+            const sourceType = data.section_ref.act.includes('Statutory') ? 'official' :
+                              data.section_ref.act.includes('Labour Act') ? 'official' :
+                              data.citations && data.citations.some(c => c.url.includes('veritas')) ? 'veritas' :
+                              'interpreted';
+            
+            const sourceBadgeHtml = sourceType === 'official' ? 
+                '<span class="source-badge official">✓ OFFICIAL</span>' :
+                sourceType === 'veritas' ?
+                '<span class="source-badge veritas">VERITAS</span>' :
+                '<span class="source-badge interpreted">INTERPRETED</span>';
+            
+            const messageId = 'msg-' + Date.now();
+            
             messageDiv.innerHTML = `
                 <div class="message-bubble">
-                    <!-- Summary -->
+                    <!-- Summary Section (Always Visible) -->
                     <div class="mb-3">
-                        <p class="text-gray-900 whitespace-pre-line">${escapeHtml(data.summary_3_lines)}</p>
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                ${sourceBadgeHtml}
+                                <span class="text-xs" style="color: var(--text-tertiary);">${data.citations ? data.citations.length : 0} sources</span>
+                            </div>
+                            <button onclick="copyToClipboard('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}')" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);">
+                                📋 Copy
+                            </button>
+                        </div>
+                        <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.summary_3_lines)}</p>
                     </div>
                     
                     <!-- Confidence Bar -->
                     <div class="mb-3">
                         <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs text-gray-500">Confidence</span>
-                            <span class="text-xs font-medium text-gray-700">${confidencePercent}%</span>
+                            <span class="text-xs" style="color: var(--text-secondary);">Confidence</span>
+                            <span class="text-xs font-medium" style="color: var(--text-primary);">${confidencePercent}%</span>
                         </div>
                         <div class="confidence-bar">
                             <div class="confidence-fill ${confidenceClass}" style="width: ${confidencePercent}%"></div>
                         </div>
                     </div>
                     
-                    <!-- Legal Reference -->
-                    <div class="pt-3 border-t border-gray-200">
-                        <p class="text-xs text-gray-500 mb-1">Legal Reference</p>
-                        <p class="text-sm font-medium text-gray-900">
-                            ${escapeHtml(data.section_ref.act)} 
-                            [Ch. ${escapeHtml(data.section_ref.chapter)}] 
-                            §${escapeHtml(data.section_ref.section)}
-                        </p>
+                    <!-- View Details Button -->
+                    <button onclick="toggleDetails('${messageId}')" class="w-full text-sm font-medium py-2 px-3 rounded-lg transition-all flex items-center justify-between" style="background: var(--bg-secondary); color: var(--primary);">
+                        <span>View Details</span>
+                        <svg id="${messageId}-arrow" class="h-4 w-4 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    
+                    <!-- Expandable Details Section -->
+                    <div id="${messageId}-details" class="details-section mt-3">
+                        <div class="pt-3 space-y-3">
+                            <!-- Legal Reference -->
+                            <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                <p class="text-xs font-medium mb-1" style="color: var(--text-secondary);">Legal Reference</p>
+                                <p class="text-sm font-semibold" style="color: var(--text-primary);">
+                                    ${escapeHtml(data.section_ref.act)} 
+                                    [Ch. ${escapeHtml(data.section_ref.chapter)}] 
+                                    §${escapeHtml(data.section_ref.section)}
+                                </p>
+                                ${data.section_ref.version ? `
+                                    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+                                        Last updated: ${escapeHtml(data.section_ref.version)}
+                                    </p>
+                                ` : ''}
+                            </div>
+                            
+                            <!-- Citations -->
+                            ${data.citations && data.citations.length > 0 ? `
+                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                    <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
+                                    <div class="space-y-1">
+                                        ${data.citations.map(c => `
+                                            <a href="${escapeHtml(c.url)}" target="_blank" class="text-xs block hover:underline" style="color: var(--primary);">
+                                                → ${escapeHtml(c.title)}
+                                                ${c.page ? ` (Page ${c.page})` : ''}
+                                            </a>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <!-- Related Sections -->
+                            ${data.related_sections && data.related_sections.length > 0 ? `
+                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                    <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Related Sections</p>
+                                    <div class="flex flex-wrap gap-1">
+                                        ${data.related_sections.map(s => `
+                                            <button onclick="handleSuggestionClick('Tell me about section ${escapeHtml(s)}')" class="text-xs px-2 py-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" style="background: var(--bg-tertiary); color: var(--text-primary);">
+                                                §${escapeHtml(s)}
+                                            </button>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
                     </div>
-                    
-                    <!-- Citations (if any) -->
-                    ${data.citations && data.citations.length > 0 ? `
-                        <div class="pt-3 border-t border-gray-200">
-                            <p class="text-xs text-gray-500 mb-1">Sources</p>
-                            ${data.citations.map(c => `
-                                <a href="${escapeHtml(c.url)}" target="_blank" class="text-xs text-blue-600 hover:text-blue-800 block">
-                                    → ${escapeHtml(c.title)}
-                                </a>
-                            `).join('')}
-                        </div>
-                    ` : ''}
-                    
-                    <!-- Related Sections (if any) -->
-                    ${data.related_sections && data.related_sections.length > 0 ? `
-                        <div class="pt-3 border-t border-gray-200">
-                            <p class="text-xs text-gray-500 mb-1">Related</p>
-                            <p class="text-xs text-gray-700">
-                                ${data.related_sections.map(s => `§${escapeHtml(s)}`).join(', ')}
-                            </p>
-                        </div>
-                    ` : ''}
                 </div>
                 <span class="message-time">${time}</span>
             `;
             
             messagesContainer.appendChild(messageDiv);
             scrollToBottom();
+        }
+
+        // Toggle details section
+        function toggleDetails(messageId) {
+            const details = document.getElementById(`${messageId}-details`);
+            const arrow = document.getElementById(`${messageId}-arrow`);
+            
+            if (details.classList.contains('expanded')) {
+                details.classList.remove('expanded');
+                arrow.style.transform = 'rotate(0deg)';
+            } else {
+                details.classList.add('expanded');
+                arrow.style.transform = 'rotate(180deg)';
+            }
         }
 
         // Add typing indicator
@@ -660,7 +1058,11 @@
         }
 
         // Initialize
+        initTheme();
         queryInput.focus();
+        
+        // Show initial suggestions
+        updateSuggestions([]);
     </script>
 </body>
 </html>
