@@ -300,6 +300,19 @@
             scroll-behavior: smooth;
         }
 
+        /* Screen-reader only utility */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 1px, 1px);
+            white-space: nowrap;
+            border: 0;
+        }
+
         /* Message bubble animations */
         @keyframes slideUp {
             from {
@@ -318,10 +331,11 @@
 
         /* Chat container styling */
         .chat-container {
-            height: calc(100vh - 12rem - var(--safe-area-top) - var(--safe-area-bottom));
+            height: calc(100vh - 8rem);
             overflow-y: auto;
             scroll-behavior: smooth;
             padding: 1.5rem;
+            padding-bottom: 8rem;
             background-color: var(--bg-chat);
             -webkit-overflow-scrolling: touch;
         }
@@ -384,10 +398,10 @@
             right: 0;
             background: var(--bg-primary);
             border-top: 1px solid var(--border-color);
-            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
             z-index: 50;
-            padding: 1rem;
-            padding-bottom: max(1rem, var(--safe-area-bottom));
+            padding: 0.75rem 1rem;
+            padding-bottom: max(1rem, env(safe-area-inset-bottom, 0.75rem));
         }
 
         .floating-input-container {
@@ -588,9 +602,9 @@
 
         @media (max-width: 640px) {
             .chat-container {
-                height: calc(100vh - 10rem - var(--safe-area-top) - var(--safe-area-bottom));
+                height: calc(100vh - 8rem);
                 padding: 1rem;
-                padding-bottom: 2rem;
+                padding-bottom: 8rem;
             }
 
             .message-bubble {
@@ -615,24 +629,29 @@
 
             /* Bottom safe area for gesture navigation */
             .floating-input {
-                padding-bottom: max(1.5rem, calc(var(--safe-area-bottom) + 0.5rem));
+                padding-bottom: max(1rem, env(safe-area-inset-bottom, 0.75rem));
             }
         }
     </style>
 </head>
 <body>
+    <!-- Skip to main content link for keyboard navigation -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 bg-blue-600 text-white px-4 py-2 rounded-md z-50">
+        Skip to main content
+    </a>
+
     <!-- Header (Minimal with theme toggle) -->
-    <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 safe-top" style="background: var(--bg-primary); border-color: var(--border-color);">
+    <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 safe-top" style="background: var(--bg-primary); border-color: var(--border-color);" role="banner">
         <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between safe-left safe-right">
             <div class="flex items-center gap-2">
-                <svg class="h-6 w-6" style="color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="h-6 w-6" style="color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path>
                 </svg>
                 <h1 class="text-lg font-bold" style="color: var(--text-primary);">RightLine</h1>
                 <span class="text-xs px-2 py-0.5 bg-green-100 text-green-800 rounded-full font-medium">MVP</span>
             </div>
             <div class="flex items-center gap-2">
-                <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
+                <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
                     <svg id="sunIcon" class="h-5 w-5" style="color: var(--text-secondary); display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
                     </svg>
@@ -640,7 +659,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
                     </svg>
                 </button>
-                <button id="clearBtn" class="touch-target text-sm px-3 py-1.5 rounded-md" style="color: var(--text-secondary); background: var(--bg-secondary);">
+                <button id="clearBtn" class="touch-target text-sm px-3 py-1.5 rounded-md" style="color: var(--text-secondary); background: var(--bg-secondary);" aria-label="Clear conversation" title="Clear conversation">
                     Clear
                 </button>
             </div>
@@ -648,10 +667,10 @@
     </header>
 
     <!-- Contextual Suggestions Bar -->
-    <div id="suggestionsBar" class="hidden border-b" style="background: var(--bg-primary); border-color: var(--border-color);">
+    <div id="suggestionsBar" class="border-b" style="background: var(--bg-primary); border-color: var(--border-color);">
         <div class="max-w-4xl mx-auto px-4 py-2">
             <div class="flex items-center gap-2 suggestion-pills-container" style="overflow-x: auto;">
-                <span class="text-xs font-medium" style="color: var(--text-secondary);">Suggested:</span>
+                <span class="text-xs font-medium whitespace-nowrap" style="color: var(--text-secondary);">Suggested:</span>
                 <div id="suggestionPills" class="flex gap-2">
                     <!-- Dynamic suggestions will be inserted here -->
                 </div>
@@ -660,17 +679,17 @@
     </div>
 
     <!-- Main Chat Container -->
-    <main class="flex-1 overflow-hidden smooth-scroll">
+    <main id="main-content" class="flex-1 overflow-hidden smooth-scroll" role="main">
         <div id="chatContainer" class="chat-container">
             <!-- Welcome Message -->
             <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable">
                 <!-- Disclaimer -->
-                <div class="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                <div class="bg-yellow-100 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded-r-lg">
                     <div class="flex gap-3">
-                        <svg class="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <svg class="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                             <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
                         </svg>
-                        <p class="text-sm text-yellow-700 dark:text-yellow-300">
+                        <p class="text-sm text-yellow-800 dark:text-yellow-300">
                             <strong>Legal Information Only:</strong> This provides general legal information, not legal advice. Always consult a qualified lawyer for specific legal matters.
                         </p>
                     </div>
@@ -683,19 +702,19 @@
                     
                     <!-- Popular Questions -->
                     <div class="space-y-2">
-                        <p class="text-sm font-semibold" style="color: var(--text-primary);">Try asking:</p>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);">
-                                💰 What is the minimum wage?
+                        <h3 class="text-sm font-semibold" style="color: var(--text-primary);">Try asking:</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Popular legal questions">
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about minimum wage">
+                                <span aria-hidden="true">💰</span> What is the minimum wage?
                             </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);">
-                                🏖️ How much annual leave am I entitled to?
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about annual leave entitlement">
+                                <span aria-hidden="true">🏖️</span> How much annual leave am I entitled to?
                             </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);">
-                                👶 Can I get maternity leave?
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about maternity leave">
+                                <span aria-hidden="true">👶</span> Can I get maternity leave?
                             </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);">
-                                ⚖️ What are my rights if I'm fired?
+                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about dismissal rights">
+                                <span aria-hidden="true">⚖️</span> What are my rights if I'm fired?
                             </button>
                         </div>
                     </div>
@@ -703,7 +722,7 @@
             </div>
 
             <!-- Messages Container -->
-            <div id="messagesContainer" class="max-w-2xl mx-auto">
+            <div id="messagesContainer" class="max-w-2xl mx-auto" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
                 <!-- Messages will be inserted here -->
             </div>
         </div>
@@ -746,15 +765,16 @@
                     </div>
                 </button>
             </form>
-            <div class="mt-2 text-xs text-center" style="color: var(--text-tertiary);">
-                Press <kbd class="px-1.5 py-0.5 rounded" style="background: var(--bg-secondary); color: var(--text-secondary);">Enter</kbd> to send, 
-                <kbd class="px-1.5 py-0.5 rounded" style="background: var(--bg-secondary); color: var(--text-secondary);">Shift+Enter</kbd> for new line
+            <!-- Keyboard hints - hidden on mobile, subtle on desktop -->
+            <div class="hidden sm:block mt-1 text-xs text-center opacity-50" style="color: var(--text-tertiary); font-size: 0.625rem;">
+                <kbd class="px-1 py-0.5 rounded" style="background: var(--bg-tertiary); color: var(--text-tertiary);">↵</kbd> send • 
+                <kbd class="px-1 py-0.5 rounded" style="background: var(--bg-tertiary); color: var(--text-tertiary);">⇧↵</kbd> line
             </div>
         </div>
     </div>
 
     <!-- Copy Toast Notification -->
-    <div id="copyToast" class="toast">
+    <div id="copyToast" class="toast" role="status" aria-live="polite" aria-atomic="true">
         <span>✓ Copied to clipboard</span>
     </div>
 
@@ -892,7 +912,7 @@
             
             suggestions.forEach(suggestion => {
                 const pill = document.createElement('button');
-                pill.className = 'suggestion-pill';
+                pill.className = 'suggestion-pill whitespace-nowrap';
                 pill.textContent = suggestion;
                 pill.onclick = () => handleSuggestionClick(
                     relatedSections ? `Tell me about section ${suggestion}` : suggestion
@@ -900,46 +920,106 @@
                 suggestionPills.appendChild(pill);
             });
             
+            // Always show suggestions bar
             suggestionsBar.classList.remove('hidden');
         }
 
         // Copy to clipboard functionality with success flash
         async function copyToClipboard(text, buttonElement) {
+            // Enhanced browser compatibility check
+            const copyToClipboardAsync = async () => {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    // Fallback for older browsers or non-secure contexts
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.style.position = 'fixed';
+                    textarea.style.left = '-999999px';
+                    textarea.style.top = '-999999px';
+                    textarea.setAttribute('readonly', '');
+                    document.body.appendChild(textarea);
+                    
+                    // Handle iOS
+                    if (navigator.userAgent.match(/ipad|iphone/i)) {
+                        const range = document.createRange();
+                        range.selectNodeContents(textarea);
+                        const selection = window.getSelection();
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        textarea.setSelectionRange(0, 999999);
+                    } else {
+                        textarea.select();
+                    }
+                    
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+            };
+
             try {
-                await navigator.clipboard.writeText(text);
+                await copyToClipboardAsync();
                 if (buttonElement) {
                     buttonElement.classList.add('success-flash');
                     setTimeout(() => {
                         buttonElement.classList.remove('success-flash');
                     }, 400);
                 }
-                showToast();
+                showToast('Copied to clipboard');
             } catch (err) {
-                // Fallback for older browsers
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-                if (buttonElement) {
-                    buttonElement.classList.add('success-flash');
-                    setTimeout(() => {
-                        buttonElement.classList.remove('success-flash');
-                    }, 400);
-                }
-                showToast();
+                console.error('Copy failed:', err);
+                showToast('Copy failed - please select and copy manually', 'error');
             }
         }
 
-        // Show toast notification
-        function showToast() {
-            copyToast.classList.add('show');
+        // Share functionality with Web Share API fallback
+        async function shareResponse(text) {
+            const shareData = {
+                title: 'RightLine Legal Information',
+                text: text,
+                url: window.location.href
+            };
+
+            try {
+                if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+                    await navigator.share(shareData);
+                    showToast('Shared successfully');
+                } else {
+                    // Fallback: copy link to clipboard
+                    const shareText = `${text}\n\nFrom RightLine: ${window.location.href}`;
+                    await copyToClipboard(shareText);
+                    showToast('Link copied to clipboard');
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('Share failed:', err);
+                    // Fallback to copy
+                    const shareText = `${text}\n\nFrom RightLine: ${window.location.href}`;
+                    await copyToClipboard(shareText);
+                }
+            }
+        }
+
+        // Show toast notification with custom message
+        function showToast(message = 'Copied to clipboard', type = 'success') {
+            const toast = document.getElementById('copyToast');
+            const toastSpan = toast.querySelector('span');
+            
+            // Update message and style based on type
+            if (type === 'error') {
+                toastSpan.innerHTML = `❌ ${message}`;
+                toast.style.background = 'var(--error)';
+                toast.style.color = 'white';
+            } else {
+                toastSpan.innerHTML = `✓ ${message}`;
+                toast.style.background = 'var(--bg-primary)';
+                toast.style.color = 'var(--text-primary)';
+            }
+            
+            toast.classList.add('show');
             setTimeout(() => {
-                copyToast.classList.remove('show');
-            }, 2000);
+                toast.classList.remove('show');
+            }, type === 'error' ? 3000 : 2000);
         }
 
         // Form submission
@@ -1088,15 +1168,20 @@
                 <div class="message-bubble">
                     <!-- Summary Section (Always Visible) -->
                     <div class="mb-3">
-                        <div class="flex items-start justify-between mb-2">
-                            <div class="flex items-center gap-2">
-                                ${sourceBadgeHtml}
-                                <span class="text-xs" style="color: var(--text-tertiary);">${data.citations ? data.citations.length : 0} sources</span>
+                                                    <div class="flex items-start justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    ${sourceBadgeHtml}
+                                    <span class="text-xs" style="color: var(--text-tertiary);">${data.citations ? data.citations.length : 0} sources</span>
+                                </div>
+                                <div class="flex items-center gap-1">
+                                    <button onclick="copyToClipboard('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}', this)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Copy summary" title="Copy summary">
+                                        📋 Copy
+                                    </button>
+                                    <button onclick="shareResponse('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}')" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Share response" title="Share response">
+                                        🔗 Share
+                                    </button>
+                                </div>
                             </div>
-                            <button onclick="copyToClipboard('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}', this)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);">
-                                📋 Copy
-                            </button>
-                        </div>
                         <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.summary_3_lines)}</p>
                     </div>
                     
@@ -1124,17 +1209,24 @@
                         <div class="pt-3 space-y-3">
                             <!-- Legal Reference -->
                             <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
-                                <p class="text-xs font-medium mb-1" style="color: var(--text-secondary);">Legal Reference</p>
-                                <p class="text-sm font-semibold" style="color: var(--text-primary);">
-                                    ${escapeHtml(data.section_ref.act)} 
-                                    [Ch. ${escapeHtml(data.section_ref.chapter)}] 
-                                    §${escapeHtml(data.section_ref.section)}
-                                </p>
-                                ${data.section_ref.version ? `
-                                    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-                                        Last updated: ${escapeHtml(data.section_ref.version)}
-                                    </p>
-                                ` : ''}
+                                <div class="flex items-start justify-between">
+                                    <div class="flex-1">
+                                        <p class="text-xs font-medium mb-1" style="color: var(--text-secondary);">Legal Reference</p>
+                                        <p class="text-sm font-semibold" style="color: var(--text-primary);">
+                                            ${escapeHtml(data.section_ref.act)} 
+                                            [Ch. ${escapeHtml(data.section_ref.chapter)}] 
+                                            §${escapeHtml(data.section_ref.section)}
+                                        </p>
+                                        ${data.section_ref.version ? `
+                                            <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+                                                Last updated: ${escapeHtml(data.section_ref.version)}
+                                            </p>
+                                        ` : ''}
+                                    </div>
+                                    <button onclick="copyToClipboard('${escapeHtml(data.section_ref.act)} [Ch. ${escapeHtml(data.section_ref.chapter)}] §${escapeHtml(data.section_ref.section)}', this)" class="text-xs p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Copy legal reference" title="Copy legal reference">
+                                        📋
+                                    </button>
+                                </div>
                             </div>
                             
                             <!-- Citations -->
