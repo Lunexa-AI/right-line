@@ -77,7 +77,7 @@ class WhatsAppWebhookPayload(BaseModel):
 
 # WhatsApp message formatting
 def format_whatsapp_response(response: QueryResponse) -> str:
-    """Format QueryResponse for WhatsApp message.
+    """Format QueryResponse for WhatsApp message with improved UX.
     
     WhatsApp has specific formatting requirements:
     - Bold: *text*
@@ -92,43 +92,95 @@ def format_whatsapp_response(response: QueryResponse) -> str:
     Returns:
         Formatted WhatsApp message string
     """
-    # Format the summary with quotes
-    summary = f"❝ {response.summary_3_lines} ❞"
+    message_parts = []
     
-    # Format section reference
-    section = f"\n\n📄 *{response.section_ref.act}* [Chapter {response.section_ref.chapter}] §{response.section_ref.section}"
+    # Header with act and section
+    message_parts.append(f"📖 *{response.section_ref.act}*")
+    message_parts.append(f"_Section {response.section_ref.section} • Chapter {response.section_ref.chapter}_")
+    message_parts.append("")
     
-    # Format citations as links (WhatsApp will make them clickable)
-    citations = "\n🔗 "
+    # Summary with better formatting
+    message_parts.append("━━━━━━━━━━━━━━━")
+    summary_lines = response.summary_3_lines.split('\n')
+    for line in summary_lines:
+        if line.strip():
+            message_parts.append(f"▫️ {line.strip()}")
+    message_parts.append("━━━━━━━━━━━━━━━")
+    message_parts.append("")
+    
+    # Confidence with visual indicator
+    conf_pct = int(response.confidence * 100)
+    if conf_pct >= 90:
+        conf_visual = "🟢🟢🟢🟢🟢"
+        conf_text = "Very High"
+    elif conf_pct >= 80:
+        conf_visual = "🟢🟢🟢🟢⚪"
+        conf_text = "High"
+    elif conf_pct >= 70:
+        conf_visual = "🟡🟡🟡⚪⚪"
+        conf_text = "Moderate"
+    else:
+        conf_visual = "🟡🟡⚪⚪⚪"
+        conf_text = "Low"
+    
+    message_parts.append(f"*Confidence:* {conf_text}")
+    message_parts.append(f"{conf_visual} ({conf_pct}%)")
+    
+    # Citations if available
     if response.citations:
-        citation_links = []
-        for cite in response.citations[:2]:  # Limit to 2 citations for brevity
-            # Shorten the URL for WhatsApp display
-            citation_links.append(cite.url.replace("https://", ""))
-        citations += " | ".join(citation_links)
+        message_parts.append("")
+        message_parts.append("📚 *Learn More:*")
+        for i, cite in enumerate(response.citations[:2], 1):
+            # Truncate long titles
+            title = cite.title[:40] + "..." if len(cite.title) > 40 else cite.title
+            message_parts.append(f"{i}. {title}")
     
-    # Add confidence indicator
-    confidence_emoji = "✅" if response.confidence > 0.7 else "⚠️" if response.confidence > 0.4 else "❓"
-    confidence_text = f"\n\n{confidence_emoji} Confidence: {response.confidence:.0%}"
-    
-    # Add related sections if available
-    related = ""
+    # Related topics with better names
     if response.related_sections:
-        related = f"\n\n📚 Related: §" + ", §".join(response.related_sections[:3])
+        message_parts.append("")
+        message_parts.append("💡 *Related Topics:*")
+        
+        # Map technical names to user-friendly names
+        topic_names = {
+            "minimum_wage": "💰 Minimum Wage",
+            "working_hours": "⏰ Working Hours",
+            "leave_entitlement": "🏖️ Leave",
+            "termination": "🚪 Termination",
+            "maternity_leave": "👶 Maternity",
+            "paternity_leave": "👨‍👧 Paternity",
+            "overtime_pay": "💸 Overtime",
+            "sick_leave": "🏥 Sick Leave",
+            "public_holidays": "📅 Holidays",
+            "workplace_safety": "⛑️ Safety",
+            "notice_period": "📋 Notice Period",
+            "retrenchment": "📉 Retrenchment",
+        }
+        
+        related_formatted = []
+        for topic in response.related_sections[:3]:
+            name = topic_names.get(topic, topic.replace('_', ' ').title())
+            related_formatted.append(name)
+        
+        message_parts.append(" • ".join(related_formatted))
     
-    # Combine all parts
-    message = summary + section + citations + confidence_text + related
+    # Interactive footer
+    message_parts.extend([
+        "",
+        "━━━━━━━━━━━━━━━",
+        "💬 _Ask another question_",
+        "👍 _Reply 'helpful' if this helped_",
+        "",
+        "⚠️ _Legal info only. Consult a lawyer for advice._"
+    ])
     
-    # Add footer
-    footer = "\n\n_Reply 'HELP' for assistance or 'MORE' for related info_"
+    # Join and check length
+    full_message = "\n".join(message_parts)
     
-    # Ensure message doesn't exceed WhatsApp limit
-    full_message = message + footer
-    if len(full_message) > 4000:  # Leave some buffer
-        # Truncate summary if needed
-        truncated_summary = response.summary_3_lines.split('\n')[0] + "..."
-        message = f"❝ {truncated_summary} ❞" + section + citations + confidence_text
-        full_message = message + footer
+    # Truncate if too long
+    if len(full_message) > 4000:
+        # Remove some sections to fit
+        message_parts = message_parts[:10] + message_parts[-3:]  # Keep header, summary, and footer
+        full_message = "\n".join(message_parts)
     
     return full_message
 

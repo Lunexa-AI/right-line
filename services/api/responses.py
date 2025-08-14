@@ -612,6 +612,125 @@ HARDCODED_RESPONSES: dict[str, dict[str, Any]] = {
         "related_sections": ["6A", "7"],
     },
     
+    "overtime_pay": {
+        "keywords": ["overtime", "extra hours", "overtime pay", "overtime rate", "sunday work", "holiday work", "sunday payment", "working extra"],
+        "summary_3_lines": "Overtime work must be paid at 1.5x normal rate for regular overtime.\nSunday and public holiday work paid at 2x normal rate.\nMaximum 24 hours overtime per week allowed.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "14A",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 14A", "url": "https://law.co.zw/labour-act-14a", "page": 15},
+            {"title": "SI 56/2024 Overtime Regulations", "url": "https://law.co.zw/si-56-2024"}
+        ],
+        "confidence": 0.95,
+        "related_sections": ["working_hours", "public_holidays", "rest_periods"]
+    },
+    
+    "notice_period": {
+        "keywords": ["notice", "notice period", "resignation notice", "termination notice", "notice pay"],
+        "summary_3_lines": "Notice period depends on length of service and contract terms.\nMinimum 1 month for permanent employees, 2 weeks for probation.\nPayment in lieu of notice is permissible.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "12",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 12", "url": "https://law.co.zw/labour-act-12", "page": 8},
+            {"title": "Employment Termination Guidelines", "url": "https://law.co.zw/termination-guide"}
+        ],
+        "confidence": 0.92,
+        "related_sections": ["termination", "resignation", "severance_pay"]
+    },
+    
+    "paternity_leave": {
+        "keywords": ["paternity", "father leave", "paternal leave", "dad leave", "new father"],
+        "summary_3_lines": "Fathers entitled to 2 weeks paid paternity leave.\nMust be taken within 30 days of child's birth.\nRequires birth certificate or medical proof.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "18A",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 18A", "url": "https://law.co.zw/labour-act-18a", "page": 22},
+            {"title": "Parental Leave Regulations", "url": "https://law.co.zw/parental-leave"}
+        ],
+        "confidence": 0.94,
+        "related_sections": ["maternity_leave", "leave_entitlement"]
+    },
+    
+    "retrenchment": {
+        "keywords": ["retrenchment", "layoff", "redundancy", "downsizing", "job cuts", "retrenchment process"],
+        "summary_3_lines": "Retrenchment requires board approval and worker consultation.\nMinimum package: 1 month salary per year of service.\nNotice period of at least 3 months required.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "12C",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 12C", "url": "https://law.co.zw/labour-act-12c", "page": 10},
+            {"title": "Retrenchment Guidelines 2024", "url": "https://law.co.zw/retrenchment-2024"}
+        ],
+        "confidence": 0.96,
+        "related_sections": ["severance_pay", "termination", "notice_period"]
+    },
+    
+    "collective_bargaining": {
+        "keywords": ["collective bargaining", "union negotiation", "workers agreement", "collective agreement"],
+        "summary_3_lines": "Workers have right to collective bargaining through unions.\nEmployers must recognize registered trade unions.\nCollective agreements are legally binding.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "74",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 74", "url": "https://law.co.zw/labour-act-74", "page": 95},
+            {"title": "Collective Bargaining Procedures", "url": "https://law.co.zw/collective-bargaining"}
+        ],
+        "confidence": 0.91,
+        "related_sections": ["trade_unions", "grievance_procedures"]
+    },
+    
+    "casual_workers": {
+        "keywords": ["casual", "casual worker", "temporary worker", "part time", "casual employment"],
+        "summary_3_lines": "Casual workers employed for less than 6 weeks continuously.\nEntitled to pro-rata leave and proportional benefits.\nMust be registered and paid at least minimum wage.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "7",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 7", "url": "https://law.co.zw/labour-act-7", "page": 5},
+            {"title": "Casual Employment Regulations", "url": "https://law.co.zw/casual-employment"}
+        ],
+        "confidence": 0.89,
+        "related_sections": ["contract_employment", "minimum_wage"]
+    },
+    
+    "retirement_age": {
+        "keywords": ["retirement", "retirement age", "pension age", "retire", "mandatory retirement"],
+        "summary_3_lines": "Normal retirement age is 60-65 years depending on sector.\nEarly retirement possible with reduced benefits.\nCompulsory retirement cannot be enforced below 60.",
+        "section_ref": {
+            "act": "Labour Act",
+            "chapter": "28:01",
+            "section": "12B",
+            "version": "2024"
+        },
+        "citations": [
+            {"title": "Labour Act Section 12B", "url": "https://law.co.zw/labour-act-12b", "page": 9},
+            {"title": "Retirement Policy Framework", "url": "https://law.co.zw/retirement-policy"}
+        ],
+        "confidence": 0.90,
+        "related_sections": ["pension_contributions", "gratuity"]
+    },
+    
     "grievance_procedures": {
         "keywords": ["grievance", "complaint", "dispute", "workplace dispute"],
         "summary": "Employee must first raise grievance with immediate supervisor.\nIf unresolved, escalate to management then labour officer.\nGrievance procedures must be in employment code.",
@@ -752,8 +871,11 @@ def get_hardcoded_response(query_text: str, lang_hint: str | None = None) -> Que
     section_ref = SectionRef(**response_data["section_ref"])
     citations = [Citation(**citation) for citation in response_data["citations"]]
     
+    # Handle both old "summary" and new "summary_3_lines" fields
+    summary = response_data.get("summary_3_lines") or response_data.get("summary", "")
+    
     return QueryResponse(
-        summary_3_lines=response_data["summary"],
+        summary_3_lines=summary,
         section_ref=section_ref,
         citations=citations,
         confidence=confidence,
