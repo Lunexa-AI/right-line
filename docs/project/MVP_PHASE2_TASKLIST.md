@@ -12,20 +12,25 @@
 ## 2.1 Corpus & Ingestion
 
 ### 2.1.1 Source acquisition & policy
-- [ ] Human: Gather initial corpus - Download PDFs of Labour Act, 5 key SIs (e.g., SI 15/2023 Wages), and 10 sample ZimLII cases. Store in `data/raw/`. (Effort: 1 hour)
-- [ ] Create `docs/data/SOURCES.md` with list of sources, URLs, download dates, and compliance notes (e.g., public domain usage). (Tests: None; Acceptance: Document exists and is complete; Effort: 1 hour)
-- [ ] Add git-lfs for large PDFs in `data/raw/` to avoid bloating repo. (Tests: git-lfs tracks PDFs; Acceptance: PDFs not committed directly; Effort: 0.5 hours)
+- [ ] Human: Approve polite crawling plan (respect robots/Terms of Use) for ZimLII. (Effort: 0.25 hours)
+- [ ] Implement automated crawl (done): snapshot HTML pages for Labour Act, SIs index, and labour-related judgments into `data/raw/` using `scripts/crawl_zimlii.py`. (Tests: folder populated; Effort: 0.5 hours)
+- [ ] Ensure the crawler always fetches the Labour Act URL `https://zimlii.org/akn/zw/act/1985/16/eng@2016-12-31` and downloads any linked PDFs if present. (Tests: file exists in `data/raw/legislation/`; Effort: 0.25 hours)
+- [ ] Crawl labour judgments via `/judgments/?q=labour` with unlimited pagination until no results; broaden query terms if needed (employment, dismissal, retrenchment). (Tests: files in `data/raw/judgments/`; Effort: 0.5 hours)
+- [ ] Exclude raw snapshots from git (done): add `.gitignore` rule for `data/raw/**` keeping `.gitkeep`. (Acceptance: `git status` clean after crawl; Effort: 0.25 hours)
+- [ ] Create/maintain `docs/data/SOURCES.md` documenting sources, access dates, and licensing notes. (Tests: Document exists and is complete; Effort: 0.5 hours)
 
 ### 2.1.2 Deterministic section chunking
-- [ ] Implement parser in `services/ingestion/parser.py`: Extract sections/subsections from PDFs using PyMuPDF, generate stable IDs (`<act_code>:<chapter>:<section>[:<sub>]`). (Tests: Unit test with sample PDF → expected IDs; Effort: 2 hours)
-- [ ] Add metadata extraction: Parse effective dates/versions from document headers or metadata. (Tests: Known dated doc → correct dates; Effort: 1 hour)
-- [ ] Store chunks in SQLite schema (extend Phase 1 DB): Tables `documents(id, source_path, ingest_date)`, `sections(id, doc_id, section_id, text, effective_start, effective_end)`. (Tests: Insert/retrieve chunk; Effort: 1 hour)
-- [ ] Make chunking idempotent: Hash input + params to skip if unchanged. (Tests: Re-run on same doc → no duplicates; Effort: 1 hour)
+- [ ] Implement parser in `services/ingestion/parser.py`: Prefer HTML (AKN pages) via BeautifulSoup/lxml to extract sections/subsections and generate stable IDs (`<act_code>:<chapter>:<section>[:<sub>]`). (Tests: Unit test with sample HTML → expected IDs; Effort: 2 hours)
+- [ ] Fallback for PDFs (if linked): Use PyMuPDF to extract text and then apply the same section boundary rules. (Tests: Sample PDF → expected IDs; Effort: 1 hour)
+- [ ] Metadata extraction: Parse effective dates/versions from AKN metadata (e.g., `eng@YYYY-MM-DD`) or page headers. (Tests: Known dated doc → correct dates; Effort: 0.5 hours)
+- [ ] Store chunks in SQLite (extend Phase 1 DB): Tables `documents(id, source_path, source_type, ingest_date)`, `sections(id, doc_id, section_id, text, effective_start, effective_end)`. (Tests: Insert/retrieve chunk; Effort: 1 hour)
+- [ ] Idempotency: Hash input + params to skip if unchanged. (Tests: Re-run on same doc → no duplicates; Effort: 0.5 hours)
 
 ### 2.1.3 Text extraction pipeline
-- [ ] Basic extraction: Use PyMuPDF for PDF text, fallback to plain text read for non-PDFs. (Tests: Sample PDF → clean text; Effort: 1 hour)
-- [ ] Normalization: Strip whitespace, normalize numbering (e.g., "Section 1A" → standard format), remove footnotes. (Tests: Noisy input → clean output; Effort: 1 hour)
-- [ ] Error handling: Quarantine failed docs with logs. (Tests: Bad PDF → logged error, not crashed; Effort: 1 hour)
+- [ ] HTML extraction path: Strip navigation/boilerplate; isolate the statute/case content region; extract clean text with structure markers (chapter/section headings). (Tests: Sample HTML → clean content; Effort: 1 hour)
+- [ ] PDF fallback path: Use PyMuPDF to extract text when PDFs are available and superior. (Tests: Sample PDF → clean text; Effort: 1 hour)
+- [ ] Normalization: Trim whitespace, standardize numbering (e.g., `Section 1A`), remove footnotes and headers/footers; ensure Unicode normalization. (Tests: Noisy input → clean output; Effort: 1 hour)
+- [ ] Error handling: Quarantine failed docs with logs; continue batch. (Tests: Bad file → logged error, no crash; Effort: 0.5 hours)
 
 ## 2.2 Embeddings & Vector Store
 
