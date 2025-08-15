@@ -11,6 +11,9 @@ aiosqlite==0.21.0
 # HTTP & Async
 httpx==0.27.0
 aiofiles==24.1.0
+PyYAML==6.0.2
+beautifulsoup4==4.12.3
+lxml==5.2.2
 
 # Database
 asyncpg==0.29.0
