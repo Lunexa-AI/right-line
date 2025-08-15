@@ -268,3 +268,6 @@ runs/
 # Security
 .secrets/
 .credentials/
+# Crawled raw HTML/PDF snapshots
+**/data/raw/**
+!data/raw/.gitkeep
