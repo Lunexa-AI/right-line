@@ -44,73 +44,45 @@ cd rightline
 
 # Create production environment file
 cat > .env.production << 'EOF'
-# Security (generate with: openssl rand -hex 32)
-RIGHTLINE_SECRET_KEY=your-very-long-random-secret-key-at-least-32-chars
+# Security
+RIGHTLINE_SECRET_KEY=$(openssl rand -hex 32)
 
 # Database
 RIGHTLINE_DATABASE_URL=postgresql://rightline:rightline@postgres:5432/rightline
 
-# WhatsApp (get from Meta Business)
-RIGHTLINE_WHATSAPP_VERIFY_TOKEN=your-verify-token
-RIGHTLINE_WHATSAPP_ACCESS_TOKEN=your-access-token
-
-# App Settings
+# App
 RIGHTLINE_APP_ENV=production
 RIGHTLINE_LOG_LEVEL=INFO
+
+# LLM (local)
+RIGHTLINE_LLM_MODEL_PATH=/models/tinyllama-1.1b-chat.Q4_K_M.gguf
+RIGHTLINE_LLM_MAX_TOKENS=120
 EOF
 
-# Set permissions
 chmod 600 .env.production
 ```
 
-### Step 3: Deploy Application (2 minutes)
+### Step 3: Download LLM Model (1 minute)
 ```bash
-# Create minimal MVP compose file
-cat > docker-compose.mvp.yml << 'EOF'
-version: '3.8'
-services:
-  postgres:
-    image: pgvector/pgvector:pg15
-    restart: always
-    environment:
-      POSTGRES_DB: rightline
-      POSTGRES_USER: rightline
-      POSTGRES_PASSWORD: rightline
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "rightline"]
-      interval: 10s
-      retries: 5
+mkdir -p models
+# Example: TinyLlama 1.1B Chat Q4_K_M (adjust URL to a valid GGUF source)
+curl -L -o models/tinyllama-1.1b-chat.Q4_K_M.gguf "https://your-model-hosting/tinyllama-1.1b-chat.Q4_K_M.gguf"
+```
 
-  api:
-    build:
-      context: .
-      dockerfile: services/api/Dockerfile
-    restart: always
-    ports:
-      - "80:8000"
-    env_file: .env.production
-    environment:
-      RIGHTLINE_DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline
-    volumes:
-      - ./data:/data
-      - ./logs:/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-volumes:
-  pgdata:
-EOF
-
-# Build and start services
+### Step 4: Deploy Application (2 minutes)
+```bash
+# Compose mounts ./models to /models in the container
+# (already set in docker-compose.mvp.yml instructions)
 docker-compose -f docker-compose.mvp.yml build
 docker-compose -f docker-compose.mvp.yml up -d
+```
 
-# Check status
-docker-compose -f docker-compose.mvp.yml ps
+### Step 5: Verify LLM Generation (1 minute)
+```bash
+curl -X POST http://localhost/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"text": "What is notice period for termination?"}'
+# Expect: EXACT 3 lines, ≤100 chars each, with citations appended
 ```
 
 ### Step 4: Verify Deployment (1 minute)
