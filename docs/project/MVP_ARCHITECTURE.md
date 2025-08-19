@@ -2,7 +2,7 @@
 
 ## 0) Product Promise (Non-Negotiables)
 - **< 2.0s P95** end-to-end response on low bandwidth for short queries.
-- **Exact section + 3-line summary + citations** every time; no hallucinations.
+- **Cited, traceable answers** every time; zero speculation.
 - **WhatsApp-first UX**, with simple Web fallback.
 - **Zero user PII by default**, opt-in feedback; all responses traceable to sources.
 - **Runs on a $5–10 VPS**; minimal dependencies.
@@ -23,8 +23,8 @@
       │        Core RAG Pipeline (In-Process)    │
       │ - Query Processing                        │
       │ - Hybrid Search (FTS + pgvector)         │  
-      │ - Reranking (Optional for MVP)           │
-      │ - Summary Generation (Extractive)        │
+      │ - (Optional) Score Fusion Rerank         │
+      │ - Two-Stage Compose (Extractive → LLM)   │
       └─────────┬────────────────────────────────┘
                 │
         ┌───────▼─────────┐
@@ -62,59 +62,65 @@
 ### 2.3 Ingestion (CLI Scripts)
 - **Scripts** (to be created):
   - `scripts/ingest.py` - Main ingestion orchestrator
-  - `scripts/embed.py` - Generate embeddings using sentence-transformers
-  - `scripts/chunk.py` - Text chunking logic
+  - `scripts/parse_docs.py` - Parse & chunk
+  - `scripts/generate_embeddings.py` - Embeddings with sentence-transformers
 - **Process**: Run manually or via cron, not a service
 - **Already exists**: `scripts/crawl_zimlii.py` for fetching documents
 
 ### 2.4 RAG Pipeline (In-Process)
-- **Implementation**: Add to `services/api/retrieval.py` (new file)
-- **Components**:
-  1. Query processor: Basic normalization
+- **Implementation**: `services/api/retrieval.py` + `services/api/composer.py`
+- **Retrieval**:
+  1. Query normalize (lowercase, legal tokens)
   2. Search: PostgreSQL FTS + pgvector similarity
-  3. Fusion: Simple score combination
-  4. Summary: Extract key sentences (no LLM needed for MVP)
-- **No external services**: No Meilisearch, Qdrant, or Redis needed
+  3. Fusion: Simple score combination (no heavy reranker in MVP)
+  4. Temporal filter if date is present
+- **Composition (Two-Stage)**:
+  - Stage A (Extractive, sub-200ms):
+    - Build a structured answer object:
+      - `tldr` (≤220 chars)
+      - `key_points` (3–5 bullets, ≤25 words each)
+      - `citations` ([main section, optional corroborator])
+      - `suggestions` (2–3 follow-ups)
+  - Stage B (Local LLM rewrite, ≤600ms):
+    - Backend: `llama-cpp-python` (CPU)
+    - Model: TinyLlama 1.1B Chat or Phi-3-mini-instruct (GGUF Q4_K_M)
+    - Prompt: Strict JSON schema to rewrite `tldr` and `key_points` for clarity/tone; preserve citations; generate context-aware suggestions
+    - Params: temperature=0.2, top_p=0.9, max_tokens=120, timeout=600ms
+  - Fallback: If Stage B times out/errors, return Stage A as final
+- **Confidence-aware behavior**:
+  - High: answer directly
+  - Medium: answer + 1 clarifying question
+  - Low: ask clarifying question first (no answer)
 
 ### 2.5 Data Model (PostgreSQL Only)
 ```sql
--- Single database with pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE documents (
-    id SERIAL PRIMARY KEY,
-    source_url TEXT,
-    title TEXT,
-    ingest_date TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE chunks (
-    id SERIAL PRIMARY KEY,
-    doc_id INT REFERENCES documents(id),
-    chunk_text TEXT,
-    chunk_index INT,
-    embedding vector(384),  -- bge-small-en dimension
-    metadata JSONB
-);
-
-CREATE INDEX ON chunks USING ivfflat (embedding vector_cosine_ops);
-CREATE INDEX ON chunks USING GIN (to_tsvector('english', chunk_text));
+-- documents/chunks/embeddings as defined in init-rag.sql
 ```
+
+### 2.6 Rendering (Channel-Specific)
+- **WhatsApp**:
+  - Title: “Act §Section — Topic”
+  - TL;DR line
+  - 3–5 concise bullets
+  - Citations list: [1] main, [2] optional corroborator
+  - Follow-ups: “1 Steps · 2 Penalties · 3 Exceptions”
+- **Web**:
+  - Card layout: TL;DR stripe, Key points list
+  - Collapsible Details with the most relevant paragraph highlighted
+  - Citations with hover preview; copy/share buttons
+  - Follow-up chips to continue the conversation
 
 ## 3) Implementation Status
 - **Phase 1 ✅**: Hardcoded responses complete (36 topics)
-- **Phase 2 🔴**: RAG implementation needed (this is the next step)
-- **Current State**: FastAPI service running with hardcoded responses
+- **Phase 2 🔴**: RAG + Local LLM (answer composer) next
 
 ## 4) Deployment (Actual MVP)
-- **Docker Compose**: Only 2 containers needed
-  - `api`: FastAPI service
-  - `postgres`: PostgreSQL with pgvector
-- **No need for**: Redis, Meilisearch, Qdrant, MinIO, Nginx
-- **Resources**: 2GB RAM VPS sufficient
+- **Docker Compose**: `api` + `postgres`; mount `./models:/models`
+- **Env**: `RIGHTLINE_LLM_MODEL_PATH=/models/<file>.gguf`, `RIGHTLINE_LLM_MAX_TOKENS=120`
 
 ## 5) Non-Functional Requirements
-- **Latency**: P95 <2s (achievable with in-process pipeline)
+- **Latency**: P95 <2s (Retrieval ≤800ms; LLM compose ≤600ms; glue ≤200ms)
 - **Security**: API key auth, rate limiting, HMAC user IDs
-- **Monitoring**: Basic structlog, no complex observability needed
-- **Cost**: $5/month VPS handles ~100 concurrent users
+- **Monitoring**: Basic structlog
+- **Cost**: $5/month VPS

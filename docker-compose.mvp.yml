@@ -43,6 +43,9 @@ services:
       RIGHTLINE_SECRET_KEY: ${RIGHTLINE_SECRET_KEY}
       RIGHTLINE_DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline
       RIGHTLINE_LOG_LEVEL: ${RIGHTLINE_LOG_LEVEL:-INFO}
+      # Local LLM (llama.cpp)
+      RIGHTLINE_LLM_MODEL_PATH: ${RIGHTLINE_LLM_MODEL_PATH:-/models/tinyllama-1.1b-chat.Q4_K_M.gguf}
+      RIGHTLINE_LLM_MAX_TOKENS: ${RIGHTLINE_LLM_MAX_TOKENS:-120}
       
       # WhatsApp (optional)
       RIGHTLINE_WHATSAPP_VERIFY_TOKEN: ${RIGHTLINE_WHATSAPP_VERIFY_TOKEN:-}
@@ -53,6 +56,7 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/logs
+      - ./models:/models
     depends_on:
       postgres:
         condition: service_healthy

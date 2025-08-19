@@ -266,71 +266,51 @@
 ### 2.3 Retrieval & Reranking 🔴
 
 #### 2.3.1 Text search implementation
-- [ ] Create `services/api/retrieval.py` with FTS query:
-  ```python
-  async def text_search(query: str, limit: int = 50):
-      sql = "SELECT * FROM chunks WHERE to_tsvector('english', chunk_text) @@ plainto_tsquery('english', %s) LIMIT %s"
-  ```
-  (Tests: Returns relevant chunks; Effort: 1 hour)
+- [ ] Create `services/api/retrieval.py` with FTS query (limit 50). (Tests: Returns relevant chunks; Effort: 1 hour)
 
 #### 2.3.2 Vector search implementation  
-- [ ] Add vector search to `retrieval.py`:
-  ```python
-  async def vector_search(query_embedding, limit: int = 50):
-      sql = "SELECT * FROM chunks ORDER BY embedding <-> %s LIMIT %s"
-  ```
-  (Tests: Returns similar chunks; Effort: 1 hour)
-- [ ] Implement score fusion: Combine text and vector results (Effort: 1 hour)
+- [ ] Add vector search (ANN) and simple score fusion. (Tests: Similar results; Effort: 2 hours)
+- [ ] Temporal filter by date if provided. (Tests: Correct version; Effort: 0.5 hours)
 
-#### 2.3.3 Reranking (Optional for MVP)
-- [ ] Skip for MVP - use simple score fusion instead
-- [ ] Can add in V2 for better accuracy
+#### 2.3.3 Confidence scoring
+- [ ] Compute confidence from fusion scores and gap to rank-2. (Tests: Sensible distribution; Effort: 0.5 hours)
 
 ### 2.4 Answer Composition 🔴
 
-#### 2.4.1 Response generation
-- [ ] Update `services/api/responses.py` to use retrieved chunks:
-  ```python
-  def generate_response(chunks):
-      top_chunk = chunks[0]
-      summary = extract_key_sentences(top_chunk.text, max_lines=3)
-      citation = f"{top_chunk.metadata['source']} Section {top_chunk.metadata['section']}"
-      return QueryResponse(summary=summary, citation=citation)
-  ```
-  (Tests: Returns formatted response; Effort: 2 hours)
+#### 2.4.1 Local LLM setup (MVP)
+- [ ] Add `llama-cpp-python` (CPU) to dependencies. (Effort: 0.5 hours)
+- [ ] Download tiny GGUF model (TinyLlama 1.1B Chat or Phi-3-mini, Q4_K_M) to `models/`. (Effort: 0.5 hours)
+- [ ] Env vars: `RIGHTLINE_LLM_MODEL_PATH`, `RIGHTLINE_LLM_MAX_TOKENS=120`. (Effort: 0.25 hours)
 
-#### 2.4.2 Basic lang support
-- [ ] Add `lang_hint` param; fallback to English. (Tests: Routing; Effort: 1 hour)
+#### 2.4.2 Two-stage compose (extractive → LLM)
+- [ ] Stage A: Implement extractive composer to build structured object:
+  - `tldr` (≤220 chars)
+  - `key_points` (3–5 bullets, ≤25 words each)
+  - `citations` (1–2)
+  - `suggestions` (2–3)
+  (Tests: Format enforcement; Effort: 1.5 hours)
+- [ ] Stage B: LLM rewrite using strict JSON schema prompt; maintain citations; produce suggestions. (Tests: Valid JSON; Effort: 2 hours)
+- [ ] Fallback: On timeout/error, return Stage A as-is. (Tests: Fallback path; Effort: 0.5 hours)
 
-### 2.5 Evaluation 🔴
+#### 2.4.3 Confidence-aware flow
+- [ ] High: answer directly; Medium: answer + 1 clarifying question; Low: ask for clarification first. (Tests: Branching; Effort: 1 hour)
 
-#### 2.5.1 Golden set
-- [ ] Human: Curate 20-30 QA pairs in `tests/golden.yaml`. (Effort: 1.5 hours)
-- [ ] Load and basic eval functions. (Tests: Loader; Effort: 0.5 hours)
+### 2.5 Rendering (Channel-specific) 🔴
+- [ ] WhatsApp renderer: Title, TL;DR, bullets, citations list, follow-up numeric options. (Tests: Formatting; Effort: 1 hour)
+- [ ] Web renderer: Card with TL;DR, list, collapsible details, citations hover, follow-up chips. (Tests: DOM checks; Effort: 1.5 hours)
 
-#### 2.5.2 Benchmark script
-- [ ] `scripts/eval_rag.py`: Compute Recall@k/MRR/faithfulness. (Tests: Runs clean; Effort: 1.5 hours)
+### 2.6 Evaluation 🔴
+- [ ] Golden set: 20–30 QA pairs; evaluate Recall@k and manual faithfulness spot checks. (Effort: 2 hours)
+- [ ] Latency tests: Ensure retrieve ≤800ms, compose ≤600ms; overall P95 <2s. (Effort: 1 hour)
 
-### 2.6 Basic Ops 🔴
-
-#### 2.6.1 Logging & metrics
-- [ ] Add structlog timings for stages. (Tests: Logs present; Effort: 1 hour)
-- [ ] Basic metrics export (JSON or Prometheus client). (Tests: Exported; Effort: 1 hour)
-
-#### 2.6.2 Indexing CLI
-- [ ] `scripts/index.py`: Re-embed/reindex idempotently. (Tests: No duplicates; Effort: 2 hours)
-
-### 2.7 Privacy 🔴
-
-#### 2.7.1 Hygiene
-- [ ] HMAC user IDs; redact PII in logs. (Tests: No raw IDs; Effort: 1 hour)
-- [ ] Redis-based rate limiter. (Tests: Enforced; Effort: 1 hour)
+### 2.7 Basic Ops 🔴
+- [ ] Metrics: per-stage timings (retrieve, composeA, composeB, total), confidence, size. (Effort: 1 hour)
+- [ ] Indexing CLI: idempotent re-embed/reindex. (Effort: 2 hours)
 
 ### 2.8 Integration & Deployment 🔴
-- [ ] Wire up RAG pipeline in `/v1/query` endpoint (Effort: 2 hours)
-- [ ] Test end-to-end: Query returns real document chunks (Effort: 1 hour)
-- [ ] Deploy updated version: `docker-compose -f docker-compose.mvp.yml up -d --build` (Effort: 1 hour)
-- [ ] Verify with test queries (Effort: 0.5 hours)
+- [ ] Wire RAG + LLM in `/v1/query`; mount `./models` in compose; set env vars. (Effort: 1.5 hours)
+- [ ] End-to-end tests with WhatsApp and Web outputs. (Effort: 1 hour)
+- [ ] Deploy and verify P95 <2s on VPS. (Effort: 1 hour)
 
 ## 🏗️ PHASE 3: PRODUCTION EXTENSION (Post-MVP)
 > Refer to V2_ARCHITECTURE.md for details. Implement after MVP validation: add scaling, Milvus, full ops, etc. Effort: ~80 hours.

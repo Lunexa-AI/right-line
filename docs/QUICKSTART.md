@@ -24,6 +24,11 @@ EOF
 
 ## Step 2: Start Services (2 minutes)
 ```bash
+# Download a tiny local LLM (GGUF)
+mkdir -p models
+# Example placeholder: replace with a valid URL you have access to
+curl -L -o models/tinyllama-1.1b-chat.Q4_K_M.gguf "https://your-model-hosting/tinyllama-1.1b-chat.Q4_K_M.gguf"
+
 # Create minimal docker-compose for MVP
 cat > docker-compose.mvp.yml << 'EOF'
 version: '3.8'
@@ -44,6 +49,10 @@ services:
       RIGHTLINE_APP_ENV: ${RIGHTLINE_APP_ENV}
       RIGHTLINE_SECRET_KEY: ${RIGHTLINE_SECRET_KEY}
       RIGHTLINE_DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline
+      RIGHTLINE_LLM_MODEL_PATH: /models/tinyllama-1.1b-chat.Q4_K_M.gguf
+      RIGHTLINE_LLM_MAX_TOKENS: 120
+    volumes:
+      - ./models:/models
     depends_on: [postgres]
 
 volumes:
