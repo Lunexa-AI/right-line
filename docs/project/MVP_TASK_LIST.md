@@ -215,279 +215,122 @@
 - **Completed**: 2025-01-10
 - **Notes**: Added 7 new topics (overtime, notice period, paternity, retrenchment, etc.), enhanced WhatsApp formatting
 
-## 🔧 PHASE 2: RAG MVP (Weeks 5-6)
+## 🔧 PHASE 2: LIGHTWEIGHT RAG MVP (Weeks 5-6)
 
-> Goal: Deliver a working legal RAG MVP for Zimbabwe. Hybrid retrieval (BM25 + vectors), reranking, strict citation-first answers. Minimal, fast, and observable per `.cursorrules` and `ARCHITECTURE.md`.
+> **Goal**: Implement a minimal RAG system on top of Phase 1: simple ingestion, pgvector-based hybrid search, local reranking/summary, basic eval/ops. Deploy to VPS. Total effort: ~40 hours. Follow MVP_ARCHITECTURE.md for minimalism.
 
 ### 2.1 Corpus & Ingestion 🔴
 
-#### 2.1.1 Source acquisition & policy
-- [ ] Define authoritative sources (Labour Act, selected SIs, Constitution chapters relevant to labour)
-- [ ] Document licensing/compliance notes and update `docs/data/SOURCES.md`
-- **Acceptance**: Written list of sources with URLs/paths and usage terms
-- **Effort**: 1 hour
+#### 2.1.1 Source acquisition & policy ✅
+- [x] Automated crawler created: `scripts/crawl_zimlii.py` downloads Labour Act, SIs, and cases
+- [x] .gitignore configured: Excludes `data/raw/**` keeping only `.gitkeep`
+- [ ] Run crawler to fetch documents: `python scripts/crawl_zimlii.py` (Effort: 0.5 hours)
+- [ ] Update `docs/data/SOURCES.md` with fetched sources (Effort: 0.5 hours)
 
-#### 2.1.2 Deterministic section chunking
-- [ ] Parse acts/SIs into sections/subsections; stable IDs: `<act_code>:<chapter>:<section>[:<sub>]`
-- [ ] Store effective dates/version metadata
-- [ ] Persist chunks with schema: `documents`, `sections`, `section_chunks(text, start, end, effective_start, effective_end)`
-- **Tests**: Chunk boundary determinism; ID stability across runs
-- **Acceptance**: Same input yields identical IDs/chunking; sections queryable by ID
-- **Effort**: 5 hours
+#### 2.1.2 Database setup for documents
+- [ ] Create database schema script `scripts/init-rag.sql`:
+  ```sql
+  CREATE EXTENSION IF NOT EXISTS vector;
+  CREATE TABLE documents (id SERIAL PRIMARY KEY, source_url TEXT, title TEXT, ingest_date TIMESTAMP);
+  CREATE TABLE chunks (id SERIAL PRIMARY KEY, doc_id INT REFERENCES documents(id), chunk_text TEXT, chunk_index INT, embedding vector(384), metadata JSONB);
+  ```
+  (Tests: Schema loads without error; Effort: 0.5 hours)
+- [ ] Run migration: `docker exec rightline-postgres psql -U rightline -f init-rag.sql` (Effort: 0.5 hours)
 
-#### 2.1.3 Text extraction pipeline
-- [ ] Robust PDF/text extraction (PyMuPDF + fallback plain text)
-- [ ] Basic normalization (whitespace, numbering, footnotes)
-- **Tests**: Known pages → expected normalized text
-- **Acceptance**: >99% of target docs extract without errors
-- **Effort**: 3 hours
+#### 2.1.3 Document parsing & chunking
+- [ ] Create `scripts/parse_docs.py`: Parse HTML with BeautifulSoup, extract sections (Effort: 2 hours)
+- [ ] Add chunking logic: Split into ~512 token chunks with overlap (Effort: 1 hour)
+- [ ] Store parsed chunks in database (Tests: Chunks queryable; Effort: 1 hour)
 
-### 2.2 Embeddings & Vector Store 🔴
+#### 2.1.4 Text normalization
+- [ ] Add normalization to parser: Strip whitespace, standardize section numbers (Effort: 1 hour)
+- [ ] Error handling: Log failed files, continue processing (Effort: 0.5 hours)
 
-#### 2.2.1 Embedding service
-- [ ] Choose default model: `bge-small-en` (open-source) with optional OpenAI embeddings via flag
-- [ ] Batch embedding with retries/timeouts; store `embedding_model_version`
-- **Tests**: Same text → identical vector; throughput benchmark snapshot
-- **Acceptance**: 10k chunks embed < 15 min on dev box; reproducible vectors
-- **Effort**: 4 hours
+### 2.2 Embeddings & pgvector Store 🔴
 
-#### 2.2.2 Vector DB setup
-- [ ] Pick store: `pgvector` (default) or `Qdrant` (flag)
-- [ ] Schemas: `section_chunks(id, doc_id, section_id, text, embedding_vector, lang, effective_start, effective_end)`
-- [ ] Index: HNSW (M=16, efc=200) or IVF tuned; add filters for date/lang
-- **Tests**: kNN returns self on probe; filtered search respects dates
-- **Acceptance**: Vector search P95 < 200ms on 10k chunks
-- **Effort**: 4 hours
+#### 2.2.1 Embedding setup
+- [ ] Install dependencies: `pip install sentence-transformers` (Effort: 0.5 hours)
+- [ ] Create `scripts/generate_embeddings.py`:
+  ```python
+  from sentence_transformers import SentenceTransformer
+  model = SentenceTransformer('BAAI/bge-small-en-v1.5')
+  # Load chunks from DB, generate embeddings, store back
+  ```
+  (Tests: Generates 384-dim vectors; Effort: 2 hours)
+
+#### 2.2.2 Vector indexing
+- [ ] Create vector index: `CREATE INDEX ON chunks USING ivfflat (embedding vector_cosine_ops);` (Effort: 0.5 hours)
+- [ ] Create text search index: `CREATE INDEX ON chunks USING GIN (to_tsvector('english', chunk_text));` (Effort: 0.5 hours)
+- [ ] Test similarity search works: Query returns similar chunks (Effort: 1 hour)
 
 ### 2.3 Retrieval & Reranking 🔴
 
-#### 2.3.1 BM25 (lexical) baseline
-- [ ] Enable BM25 via Meilisearch or Postgres FTS (config flag `USE_PG_FTS`)
-- [ ] Normalization: lowercase, legal stop-words, numeric section capture
-- **Tests**: Queries for known sections return top-5
-- **Acceptance**: BM25 Recall@50 ≥ 0.9 on tiny golden set
-- **Effort**: 3 hours
+#### 2.3.1 Text search implementation
+- [ ] Create `services/api/retrieval.py` with FTS query:
+  ```python
+  async def text_search(query: str, limit: int = 50):
+      sql = "SELECT * FROM chunks WHERE to_tsvector('english', chunk_text) @@ plainto_tsquery('english', %s) LIMIT %s"
+  ```
+  (Tests: Returns relevant chunks; Effort: 1 hour)
 
-#### 2.3.2 Hybrid fusion
-- [ ] Retrieve BM25@50 + Vec@80; merge with reciprocal rank fusion or learned weights
-- [ ] Temporal filter: support "as at YYYY-MM-DD"
-- **Tests**: Hybrid beats BM25-only on golden set
-- **Acceptance**: +10% MRR vs BM25-only on golden set
-- **Effort**: 4 hours
+#### 2.3.2 Vector search implementation  
+- [ ] Add vector search to `retrieval.py`:
+  ```python
+  async def vector_search(query_embedding, limit: int = 50):
+      sql = "SELECT * FROM chunks ORDER BY embedding <-> %s LIMIT %s"
+  ```
+  (Tests: Returns similar chunks; Effort: 1 hour)
+- [ ] Implement score fusion: Combine text and vector results (Effort: 1 hour)
 
-#### 2.3.3 Cross-encoder reranker
-- [ ] Add cross-encoder (e.g., `bge-reranker-base` ONNX/int8) with time budget (≤400ms)
-- [ ] Early stop on high-confidence; configurable k
-- **Tests**: Reranked list improves top-1 hit rate
-- **Acceptance**: Top-1 improves ≥10% over hybrid-only
-- **Effort**: 4 hours
+#### 2.3.3 Reranking (Optional for MVP)
+- [ ] Skip for MVP - use simple score fusion instead
+- [ ] Can add in V2 for better accuracy
 
-### 2.4 Answer Composer (Extractive) 🔴
+### 2.4 Answer Composition 🔴
 
-#### 2.4.1 Strict 3-line summary with citations
-- [ ] Compose answer from selected chunk(s): EXACT 3 lines, ≤100 chars each
-- [ ] Inject citation block: act/chapter/section and URLs
-- [ ] Confidence from retrieval+rerank signals
-- **Tests**: Schema validation; refusal on missing cites; line-length enforcement
-- **Acceptance**: 100% answers include correct citation; rejects when unsure
-- **Effort**: 3 hours
+#### 2.4.1 Response generation
+- [ ] Update `services/api/responses.py` to use retrieved chunks:
+  ```python
+  def generate_response(chunks):
+      top_chunk = chunks[0]
+      summary = extract_key_sentences(top_chunk.text, max_lines=3)
+      citation = f"{top_chunk.metadata['source']} Section {top_chunk.metadata['section']}"
+      return QueryResponse(summary=summary, citation=citation)
+  ```
+  (Tests: Returns formatted response; Effort: 2 hours)
 
-#### 2.4.2 Multilingual hinting (optional)
-- [ ] Accept `lang_hint` (en/sn/nd); choose embedding/rerank accordingly (if available)
-- **Tests**: Requests route to correct pipeline
-- **Acceptance**: No regression for `en`; graceful degrade for others
-- **Effort**: 2 hours
+#### 2.4.2 Basic lang support
+- [ ] Add `lang_hint` param; fallback to English. (Tests: Routing; Effort: 1 hour)
 
-### 2.5 Evaluation & Golden Set 🔴
+### 2.5 Evaluation 🔴
 
-#### 2.5.1 Tiny golden set
-- [ ] Curate 30–50 QA pairs with authoritative section IDs
-- [ ] Store as YAML; include expected relevant sections
-- **Tests**: Recall@k, MRR, faithfulness checks
-- **Acceptance**: CI target: Recall@50 ≥ 0.9; faithfulness 100% on gold
-- **Effort**: 3 hours
+#### 2.5.1 Golden set
+- [ ] Human: Curate 20-30 QA pairs in `tests/golden.yaml`. (Effort: 1.5 hours)
+- [ ] Load and basic eval functions. (Tests: Loader; Effort: 0.5 hours)
 
-#### 2.5.2 Regression benchmark script
-- [ ] CLI to run retrieval and report metrics; export JSON trend
-- **Acceptance**: Single command outputs metrics and failure cases
-- **Effort**: 2 hours
+#### 2.5.2 Benchmark script
+- [ ] `scripts/eval_rag.py`: Compute Recall@k/MRR/faithfulness. (Tests: Runs clean; Effort: 1.5 hours)
 
-### 2.6 Ops & Observability (MVP) 🔴
+### 2.6 Basic Ops 🔴
 
-#### 2.6.1 Metrics & traces
-- [ ] Per-stage latency (embed, bm25, vector, rerank, compose)
-- [ ] Cache hit ratio; request_id propagation; anonymized user hash
-- **Tests**: Metrics present; 95p latency within budget (Retrieval ≤800ms; Rerank ≤400ms)
-- **Acceptance**: Grafana-ready metrics or JSON logs that can be scraped
-- **Effort**: 2 hours
+#### 2.6.1 Logging & metrics
+- [ ] Add structlog timings for stages. (Tests: Logs present; Effort: 1 hour)
+- [ ] Basic metrics export (JSON or Prometheus client). (Tests: Exported; Effort: 1 hour)
 
-#### 2.6.2 Index jobs
-- [ ] CLI jobs: (re)embed, (re)index, backfill effective dates
-- **Acceptance**: Re-runnable and idempotent; can rebuild from scratch
-- **Effort**: 2 hours
+#### 2.6.2 Indexing CLI
+- [ ] `scripts/index.py`: Re-embed/reindex idempotently. (Tests: No duplicates; Effort: 2 hours)
 
-### 2.7 Admin & APIs 🔴
+### 2.7 Privacy 🔴
 
-#### 2.7.1 Minimal admin endpoints
-- [ ] `/admin/reindex` (authenticated flag-protected) to trigger reindex on small corpora
-- [ ] `/v1/sections/{id}` to fetch raw section and metadata
-- **Tests**: Permission checks; smoke tests
-- **Acceptance**: Operators can refresh index post-deploy
-- **Effort**: 2 hours
+#### 2.7.1 Hygiene
+- [ ] HMAC user IDs; redact PII in logs. (Tests: No raw IDs; Effort: 1 hour)
+- [ ] Redis-based rate limiter. (Tests: Enforced; Effort: 1 hour)
 
-### 2.8 Privacy & Safety 🔴
+### 2.8 Integration & Deployment 🔴
+- [ ] Wire up RAG pipeline in `/v1/query` endpoint (Effort: 2 hours)
+- [ ] Test end-to-end: Query returns real document chunks (Effort: 1 hour)
+- [ ] Deploy updated version: `docker-compose -f docker-compose.mvp.yml up -d --build` (Effort: 1 hour)
+- [ ] Verify with test queries (Effort: 0.5 hours)
 
-#### 2.8.1 PII & logging hygiene
-- [ ] HMAC-hash user identifiers; redact inputs in logs; no raw PII persist
-- [ ] Rate limit per hashed user; add basic abuse protection
-- **Tests**: Log inspection; rate-limit unit tests
-- **Acceptance**: No PII leakage; stable under basic abuse
-- **Effort**: 2 hours
-
----
-
-### Deliverable (Phase 2):
-- A working legal RAG MVP: ingest → hybrid retrieval → rerank → 3-line, citation-first answers
-- Minimal jobs, metrics, and golden-set evaluation to prevent regressions
-
-
-## 🏗️ PHASE 3: PRODUCTION RAG (Weeks 7-12)
-
-> **Goal**: Operate a state-of-the-art, reliable legal RAG in production across Web and WhatsApp, including ZimLII case law. Meet latency/SLOs, security, privacy, and observability requirements from `.cursorrules` and `ARCHITECTURE.md`.
-
-### 3.1 Productization & Channels 🔴
-
-#### 3.1.1 Web app (production-ready)
-- [ ] Harden web UI (a11y, keyboard navigation, dark mode, offline-safe states)
-- [ ] PWA-lite: manifest + icons; graceful caching for static assets
-- [ ] Security headers; CSP tuned for our stack; gzip/brotli; HTTP/2
-- **Tests**: Lighthouse a11y ≥ 90; basic E2E (query → answer with cites)
-- **Acceptance**: Mobile-first UX; zero console errors; stable under throttled 3G
-- **Effort**: 6 hours
-
-#### 3.1.2 WhatsApp productionization
-- [ ] Verify webhook with signature; strict payload validation
-- [ ] Session threading (short-term memory) with safe context windowing
-- [ ] Rate limiting/token bucket per user hash; abuse controls
-- **Tests**: Webhook signature unit tests; E2E message flow; rate-limit tests
-- **Acceptance**: Stable under bursts; no PII in logs; messages formatted consistently
-- **Effort**: 6 hours
-
-### 3.2 Content Expansion (Acts + ZimLII) 🔴
-
-#### 3.2.1 ZimLII case law ingestion
-- [ ] Scrape/ingest selected labor-related judgments
-- [ ] Normalize metadata (court, date, citation); compute stable case IDs
-- [ ] Link cases ↔ statutes via citation extraction (regex + heuristics)
-- **Tests**: Sample set correctness; dedup by hash; citation link coverage
-- **Acceptance**: Cases searchable; cases show linked sections
-- **Effort**: 10 hours
-
-#### 3.2.2 Cross-source versioning
-- [ ] Track effective dates; deprecate superseded sections
-- [ ] Maintain source registry with provenance
-- **Tests**: Temporal queries return correct version
-- **Acceptance**: “as at DATE” works across acts and cases
-- **Effort**: 4 hours
-
-### 3.3 Retrieval Quality & Guardrails 🔴
-
-#### 3.3.1 Legal-aware reranking improvements
-- [ ] Add citation prior features (sections cited by many relevant cases get a small boost)
-- [ ] Optional graph-augmented pass (section-case bipartite edges) within time budget
-- **Tests**: Golden set Top-1 improves; latency budgets respected
-- **Acceptance**: +10% Top-1 w/o +20% latency over Phase 2 baseline
-- **Effort**: 6 hours
-
-#### 3.3.2 Faithfulness and refusal
-- [ ] Lightweight answer validator: ensure answer spans exist in retrieved text
-- [ ] Safe refusal when confidence low or sources missing
-- **Tests**: Hallucination checks; refusal pathways; schema enforcement
-- **Acceptance**: 100% answers grounded; 0% fabricated citations
-- **Effort**: 4 hours
-
-### 3.4 Scale & Reliability 🔴
-
-#### 3.4.1 Services & storage
-- [ ] Split services: API gateway, Retrieval, Ingestion, Summariser
-- [ ] PostgreSQL + pgvector (managed/HA); Redis (HA) for cache/rate-limit; Object storage (S3/MinIO)
-- [ ] Blue/green deploy with health/readiness; circuit breakers; backoff retries
-- **Tests**: Service integration tests; failover drills; smoke during deploy
-- **Acceptance**: Zero-downtime rolling deploys; automated daily backups
-- **Effort**: 12 hours
-
-#### 3.4.2 Performance & caching
-- [ ] Per-stage budgets: Retrieval ≤800ms; Rerank ≤400ms; Compose ≤600ms
-- [ ] Response cache for hot queries; partial results cache (features, BM25 lists)
-- **Tests**: Load tests @ P95<2s, P99<3s; cache hit ratio > 30% on golden traffic
-- **Acceptance**: Meets latency SLOs under expected load
-- **Effort**: 6 hours
-
-### 3.5 Observability & Security 🔴
-
-#### 3.5.1 Metrics, logs, traces
-- [ ] OpenTelemetry spans across services; structured logs with request_id/user_hash
-- [ ] Dashboards: latency per stage, errors, cache hit, query volume; SLOs + alerts
-- **Tests**: Synthetic alerts; dashboard panels populated in staging
-- **Acceptance**: On-call can diagnose issues quickly
-- **Effort**: 6 hours
-
-#### 3.5.2 Security hardening
-- [ ] JWT auth for admin endpoints; webhook signatures; WAF/rate-limits at edge
-- [ ] Secrets management; key rotation; encrypted backups; vulnerability scans
-- **Tests**: Basic pen-test checklist; dependency scans green; headers verified
-- **Acceptance**: No high/critical security findings
-- **Effort**: 6 hours
-
-### 3.6 MLOps (Pragmatic) 🔴
-
-#### 3.6.1 Versioning & jobs
-- [ ] Version registry for: corpus, chunker, embedding model, reranker, prompts
-- [ ] Scheduled jobs: re-embed changed docs; reindex; drift detection
-- **Tests**: Dry-run jobs; idempotency; metrics recorded
-- **Acceptance**: Reproducible builds of the index; measured drift
-- **Effort**: 6 hours
-
-#### 3.6.2 Evaluation at merge
-- [ ] CI job: run golden set; block regressions beyond threshold
-- [ ] Store historical metrics for trend lines (artifact)
-- **Tests**: Failing PR demo; pass thresholds post-fix
-- **Acceptance**: No silent relevance regressions reach prod
-- **Effort**: 4 hours
-
-### 3.7 Language & Accessibility 🔴
-
-#### 3.7.1 Shona/Ndebele support (incremental)
-- [ ] Expand embeddings/reranker or translation fallback; UI localization basics
-- **Tests**: Smoke queries in SN/ND; no crashes; English parity holds
-- **Acceptance**: Degrades gracefully; roadmap to parity documented
-- **Effort**: 4 hours
-
-### 3.8 Admin & Governance 🔴
-
-#### 3.8.1 Lightweight admin console
-- [ ] View index status, ingestion logs, recent feedback; trigger small reindexes
-- **Tests**: Auth + RBAC checks; happy path
-- **Acceptance**: Ops can manage without shell access
-- **Effort**: 4 hours
-
-## 📊 Summary
-
-### Phase 1 (Weeks 2-4): Lightweight MVP
-- **Total Effort**: ~25 hours
-- **Goal**: Validate concept with hardcoded responses
-- **Deliverable**: Working WhatsApp bot with mock legal responses
-
-### Phase 2 (Weeks 5-6): Enhanced MVP  
-- **Total Effort**: ~27 hours
-- **Goal**: Real functionality with simple architecture
-- **Deliverable**: Actual legal search with SQLite backend
-
-### Phase 3 (Weeks 7-12): Production RAG
-- **Total Effort**: ~98 hours
-- **Goal**: Production-grade legal RAG across Web and WhatsApp with ZimLII cases
-- **Deliverable**: Reliable, observable, secure system meeting latency SLOs; grounded answers with citations
-
----
-
-*This approach allows rapid validation and iteration while building toward a production-grade system.*
+## 🏗️ PHASE 3: PRODUCTION EXTENSION (Post-MVP)
+> Refer to V2_ARCHITECTURE.md for details. Implement after MVP validation: add scaling, Milvus, full ops, etc. Effort: ~80 hours.
