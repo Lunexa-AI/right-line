@@ -121,12 +121,12 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 5) Enrichment (Entities & Signals)
 
-- [ ] MVP entity extraction heuristics
+- [x] MVP entity extraction heuristics
   - Dates (ISO), section refs (e.g., `s 12A`, `Section 12A`), court names, judges, parties
   - Store under `metadata.entities`
   - Acceptance: Regex/heuristic list documented and test strings noted
 
-- [ ] Normalize dates & citations
+- [x] Normalize dates & citations
   - Convert to ISO, standardize section numbering format
   - Acceptance: Before/after examples documented
 
@@ -134,16 +134,16 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 6) Embeddings (chunks.jsonl → chunks_with_embeddings.jsonl)
 
-- [ ] Set embedding configuration
+- [x] Set embedding configuration
   - Model: `text-embedding-3-small`
   - Batch size (tune later): start at 64
   - Acceptance: Values added to `.env.local`
 
-- [ ] Dry-run embeddings on 5–10 chunks
+- [x] Dry-run embeddings on 5–10 chunks
   - Estimate token usage & cost; inspect output 
   - Acceptance: Sample output saved (first 3 records) to `data/processed/chunks_with_embeddings.sample.json`
 
-- [ ] Full-run embeddings
+- [x] Full-run embeddings
   - Read `data/processed/chunks.jsonl` in batches; write `data/processed/chunks_with_embeddings.jsonl`
   - Handle retries/backoff; log failures; continue
   - Acceptance: File created; counts match input; error rate < 1%
