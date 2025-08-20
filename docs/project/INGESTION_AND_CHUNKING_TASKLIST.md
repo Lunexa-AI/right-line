@@ -99,21 +99,21 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 4) Chunking (docs.jsonl → chunks.jsonl)
 
-- [ ] Define chunk schema (as per INGESTION_AND_CHUNKING.md)
+- [x] Define chunk schema (as per INGESTION_AND_CHUNKING.md)
   - `chunk_id`, `doc_id`, `chunk_text`, `section_path`, `start_char`, `end_char`, `num_tokens`, `language`, `date_context`, `entities`, `source_url`, and `metadata` (json)
   - Acceptance: Clear field list documented and aligned with Milvus scalar/json
 
-- [ ] Define chunking strategy per type
+- [x] Define chunking strategy per type
   - Common: target ~512 tokens; max ~5000 chars; sliding window overlap 15–20%
   - Legislation: primary unit = section; split or merge as needed
   - Judgments: primary unit = paragraphs; headnote as separate chunks; windowed merge
   - Acceptance: Explicit rules table written (e.g., long/short sections handling)
 
-- [ ] Define stable `chunk_id`
+- [x] Define stable `chunk_id`
   - `chunk_id = sha256_16(doc_id + section_path + start_char + end_char + text_hash)`
   - Acceptance: Example chunk IDs computed and recorded for 2 sample chunks
 
-- [ ] Output plan
+- [x] Output plan
   - Emit one chunk JSON per line → `data/processed/chunks.jsonl`
   - Acceptance: Target JSON lines format documented with 2 examples (legislation, judgment)
 
