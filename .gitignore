@@ -30,6 +30,7 @@ MANIFEST
 *.manifest
 *.spec
 data/
+.env.local.api_key
 
 # Installer logs
 pip-log.txt
