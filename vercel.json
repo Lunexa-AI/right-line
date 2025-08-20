@@ -60,7 +60,7 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/web/index.html",
+      "destination": "/index.html",
       "permanent": false
     }
   ]

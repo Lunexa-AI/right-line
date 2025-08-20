@@ -9,8 +9,8 @@ Main components:
 - responses.py: Hardcoded legal responses for MVP
 """
 
-from services.api.main import app, create_app
-from services.api.models import QueryRequest, QueryResponse, HealthResponse
+from api.main import app, create_app
+from api.models import QueryRequest, QueryResponse, HealthResponse
 
 __all__ = [
     "app",

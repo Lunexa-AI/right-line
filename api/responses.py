@@ -7,9 +7,10 @@ Used in Phase 1 MVP to validate concept before implementing real search.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
-from services.api.models import Citation, QueryResponse, SectionRef
+from api.models import Citation, QueryResponse, SectionRef
 
 # Hardcoded Q&A pairs from Labour Act and common legal questions
 HARDCODED_RESPONSES: dict[str, dict[str, Any]] = {
@@ -871,15 +872,33 @@ def get_hardcoded_response(query_text: str, lang_hint: str | None = None) -> Que
     section_ref = SectionRef(**response_data["section_ref"])
     citations = [Citation(**citation) for citation in response_data["citations"]]
     
-    # Handle both old "summary" and new "summary_3_lines" fields
+    # Convert old format to new format
     summary = response_data.get("summary_3_lines") or response_data.get("summary", "")
     
+    # Split summary into tldr and key points
+    lines = summary.split('\n')
+    tldr = lines[0] if lines else "Legal information available."
+    key_points = lines[1:] if len(lines) > 1 else ["Consult legal counsel for specific advice."]
+    
+    # Ensure we have at least 3 key points
+    while len(key_points) < 3:
+        key_points.append("Additional information available in referenced legal documents.")
+    
+    # Generate suggestions based on the topic
+    suggestions = [
+        "What are the penalties for violations?",
+        "How do I file a complaint?",
+        "What are my rights as an employee?"
+    ]
+    
     return QueryResponse(
-        summary_3_lines=summary,
-        section_ref=section_ref,
+        tldr=tldr,
+        key_points=key_points[:5],  # Limit to 5
         citations=citations,
+        suggestions=suggestions,
         confidence=confidence,
-        related_sections=response_data["related_sections"],
+        source="hardcoded",
+        request_id=f"req_{int(time.time() * 1000000)}"
     )
 
 
