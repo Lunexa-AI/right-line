@@ -39,12 +39,25 @@ MIN_TOKENS = 100  # Minimum tokens per chunk
 OVERLAP_RATIO = 0.15  # Overlap between chunks (15%)
 CHARS_PER_TOKEN = 4  # Approximate characters per token for English text
 
-# Entity extraction patterns
+# Entity extraction patterns (enhanced from enrich_chunks.py)
 PATTERNS = {
-    "dates": r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b",
-    "statute_refs": r"\bs(?:ection)?\s*\d+[A-Z]?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\b[A-Za-z]+\s+Act\s+\[Chapter\s+\d+:\d+\]|\b[A-Za-z]+\s+Act\b",
-    "case_refs": r"\[\d{4}\]\s+[A-Z]{2,5}\s+\d+|\d{4}\s*\(\d+\)\s*[A-Z]{2,5}\s*\d+|S\s+v\s+[A-Z][a-z]+\s+[A-Z]{2,5}\s+\d+/\d+",
-    "courts": r"\b(?:High Court|Supreme Court|Constitutional Court|Magistrates Court|Labour Court)\b"
+    # Date patterns: match various formats and normalize to ISO
+    "dates": r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b",
+    
+    # Section references: standardize format
+    "statute_refs": r"\bs\.?\s*(\d+[A-Z]?)(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\bsection\s+(\d+[A-Z]?)(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\b([A-Za-z\s]+)\s+Act\s+\[Chapter\s+(\d+:\d+)\]|\b([A-Za-z\s]+)\s+Act\b",
+    
+    # Case citations: standardize format
+    "case_refs": r"\[(\d{4})\]\s+([A-Z]{2,5})\s+(\d+)|(\d{4})\s*\((\d+)\)\s*([A-Z]{2,5})\s*(\d+)|S\s+v\s+([A-Z][a-z]+)\s+([A-Z]{2,5})\s+(\d+)/(\d+)",
+    
+    # Court names: standardize format
+    "courts": r"\b(?:High Court|Supreme Court|Constitutional Court|Magistrates Court|Labour Court)\b",
+    
+    # Judge names: extract judge names
+    "judges": r"\b([A-Z]{2,})\s+J\b|\b([A-Z]{2,})\s+JA\b|\bJustice\s+([A-Z][A-Za-z]+)\b",
+    
+    # Party names: extract party names from case names
+    "parties": r"\b([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\b"
 }
 
 # Court name lookup for entity extraction
@@ -67,9 +80,9 @@ class Chunk(BaseModel):
     start_char: int = Field(description="Start character offset in original document")
     end_char: int = Field(description="End character offset in original document")
     num_tokens: int = Field(description="Estimated token count")
-    language: str = Field(description="Document language (e.g., eng)")
-    doc_type: str = Field(description="Document type (act, judgment, etc.)")
-    date_context: Optional[str] = Field(description="Date context (YYYY-MM-DD)")
+    language: str = Field(description="Document language (e.g., eng)", max_length=10)
+    doc_type: str = Field(description="Document type (act, judgment, etc.)", max_length=20)
+    date_context: Optional[str] = Field(description="Date context (YYYY-MM-DD)", max_length=32)
     entities: Dict[str, List[str]] = Field(default_factory=dict, description="Extracted entities")
     source_url: Optional[str] = Field(None, description="Source URL")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
@@ -88,6 +101,33 @@ class Chunk(BaseModel):
         """Validate token count."""
         if v < MIN_TOKENS:
             raise ValueError(f"Number of tokens is less than minimum of {MIN_TOKENS}")
+        return v
+    
+    @field_validator("doc_type")
+    def validate_doc_type(cls, v):
+        """Validate and fix doc_type field."""
+        if v is None:
+            return "unknown"
+        if len(v) > 20:
+            return v[:20]
+        return v
+    
+    @field_validator("language")
+    def validate_language(cls, v):
+        """Validate and fix language field."""
+        if v is None:
+            return "eng"
+        if len(v) > 10:
+            return v[:10]
+        return v
+    
+    @field_validator("date_context")
+    def validate_date_context(cls, v):
+        """Validate and fix date_context field."""
+        if v is None:
+            return None
+        if len(v) > 32:
+            return v[:32]
         return v
 
 
@@ -180,13 +220,33 @@ def find_sentence_boundary(text: str, position: int) -> int:
 
 
 def extract_entities(text: str) -> Dict[str, List[str]]:
-    """Extract entities from text using regex patterns."""
+    """Extract entities from text using regex patterns and normalize them."""
     entities = {}
     
-    # Extract dates
+    # Extract dates and normalize them
     dates = re.findall(PATTERNS["dates"], text)
-    if dates:
-        entities["dates"] = list(set(dates))
+    normalized_dates = []
+    for date in dates:
+        # Try to normalize to ISO format (YYYY-MM-DD)
+        try:
+            # Handle common formats
+            if re.match(r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}', date):
+                # DD/MM/YYYY or MM/DD/YYYY
+                parts = re.split(r'[-/]', date)
+                if len(parts[2]) == 2:  # Convert 2-digit year to 4-digit
+                    parts[2] = '20' + parts[2] if int(parts[2]) < 50 else '19' + parts[2]
+                # Assume DD/MM/YYYY format
+                normalized_date = f"{parts[2]}-{int(parts[1]):02d}-{int(parts[0]):02d}"
+                normalized_dates.append(normalized_date)
+            else:
+                # Just add as-is if we can't normalize
+                normalized_dates.append(date)
+        except Exception:
+            # If normalization fails, keep original
+            normalized_dates.append(date)
+    
+    if normalized_dates:
+        entities["dates"] = list(set(normalized_dates))
     
     # Extract statute references
     statute_refs = re.findall(PATTERNS["statute_refs"], text)
@@ -205,6 +265,32 @@ def extract_entities(text: str) -> Dict[str, List[str]]:
             courts.append(court)
     if courts:
         entities["courts"] = courts
+    
+    # Extract judges (SURNAME J, SURNAME JA, Justice SURNAME)
+    judge_pattern = r'\b([A-Z]{2,})\s+J\b|\b([A-Z]{2,})\s+JA\b|\bJustice\s+([A-Z][A-Za-z]+)\b'
+    judges = re.findall(judge_pattern, text)
+    if judges:
+        # Flatten and filter non-empty groups
+        judge_names = []
+        for match in judges:
+            for group in match:
+                if group:
+                    if 'J' not in group and 'JA' not in group:
+                        judge_names.append(f"Justice {group}")
+                    else:
+                        judge_names.append(group)
+        if judge_names:
+            entities["judges"] = list(set(judge_names))
+    
+    # Extract party names (X v Y)
+    party_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\b'
+    parties = re.findall(party_pattern, text)
+    if parties:
+        party_pairs = []
+        for applicant, respondent in parties:
+            party_pairs.append({"applicant": applicant, "respondent": respondent})
+        if party_pairs:
+            entities["parties"] = party_pairs
     
     return entities
 
@@ -670,7 +756,86 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     return all_chunks
 
 
-def process_documents(input_file: Path, output_file: Path, verbose: bool = False) -> None:
+def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[Dict[str, Any]]:
+    """
+    Enrich chunks with additional entity extraction and normalization.
+    
+    Args:
+        chunks: List of chunks to enrich
+        verbose: Whether to print verbose output
+        
+    Returns:
+        List of enriched chunks
+    """
+    enriched_chunks = []
+    
+    for chunk in tqdm(chunks, desc="Enriching chunks"):
+        try:
+            # Extract text for processing
+            chunk_text = chunk.get("chunk_text", "")
+            
+            # Extract and normalize entities with improved extraction
+            entities = extract_entities(chunk_text)
+            
+            # Merge with existing entities if present
+            if "entities" in chunk and isinstance(chunk["entities"], dict):
+                for entity_type, values in entities.items():
+                    if entity_type in chunk["entities"]:
+                        # Combine and deduplicate
+                        if entity_type == "parties":
+                            # Special handling for parties
+                            chunk["entities"][entity_type] = values
+                        else:
+                            existing = set(chunk["entities"][entity_type])
+                            existing.update(values)
+                            chunk["entities"][entity_type] = list(existing)
+                    else:
+                        chunk["entities"][entity_type] = values
+            else:
+                chunk["entities"] = entities
+            
+            # Extract date context if available
+            if "dates" in entities and entities["dates"] and not chunk.get("date_context"):
+                # Use the first date as date_context if not already set
+                chunk["date_context"] = entities["dates"][0]
+            
+            # Add court to metadata if available
+            if "courts" in entities and entities["courts"]:
+                if "metadata" not in chunk:
+                    chunk["metadata"] = {}
+                if "court" not in chunk["metadata"] or not chunk["metadata"]["court"]:
+                    chunk["metadata"]["court"] = entities["courts"][0]
+            
+            enriched_chunks.append(chunk)
+            
+            if verbose:
+                logger.info(f"Enriched chunk {chunk.get('chunk_id')}")
+                
+        except Exception as e:
+            logger.error(f"Error enriching chunk {chunk.get('chunk_id')}: {e}")
+            if verbose:
+                import traceback
+                logger.error(traceback.format_exc())
+            # Keep the original chunk
+            enriched_chunks.append(chunk)
+    
+    # Log statistics
+    entity_counts = {}
+    for chunk in enriched_chunks:
+        if "entities" in chunk:
+            for entity_type, values in chunk["entities"].items():
+                if entity_type not in entity_counts:
+                    entity_counts[entity_type] = 0
+                entity_counts[entity_type] += len(values) if isinstance(values, list) else 1
+    
+    logger.info("Entity extraction statistics:")
+    for entity_type, count in entity_counts.items():
+        logger.info(f"  {entity_type}: {count}")
+    
+    return enriched_chunks
+
+
+def process_documents(input_file: Path, output_file: Path, verbose: bool = False, enrich: bool = True) -> None:
     """
     Process documents from input file and write chunks to output file.
     
@@ -678,6 +843,7 @@ def process_documents(input_file: Path, output_file: Path, verbose: bool = False
         input_file: Path to input JSONL file
         output_file: Path to output JSONL file
         verbose: Whether to print verbose output
+        enrich: Whether to apply advanced entity enrichment
     """
     # Load documents
     documents = load_jsonl(input_file)
@@ -703,6 +869,11 @@ def process_documents(input_file: Path, output_file: Path, verbose: bool = False
                 import traceback
                 logger.error(traceback.format_exc())
     
+    # Apply advanced entity enrichment if requested
+    if enrich and all_chunks:
+        logger.info("Applying advanced entity enrichment...")
+        all_chunks = enrich_chunks(all_chunks, verbose)
+    
     # Write chunks to output file
     write_jsonl(output_file, all_chunks)
     
@@ -714,18 +885,88 @@ def process_documents(input_file: Path, output_file: Path, verbose: bool = False
     logger.info(f"Average chunk size: {avg_tokens:.1f} tokens, {avg_chars:.1f} characters")
 
 
+def fix_chunks_for_milvus(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Fix chunks data to be compatible with Milvus schema constraints.
+    
+    Args:
+        chunks: List of chunks to fix
+        
+    Returns:
+        List of fixed chunks
+    """
+    fixed_chunks = []
+    
+    for chunk in chunks:
+        fixed_chunk = chunk.copy()
+        
+        # Fix doc_type (max length 20)
+        doc_type = fixed_chunk.get("doc_type", "unknown")
+        if isinstance(doc_type, str) and len(doc_type) > 20:
+            fixed_chunk["doc_type"] = doc_type[:20]
+        elif doc_type is None:
+            fixed_chunk["doc_type"] = "unknown"
+        
+        # Fix language (max length 10)
+        language = fixed_chunk.get("language", "eng")
+        if isinstance(language, str) and len(language) > 10:
+            fixed_chunk["language"] = language[:10]
+        elif language is None:
+            fixed_chunk["language"] = "eng"
+        
+        # Fix court (max length 100)
+        court = fixed_chunk.get("court", "unknown")
+        if isinstance(court, str) and len(court) > 100:
+            fixed_chunk["court"] = court[:100]
+        elif court is None:
+            fixed_chunk["court"] = "unknown"
+        
+        # Fix date_context (max length 32)
+        date_context = fixed_chunk.get("date_context", "unknown")
+        if isinstance(date_context, str) and len(date_context) > 32:
+            fixed_chunk["date_context"] = date_context[:32]
+        
+        # Ensure metadata is a dict
+        metadata = fixed_chunk.get("metadata", {})
+        if not isinstance(metadata, dict):
+            fixed_chunk["metadata"] = {}
+        
+        fixed_chunks.append(fixed_chunk)
+    
+    return fixed_chunks
+
+
 def main():
     parser = argparse.ArgumentParser(description="Chunk normalized documents into optimal segments for embedding")
     parser.add_argument("--input_file", type=Path, default="data/processed/docs.jsonl", 
                         help="Path to input JSONL file")
     parser.add_argument("--output_file", type=Path, default="data/processed/chunks.jsonl", 
                         help="Path to output JSONL file")
+    parser.add_argument("--fix-for-milvus", action="store_true", 
+                        help="Apply Milvus schema compatibility fixes")
+    parser.add_argument("--no-enrich", action="store_true", 
+                        help="Skip advanced entity enrichment")
     parser.add_argument("--verbose", action="store_true", help="Print verbose output")
     
     args = parser.parse_args()
     
     try:
-        process_documents(args.input_file, args.output_file, args.verbose)
+        # Process documents into chunks
+        process_documents(args.input_file, args.output_file, args.verbose, enrich=not args.no_enrich)
+        
+        # Optionally apply Milvus schema compatibility fixes
+        if args.fix_for_milvus:
+            logger.info("Applying Milvus schema compatibility fixes...")
+            # Load chunks
+            chunks = load_jsonl(args.output_file)
+            
+            # Fix chunks
+            fixed_chunks = fix_chunks_for_milvus(chunks)
+            
+            # Write fixed chunks back to the same file
+            write_jsonl(args.output_file, fixed_chunks)
+            logger.info(f"Applied Milvus schema fixes to {len(fixed_chunks)} chunks")
+            
     except Exception as e:
         logger.error(f"Error: {e}")
         if args.verbose:
