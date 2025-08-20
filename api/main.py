@@ -1,7 +1,7 @@
-"""RightLine API Service - Minimal FastAPI MVP.
+"""RightLine API Service - Serverless FastAPI for Vercel.
 
-This is the main FastAPI application for RightLine's MVP phase.
-Provides a single /query endpoint with hardcoded legal responses.
+This is the main FastAPI application for RightLine's serverless MVP.
+Optimized for Vercel functions with Mangum adapter.
 """
 
 from __future__ import annotations
@@ -9,24 +9,22 @@ from __future__ import annotations
 import logging
 import os
 import time
-from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, ORJSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import ORJSONResponse
+from mangum import Mangum
 
 from libs.common.settings import get_settings
-from services.api.analytics import (
+from api.analytics import (
     get_analytics_summary,
     get_common_queries,
-    init_database,
     log_query,
     save_feedback,
 )
-from services.api.models import (
+from api.models import (
     AnalyticsResponse,
     CommonQueriesResponse,
     FeedbackRequest,
@@ -35,8 +33,8 @@ from services.api.models import (
     QueryRequest,
     QueryResponse,
 )
-from services.api.responses import get_hardcoded_response
-from services.api.whatsapp import (
+from api.responses import get_hardcoded_response
+from api.whatsapp import (
     WhatsAppWebhookPayload,
     WhatsAppWebhookVerification,
     handle_whatsapp_webhook,
@@ -63,33 +61,17 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
-    settings = get_settings()
-    logger.info("Starting RightLine API", env=settings.app_env, version="0.1.0")
-    
-    # Initialize analytics database
-    await init_database()
-    
-    # Startup
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down RightLine API")
-
-
 def create_app() -> FastAPI:
-    """Create and configure FastAPI application."""
+    """Create and configure FastAPI application for serverless deployment."""
     settings = get_settings()
     
     app = FastAPI(
         title="RightLine API",
-        description="WhatsApp-first legal copilot for Zimbabwe",
+        description="WhatsApp-first legal copilot for Zimbabwe (Serverless)",
         version="0.1.0",
         default_response_class=ORJSONResponse,
-        lifespan=lifespan,
         debug=settings.debug,
+        # No lifespan for serverless - connections created per request
     )
     
     # Add CORS middleware
@@ -151,29 +133,7 @@ def create_app() -> FastAPI:
 # Create the FastAPI app
 app = create_app()
 
-# Mount static files directory (for CSS, JS, images if needed)
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-
-@app.get("/", response_class=HTMLResponse, tags=["Web"])
-async def serve_web_interface():
-    """Serve the web interface for RightLine.
-    
-    Returns the main HTML page for the web interface.
-    This provides a simple form for testing the legal query API.
-    
-    Returns:
-        HTML file response
-    """
-    html_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
-    if os.path.exists(html_file):
-        with open(html_file, "r") as f:
-            return HTMLResponse(content=f.read())
-    else:
-        # Fallback if file doesn't exist
-        return HTMLResponse(content="<h1>RightLine API</h1><p>Version 0.1.0</p><p><a href='/docs'>API Documentation</a></p>")
+# No static file mounting for serverless - handled by Vercel static hosting
 
 
 @app.get("/healthz", response_model=HealthResponse, tags=["Health"])
@@ -219,7 +179,7 @@ async def readiness_check() -> HealthResponse:
     )
 
 
-@app.post("/v1/query", response_model=QueryResponse, tags=["Query"])
+@app.post("/api/v1/query", response_model=QueryResponse, tags=["Query"])
 async def query_legal_information(
     request: Request,
     query_request: QueryRequest,
@@ -268,26 +228,28 @@ async def query_legal_information(
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)
         
-        # Log query to analytics (async, non-blocking)
-        settings = get_settings()
-        await log_query(
-            request_id=request_id,
-            user_id=user_id,
-            channel=query_request.channel,
-            query_text=query_request.text,
-            response_topic=response.section_ref.act if response else None,
-            confidence=response.confidence if response else None,
-            response_time_ms=response_time_ms,
-            status="success" if response else "no_match",
-            session_id=session_id,
-            settings=settings
-        )
+        # Log query to analytics (Vercel KV)
+        try:
+            await log_query(
+                request_id=request_id,
+                user_id=user_id,
+                channel=query_request.channel,
+                query_text=query_request.text,
+                response_topic=response.source if response else None,
+                confidence=response.confidence if response else None,
+                response_time_ms=response_time_ms,
+                status="success" if response else "no_match",
+                session_id=session_id,
+            )
+        except Exception as e:
+            # Don't fail the request if analytics logging fails
+            logger.warning("Analytics logging failed", error=str(e))
         
         logger.info(
             "Query processed successfully",
             request_id=request_id,
             confidence=response.confidence,
-            section_ref=f"{response.section_ref.act} §{response.section_ref.section}",
+            source=response.source,
             response_time_ms=response_time_ms,
         )
         
@@ -296,19 +258,20 @@ async def query_legal_information(
     except ValueError as e:
         # Log failed query
         response_time_ms = int((time.time() - start_time) * 1000)
-        settings = get_settings()
-        await log_query(
-            request_id=request_id,
-            user_id=user_id,
-            channel=query_request.channel,
-            query_text=query_request.text,
-            response_topic=None,
-            confidence=None,
-            response_time_ms=response_time_ms,
-            status="error",
-            session_id=session_id,
-            settings=settings
-        )
+        try:
+            await log_query(
+                request_id=request_id,
+                user_id=user_id,
+                channel=query_request.channel,
+                query_text=query_request.text,
+                response_topic=None,
+                confidence=None,
+                response_time_ms=response_time_ms,
+                status="error",
+                session_id=session_id,
+            )
+        except Exception:
+            pass  # Don't fail on analytics errors
         
         logger.warning(
             "Invalid query input",
@@ -323,19 +286,20 @@ async def query_legal_information(
     except Exception as e:
         # Log failed query
         response_time_ms = int((time.time() - start_time) * 1000)
-        settings = get_settings()
-        await log_query(
-            request_id=request_id,
-            user_id=user_id,
-            channel=query_request.channel,
-            query_text=query_request.text,
-            response_topic=None,
-            confidence=None,
-            response_time_ms=response_time_ms,
-            status="error",
-            session_id=session_id,
-            settings=settings
-        )
+        try:
+            await log_query(
+                request_id=request_id,
+                user_id=user_id,
+                channel=query_request.channel,
+                query_text=query_request.text,
+                response_topic=None,
+                confidence=None,
+                response_time_ms=response_time_ms,
+                status="error",
+                session_id=session_id,
+            )
+        except Exception:
+            pass  # Don't fail on analytics errors
         
         logger.error(
             "Query processing failed",
@@ -374,14 +338,12 @@ async def submit_feedback(
     """
     # Get user identifier
     user_id = request.headers.get("x-user-id", request.client.host if request.client else "anonymous")
-    settings = get_settings()
     
     success = await save_feedback(
         request_id=feedback.request_id,
         user_id=user_id,
         rating=feedback.rating,
         comment=feedback.comment,
-        settings=settings
     )
     
     return FeedbackResponse(
@@ -421,7 +383,7 @@ async def get_analytics(
             detail="Invalid API key"
         )
     
-    summary = await get_analytics_summary(hours=hours, settings=settings)
+    summary = await get_analytics_summary(hours=hours)
     
     return AnalyticsResponse(
         total_queries=summary.total_queries,
@@ -602,14 +564,17 @@ async def receive_whatsapp_webhook(
         return {"status": "error_logged"}
 
 
+# Vercel serverless handler
+handler = Mangum(app, lifespan="off")
+
 if __name__ == "__main__":
     import uvicorn
     
-    settings = get_settings()
+    # For local development only
     uvicorn.run(
-        "services.api.main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        reload=settings.reload,
-        log_level=settings.log_level.lower(),
+        "api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info",
     )

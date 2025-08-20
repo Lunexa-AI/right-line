@@ -17,8 +17,8 @@ from fastapi import HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from libs.common.settings import get_settings
-from services.api.models import QueryRequest, QueryResponse
-from services.api.responses import get_hardcoded_response
+from api.models import QueryRequest, QueryResponse
+from api.responses import get_hardcoded_response
 
 logger = structlog.get_logger(__name__)
 

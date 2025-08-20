@@ -123,29 +123,44 @@ class SectionRef(BaseModel):
 
 
 class QueryResponse(BaseModel):
-    """Response model for legal query endpoint.
+    """Response model for legal query endpoint (New Serverless Format).
     
     Attributes:
-        summary_3_lines: Three-line summary of the legal information
-        section_ref: Reference to the relevant legal section
+        tldr: Brief summary (≤220 chars)
+        key_points: 3-5 key points, ≤25 words each
         citations: List of source citations
+        suggestions: 2-3 follow-up questions
         confidence: Confidence score (0.0-1.0)
-        related_sections: List of related section identifiers
+        source: How the answer was composed (extractive/openai/hybrid)
         request_id: Request identifier for tracking
         processing_time_ms: Processing time in milliseconds
     """
     
-    summary_3_lines: str = Field(
-        max_length=400,
-        description="Three-line summary of the legal information",
-        example="The minimum wage in Zimbabwe is set by statutory instrument.\nIt varies by sector and is reviewed periodically.\nEmployers must pay at least the prescribed minimum wage.",
+    tldr: str = Field(
+        max_length=220,
+        description="Brief summary of the legal information",
+        example="Minimum wage in Zimbabwe is USD $175 per month. Employers must pay this or higher amount.",
     )
-    section_ref: SectionRef = Field(
-        description="Reference to the relevant legal section",
+    key_points: list[str] = Field(
+        max_items=5,
+        description="3-5 key points, each ≤25 words",
+        example=[
+            "Current minimum wage is USD $175 per month for all sectors",
+            "Employers cannot pay below this statutory minimum",
+            "Violations result in fines up to USD $500"
+        ],
     )
     citations: list[Citation] = Field(
         description="List of source citations",
         example=[],
+    )
+    suggestions: list[str] = Field(
+        max_items=3,
+        description="2-3 follow-up questions",
+        example=[
+            "How are overtime payments calculated?",
+            "What are the penalties for late wage payments?"
+        ],
     )
     confidence: float = Field(
         ge=0.0,
@@ -153,10 +168,9 @@ class QueryResponse(BaseModel):
         description="Confidence score for the response",
         example=0.85,
     )
-    related_sections: list[str] = Field(
-        default_factory=list,
-        description="List of related section identifiers",
-        example=["12B", "13A"],
+    source: str = Field(
+        description="How the answer was composed",
+        example="hybrid",
     )
     request_id: str | None = Field(
         default=None,
@@ -169,25 +183,34 @@ class QueryResponse(BaseModel):
         example=150.5,
     )
     
-    @validator("summary_3_lines")
-    def validate_summary(cls, v: str) -> str:
-        """Validate summary format and length."""
-        lines = v.strip().split('\n')
-        if len(lines) > 3:
-            # Truncate to 3 lines if more are provided
-            v = '\n'.join(lines[:3])
+    @validator("key_points")
+    def validate_key_points(cls, v: list[str]) -> list[str]:
+        """Validate key points format and length."""
+        if len(v) < 3:
+            # Add default if not enough points
+            defaults = ["Information available in legal documents", "Consult qualified legal counsel for advice"]
+            v.extend(defaults[:3-len(v)])
         
-        # Ensure each line is not too long
-        max_line_length = 120
-        lines = v.split('\n')
-        truncated_lines = []
-        for line in lines:
-            if len(line) > max_line_length:
-                truncated_lines.append(line[:max_line_length-3] + "...")
-            else:
-                truncated_lines.append(line)
+        # Truncate points that are too long
+        for i, point in enumerate(v):
+            words = point.split()
+            if len(words) > 25:
+                v[i] = ' '.join(words[:25]) + '...'
         
-        return '\n'.join(truncated_lines)
+        return v[:5]  # Limit to 5 points
+    
+    @validator("suggestions")
+    def validate_suggestions(cls, v: list[str]) -> list[str]:
+        """Validate suggestions format."""
+        if len(v) < 2:
+            # Add default suggestions if not enough
+            defaults = [
+                "What are the key employment rights in Zimbabwe?",
+                "How do I file a complaint with labour authorities?"
+            ]
+            v.extend(defaults[:2-len(v)])
+        
+        return v[:3]  # Limit to 3 suggestions
 
 
 class HealthResponse(BaseModel):
