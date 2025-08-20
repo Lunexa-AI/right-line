@@ -1,6 +1,8 @@
 #!/bin/bash
-# Verify Docker setup for RightLine
-# This script checks that all Dockerfiles are valid and can be built
+# DEPRECATED: Verify Docker setup for RightLine
+# This script is deprecated in favor of Vercel serverless deployment
+# Use `vercel dev` for local development instead of Docker
+# Keep this file for reference only
 
 set -euo pipefail
 

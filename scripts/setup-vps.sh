@@ -1,6 +1,8 @@
 #!/bin/bash
-# Initial VPS setup script for RightLine MVP
-# Run as root on fresh Ubuntu 22.04 server
+# DEPRECATED: Initial VPS setup script for RightLine MVP
+# This script is deprecated in favor of Vercel serverless deployment
+# See docs/DEPLOYMENT.md for the new Vercel deployment guide
+# Keep this file for reference only
 
 set -euo pipefail
 

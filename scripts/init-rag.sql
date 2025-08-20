@@ -1,5 +1,7 @@
--- RightLine RAG Database Schema
--- Run this after the basic init-db.sql to add RAG capabilities
+-- DEPRECATED: RightLine RAG Database Schema for PostgreSQL
+-- This file is deprecated in favor of Milvus Cloud vector store
+-- See scripts/init-milvus.py for the new Milvus collection setup
+-- Keep this file for reference only
 
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;

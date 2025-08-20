@@ -1,18 +1,18 @@
-# RightLine Makefile
-# Common development and deployment commands
+# RightLine Makefile (Vercel + Milvus + OpenAI Edition)
+# Common development and deployment commands for serverless architecture
 
-.PHONY: help setup test lint format clean dev up down
+.PHONY: help setup test lint format clean dev deploy
 
 # Default target - show help
 help:
-	@echo "RightLine Development Commands"
-	@echo "=============================="
+	@echo "RightLine Development Commands (Serverless)"
+	@echo "==========================================="
 	@echo "Setup & Installation:"
-	@echo "  make setup        - Initial project setup (install deps, hooks)"
+	@echo "  make setup        - Initial project setup (install deps, hooks, Vercel CLI)"
 	@echo "  make install      - Install/update dependencies"
 	@echo ""
 	@echo "Development:"
-	@echo "  make dev          - Start development environment"
+	@echo "  make dev          - Start Vercel development server"
 	@echo "  make test         - Run all tests"
 	@echo "  make test-unit    - Run unit tests only"
 	@echo "  make test-watch   - Run tests in watch mode"
@@ -20,38 +20,37 @@ help:
 	@echo "  make format       - Auto-format code (black, isort)"
 	@echo "  make security     - Run security checks"
 	@echo ""
-	@echo "Docker:"
-	@echo "  make up           - Start all services with docker-compose"
-	@echo "  make down         - Stop all services"
-	@echo "  make logs         - View service logs"
-	@echo "  make build        - Build docker images"
-	@echo ""
-	@echo "Database:"
-	@echo "  make db-migrate   - Run database migrations"
-	@echo "  make db-rollback  - Rollback last migration"
-	@echo "  make seed-sample  - Load sample data"
+	@echo "Data & AI:"
+	@echo "  make crawl        - Crawl legal documents from ZimLII"
+	@echo "  make parse        - Parse and chunk documents"
+	@echo "  make embed        - Generate embeddings and upload to Milvus"
+	@echo "  make init-milvus  - Initialize Milvus collection"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy-vps   - Deploy to VPS"
-	@echo "  make deploy-k8s   - Deploy to Kubernetes"
+	@echo "  make deploy       - Deploy to Vercel production"
+	@echo "  make deploy-preview - Deploy to Vercel preview"
+	@echo "  make logs         - View Vercel function logs"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Remove build artifacts and caches"
 
 # Initial setup
 setup:
-	@echo "🚀 Setting up RightLine development environment..."
+	@echo "🚀 Setting up RightLine serverless development environment..."
 	poetry install --with dev
 	poetry run pre-commit install
+	@echo "📦 Installing Vercel CLI..."
+	npm install -g vercel
 	@echo "✅ Setup complete! Run 'make dev' to start developing."
 
 # Install dependencies
 install:
 	poetry install --with dev
 
-# Development server
+# Development server (Vercel)
 dev:
-	poetry run uvicorn services.api.main:app --reload --host 0.0.0.0 --port 8000
+	@echo "🚀 Starting Vercel development server..."
+	vercel dev
 
 # Testing
 test:
@@ -87,91 +86,42 @@ security:
 
 security-check: security
 
-# Docker commands
-up:
-	docker-compose up -d
+# Data & AI commands
+crawl:
+	@echo "🕷️ Crawling legal documents from ZimLII..."
+	poetry run python scripts/crawl_zimlii.py
 
-up-dev:
-	docker-compose up -d
+parse:
+	@echo "📝 Parsing and chunking documents..."
+	poetry run python scripts/parse_docs.py
 
-up-staging:
-	docker-compose -f deploy/docker-compose.staging.yml up -d
+embed:
+	@echo "🧠 Generating embeddings and uploading to Milvus..."
+	poetry run python scripts/generate_embeddings.py
 
-up-prod:
-	docker-compose -f deploy/docker-compose.production.yml up -d
+init-milvus:
+	@echo "🗄️ Initializing Milvus collection..."
+	poetry run python scripts/init-milvus.py
 
-down:
-	docker-compose down
+# Deployment (Vercel)
+deploy:
+	@echo "🚀 Deploying to Vercel production..."
+	vercel --prod
+
+deploy-preview:
+	@echo "🔍 Deploying to Vercel preview..."
+	vercel
 
 logs:
-	docker-compose logs -f
-
-logs-api:
-	docker-compose logs -f api
-
-build:
-	docker-compose build
-
-build-api:
-	docker build -f services/api/Dockerfile -t rightline/api:dev .
-
-build-ingestion:
-	docker build -f services/ingestion/Dockerfile -t rightline/ingestion:dev .
-
-build-retrieval:
-	docker build -f services/retrieval/Dockerfile -t rightline/retrieval:dev .
-
-build-summarizer:
-	docker build -f services/summarizer/Dockerfile -t rightline/summarizer:dev .
-
-build-prod:
-	docker-compose -f deploy/docker-compose.production.yml build
+	@echo "📋 Viewing Vercel function logs..."
+	vercel logs --follow
 
 health:
 	@echo "Checking service health..."
-	@curl -s http://localhost:8000/health || echo "API not responding"
+	@curl -s http://localhost:3000/api/healthz || echo "API not responding (make sure 'make dev' is running)"
 	@echo ""
 
 health-check: health
-
-# Database commands
-db-migrate:
-	poetry run alembic upgrade head
-
-db-rollback:
-	poetry run alembic downgrade -1
-
-db-reset:
-	poetry run alembic downgrade base
-	poetry run alembic upgrade head
-
-seed-sample:
-	poetry run python scripts/seed_data.py
-
-seed-data: seed-sample
-
-# Deployment
-deploy-vps:
-	@echo "Deploying to VPS..."
-	./scripts/deploy_vps.sh
-
-deploy-k8s:
-	@echo "Deploying to Kubernetes..."
-	kubectl apply -k infra/k8s/
-
-deploy-cloud:
-	@echo "Deploying to cloud..."
-	./scripts/deploy_cloud.sh
-
-# Monitoring
-monitor:
-	@echo "Opening monitoring dashboards..."
-	@open http://localhost:3001  # Grafana
-	@open http://localhost:9090  # Prometheus
-
-smoke-test:
-	@echo "Running smoke tests..."
-	./scripts/smoke_test.sh
 
 # Cleanup
 clean:
