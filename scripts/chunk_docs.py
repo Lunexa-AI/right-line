@@ -1,0 +1,671 @@
+#!/usr/bin/env python3
+"""
+chunk_docs.py - Chunk normalized documents into optimal segments for embedding
+
+This script implements the chunking strategy defined in CHUNKING_STRATEGY.md.
+It transforms normalized document objects from docs.jsonl into optimally-sized,
+overlapping chunks ready for embedding, and writes them to chunks.jsonl.
+
+Usage:
+    python scripts/chunk_docs.py [--input_file PATH] [--output_file PATH] [--verbose]
+
+Author: RightLine Team
+"""
+
+import argparse
+import hashlib
+import json
+import logging
+import re
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import structlog
+from pydantic import BaseModel, Field, field_validator
+from tqdm import tqdm
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = structlog.get_logger()
+
+# Constants for chunking
+TARGET_TOKENS = 512  # Target number of tokens per chunk
+MAX_CHARS = 5000  # Maximum characters per chunk (Milvus varchar limit)
+MIN_TOKENS = 100  # Minimum tokens per chunk
+OVERLAP_RATIO = 0.15  # Overlap between chunks (15%)
+CHARS_PER_TOKEN = 4  # Approximate characters per token for English text
+
+# Entity extraction patterns
+PATTERNS = {
+    "dates": r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b",
+    "statute_refs": r"\bs(?:ection)?\s*\d+[A-Z]?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\b[A-Za-z]+\s+Act\s+\[Chapter\s+\d+:\d+\]",
+    "case_refs": r"\[\d{4}\]\s+[A-Z]{2,5}\s+\d+|\d{4}\s*\(\d+\)\s*[A-Z]{2,5}\s*\d+",
+    "courts": r"\b(?:High Court|Supreme Court|Constitutional Court|Magistrates Court|Labour Court)\b"
+}
+
+# Court name lookup for entity extraction
+COURTS = [
+    "High Court of Zimbabwe",
+    "Supreme Court of Zimbabwe",
+    "Constitutional Court of Zimbabwe",
+    "Magistrates Court",
+    "Labour Court",
+]
+
+
+class Chunk(BaseModel):
+    """Pydantic model for a document chunk."""
+    
+    chunk_id: str = Field(description="Stable, deterministic ID")
+    doc_id: str = Field(description="Parent document ID")
+    chunk_text: str = Field(description="Clean text content (max ~5000 chars)")
+    section_path: str = Field(description="Hierarchical path in document")
+    start_char: int = Field(description="Start character offset in original document")
+    end_char: int = Field(description="End character offset in original document")
+    num_tokens: int = Field(description="Estimated token count")
+    language: str = Field(description="Document language (e.g., eng)")
+    doc_type: str = Field(description="Document type (act, judgment, etc.)")
+    date_context: Optional[str] = Field(description="Date context (YYYY-MM-DD)")
+    entities: Dict[str, List[str]] = Field(default_factory=dict, description="Extracted entities")
+    source_url: Optional[str] = Field(None, description="Source URL")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    
+    @field_validator("chunk_text")
+    def validate_chunk_text(cls, v):
+        """Validate chunk text length."""
+        if len(v) > MAX_CHARS:
+            raise ValueError(f"Chunk text exceeds maximum length of {MAX_CHARS} characters")
+        if len(v) < MIN_TOKENS * CHARS_PER_TOKEN:
+            raise ValueError(f"Chunk text is too short (less than {MIN_TOKENS} tokens)")
+        return v
+    
+    @field_validator("num_tokens")
+    def validate_num_tokens(cls, v):
+        """Validate token count."""
+        if v < MIN_TOKENS:
+            raise ValueError(f"Number of tokens is less than minimum of {MIN_TOKENS}")
+        return v
+
+
+def load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
+    """Load documents from a JSONL file."""
+    documents = []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    documents.append(json.loads(line))
+        logger.info(f"Loaded {len(documents)} documents from {file_path}")
+        return documents
+    except Exception as e:
+        logger.error(f"Error loading documents from {file_path}: {e}")
+        raise
+
+
+def write_jsonl(file_path: Path, chunks: List[Dict[str, Any]]) -> None:
+    """Write chunks to a JSONL file."""
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            for chunk in chunks:
+                f.write(json.dumps(chunk, default=str) + "\n")
+        logger.info(f"Wrote {len(chunks)} chunks to {file_path}")
+    except Exception as e:
+        logger.error(f"Error writing chunks to {file_path}: {e}")
+        raise
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate the number of tokens in a text using character count."""
+    # Simple approximation: ~4 chars per token for English text
+    return len(text) // CHARS_PER_TOKEN
+
+
+def normalize_text(text: str) -> str:
+    """Normalize text for consistent processing."""
+    # Replace multiple whitespace with a single space
+    text = re.sub(r'\s+', ' ', text)
+    # Normalize quotes
+    text = text.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'")
+    # Normalize dashes
+    text = text.replace('—', '-').replace('–', '-')
+    # Strip leading/trailing whitespace
+    return text.strip()
+
+
+def find_sentence_boundary(text: str, position: int) -> int:
+    """Find the nearest sentence boundary to the given position."""
+    # Look for sentence-ending punctuation followed by space or newline
+    sentence_end_pattern = r'[.!?]\s+'
+    
+    # Search forward for the next sentence boundary
+    forward_match = re.search(sentence_end_pattern, text[position:])
+    forward_pos = position + forward_match.end() if forward_match else len(text)
+    
+    # Search backward for the previous sentence boundary
+    text_before = text[:position]
+    backward_matches = list(re.finditer(sentence_end_pattern, text_before))
+    backward_pos = backward_matches[-1].end() if backward_matches else 0
+    
+    # Return the closest boundary
+    if position - backward_pos <= forward_pos - position:
+        return backward_pos
+    else:
+        return forward_pos
+
+
+def extract_entities(text: str) -> Dict[str, List[str]]:
+    """Extract entities from text using regex patterns."""
+    entities = {}
+    
+    # Extract dates
+    dates = re.findall(PATTERNS["dates"], text)
+    if dates:
+        entities["dates"] = list(set(dates))
+    
+    # Extract statute references
+    statute_refs = re.findall(PATTERNS["statute_refs"], text)
+    if statute_refs:
+        entities["statute_refs"] = list(set(statute_refs))
+    
+    # Extract case citations
+    case_refs = re.findall(PATTERNS["case_refs"], text)
+    if case_refs:
+        entities["case_refs"] = list(set(case_refs))
+    
+    # Extract courts
+    courts = []
+    for court in COURTS:
+        if court in text:
+            courts.append(court)
+    if courts:
+        entities["courts"] = courts
+    
+    return entities
+
+
+def generate_chunk_id(doc_id: str, section_path: str, start_char: int, end_char: int, chunk_text: str) -> str:
+    """Generate a stable, deterministic chunk ID."""
+    # Normalize whitespace before hashing to ensure stability
+    normalized_text = re.sub(r'\s+', ' ', chunk_text).strip()
+    text_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()[:8]
+    
+    components = f"{doc_id}|{section_path}|{start_char}|{end_char}|{text_hash}"
+    return hashlib.sha256(components.encode("utf-8")).hexdigest()[:16]
+
+
+def chunk_text(text: str, section_path: str, doc_id: str, start_offset: int = 0) -> List[Dict[str, Any]]:
+    """
+    Chunk text into overlapping segments using sliding window.
+    
+    Args:
+        text: The text to chunk
+        section_path: Hierarchical path in the document
+        doc_id: Parent document ID
+        start_offset: Character offset in the original document
+        
+    Returns:
+        List of chunk dictionaries
+    """
+    if not text.strip():
+        return []
+    
+    chunks = []
+    text = normalize_text(text)
+    text_length = len(text)
+    
+    # If text is shorter than target, return as single chunk
+    if estimate_tokens(text) <= TARGET_TOKENS:
+        start_char = start_offset
+        end_char = start_offset + text_length
+        num_tokens = estimate_tokens(text)
+        
+        chunk = {
+            "chunk_text": text,
+            "section_path": section_path,
+            "start_char": start_char,
+            "end_char": end_char,
+            "num_tokens": num_tokens,
+        }
+        return [chunk]
+    
+    # Calculate sliding window parameters
+    overlap_tokens = int(TARGET_TOKENS * OVERLAP_RATIO)
+    stride_tokens = TARGET_TOKENS - overlap_tokens
+    stride_chars = stride_tokens * CHARS_PER_TOKEN
+    
+    # Initialize window
+    pos = 0
+    chunk_index = 0
+    
+    while pos < text_length:
+        # Calculate end position for current chunk
+        target_chars = TARGET_TOKENS * CHARS_PER_TOKEN
+        end_pos = min(pos + target_chars, text_length)
+        
+        # Adjust to sentence boundary if not at end of text
+        if end_pos < text_length:
+            end_pos = find_sentence_boundary(text, end_pos)
+        
+        # Extract chunk text
+        chunk_text = text[pos:end_pos]
+        num_tokens = estimate_tokens(chunk_text)
+        
+        # Skip if chunk is too small (except at end of text)
+        if num_tokens < MIN_TOKENS and end_pos < text_length:
+            pos += stride_chars
+            continue
+        
+        # Create chunk
+        start_char = start_offset + pos
+        end_char = start_offset + end_pos
+        
+        chunk = {
+            "chunk_text": chunk_text,
+            "section_path": section_path,
+            "start_char": start_char,
+            "end_char": end_char,
+            "num_tokens": num_tokens,
+        }
+        
+        chunks.append(chunk)
+        chunk_index += 1
+        
+        # Move window
+        pos += stride_chars
+        
+        # Break if we've reached the end
+        if pos >= text_length:
+            break
+    
+    return chunks
+
+
+def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Chunk a legislation document into optimal segments.
+    
+    Args:
+        doc: The document to chunk
+        
+    Returns:
+        List of chunk dictionaries
+    """
+    all_chunks = []
+    doc_id = doc["doc_id"]
+    doc_type = doc["doc_type"]
+    language = doc["language"]
+    date_context = doc.get("version_effective_date")
+    source_url = doc.get("source_url")
+    title = doc.get("title", "")
+    
+    # Process content tree
+    content_tree = doc.get("content_tree", {})
+    parts = content_tree.get("parts", [])
+    
+    # If content_tree is empty or has no parts, return empty list
+    if not parts:
+        logger.warning(f"Document {doc_id} has no content to chunk")
+        return []
+    
+    # Process each part
+    for part_idx, part in enumerate(parts):
+        part_title = part.get("title", f"Part {part_idx + 1}")
+        sections = part.get("sections", [])
+        
+        # Process each section
+        for section_idx, section in enumerate(sections):
+            section_title = section.get("title", f"Section {section_idx + 1}")
+            section_content = section.get("content", "")
+            
+            # Skip empty sections
+            if not section_content.strip():
+                continue
+            
+            # Create section path
+            section_path = f"{part_title} > {section_title}"
+            
+            # Chunk section content
+            section_chunks = chunk_text(
+                text=section_content,
+                section_path=section_path,
+                doc_id=doc_id,
+            )
+            
+            # Add metadata to chunks
+            for i, chunk in enumerate(section_chunks):
+                # Add header to first chunk if multiple chunks
+                if i == 0 and len(section_chunks) > 1 and section_title:
+                    chunk["chunk_text"] = f"{section_title}: {chunk['chunk_text']}"
+                
+                # Extract entities
+                entities = extract_entities(chunk["chunk_text"])
+                
+                # Generate chunk ID
+                chunk_id = generate_chunk_id(
+                    doc_id=doc_id,
+                    section_path=chunk["section_path"],
+                    start_char=chunk["start_char"],
+                    end_char=chunk["end_char"],
+                    chunk_text=chunk["chunk_text"],
+                )
+                
+                # Create full chunk object
+                full_chunk = Chunk(
+                    chunk_id=chunk_id,
+                    doc_id=doc_id,
+                    chunk_text=chunk["chunk_text"],
+                    section_path=chunk["section_path"],
+                    start_char=chunk["start_char"],
+                    end_char=chunk["end_char"],
+                    num_tokens=chunk["num_tokens"],
+                    language=language,
+                    doc_type=doc_type,
+                    date_context=date_context,
+                    entities=entities,
+                    source_url=source_url,
+                    metadata={
+                        "title": title,
+                        "section": section_title,
+                        "chunk_index": i,
+                    },
+                )
+                
+                all_chunks.append(full_chunk.model_dump(exclude_none=True))
+    
+    return all_chunks
+
+
+def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Chunk a judgment document into optimal segments.
+    
+    Args:
+        doc: The document to chunk
+        
+    Returns:
+        List of chunk dictionaries
+    """
+    all_chunks = []
+    doc_id = doc["doc_id"]
+    doc_type = doc["doc_type"]
+    language = doc["language"]
+    date_context = doc.get("version_effective_date")
+    source_url = doc.get("source_url")
+    title = doc.get("title", "")
+    
+    # Extract metadata from extra field
+    extra = doc.get("extra", {})
+    court = extra.get("court", "")
+    canonical_citation = doc.get("canonical_citation")
+    
+    # Process content tree
+    content_tree = doc.get("content_tree", {})
+    headnote = content_tree.get("headnote", [])
+    body = content_tree.get("body", [])
+    
+    # Process headnote
+    if headnote:
+        headnote_text = " ".join(headnote)
+        
+        # Skip "Download PDF" and other boilerplate headnotes
+        if len(headnote_text) < 50 or headnote_text.strip() in ["Download PDF"]:
+            logger.warning(f"Skipping short or boilerplate headnote for document {doc_id}")
+        else:
+            headnote_chunks = chunk_text(
+                text=headnote_text,
+                section_path="Headnote",
+                doc_id=doc_id,
+            )
+            
+            # Add metadata to chunks
+            for i, chunk in enumerate(headnote_chunks):
+                # Skip chunks that are too short
+                if len(chunk["chunk_text"]) < MIN_TOKENS * CHARS_PER_TOKEN:
+                    continue
+                    
+                # Extract entities
+                entities = extract_entities(chunk["chunk_text"])
+                
+                # Generate chunk ID
+                chunk_id = generate_chunk_id(
+                    doc_id=doc_id,
+                    section_path=chunk["section_path"],
+                    start_char=chunk["start_char"],
+                    end_char=chunk["end_char"],
+                    chunk_text=chunk["chunk_text"],
+                )
+                
+                try:
+                    # Create full chunk object
+                    full_chunk = Chunk(
+                        chunk_id=chunk_id,
+                        doc_id=doc_id,
+                        chunk_text=chunk["chunk_text"],
+                        section_path=chunk["section_path"],
+                        start_char=chunk["start_char"],
+                        end_char=chunk["end_char"],
+                        num_tokens=chunk["num_tokens"],
+                        language=language,
+                        doc_type=doc_type,
+                        date_context=date_context,
+                        entities=entities,
+                        source_url=source_url,
+                        metadata={
+                            "title": title,
+                            "court": court,
+                            "canonical_citation": canonical_citation,
+                            "chunk_index": i,
+                        },
+                    )
+                    
+                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                except Exception as e:
+                    logger.warning(f"Skipping invalid headnote chunk for document {doc_id}: {e}")
+    
+    # Process body
+    if body:
+        # Filter out boilerplate content
+        filtered_body = []
+        boilerplate_patterns = [
+            "Download PDF", "Download DOCX", "Share", "Report a problem", 
+            "Document detail", "Related documents", "Sign up or Log in"
+        ]
+        
+        for para in body:
+            is_boilerplate = False
+            for pattern in boilerplate_patterns:
+                if pattern in para:
+                    is_boilerplate = True
+                    break
+            
+            # Skip navigation content
+            if "navigation-content" in para or "navigation-column" in para:
+                is_boilerplate = True
+                
+            # Skip very short paragraphs (likely navigation elements)
+            if len(para.strip()) < 10:
+                is_boilerplate = True
+                
+            if not is_boilerplate:
+                filtered_body.append(para)
+        
+        # Join paragraphs with newlines to preserve paragraph boundaries
+        body_text = " ".join(filtered_body)
+        
+        # Skip if body is too short after filtering
+        if len(body_text) < MIN_TOKENS * CHARS_PER_TOKEN:
+            logger.warning(f"Body text too short after filtering for document {doc_id}")
+            return all_chunks
+        
+        # Split into paragraphs for processing
+        paragraphs = re.split(r'\n+', body_text)
+        
+        # Track paragraph indices for section_path
+        start_para_idx = 0
+        current_pos = 0
+        
+        # Process paragraphs in sliding window
+        while start_para_idx < len(paragraphs):
+            current_text = ""
+            end_para_idx = start_para_idx
+            
+            # Accumulate paragraphs until target size is reached
+            while end_para_idx < len(paragraphs):
+                next_para = paragraphs[end_para_idx]
+                test_text = current_text + " " + next_para if current_text else next_para
+                
+                if estimate_tokens(test_text) > TARGET_TOKENS and current_text:
+                    # We've reached target size
+                    break
+                
+                current_text = test_text
+                end_para_idx += 1
+            
+            # If we didn't accumulate anything, take at least one paragraph
+            if start_para_idx == end_para_idx:
+                current_text = paragraphs[start_para_idx]
+                end_para_idx = start_para_idx + 1
+            
+            # Skip if chunk is too short
+            if len(current_text) < MIN_TOKENS * CHARS_PER_TOKEN:
+                start_para_idx += 1
+                current_pos += len(current_text) + 1
+                continue
+            
+            # Create section path
+            section_path = f"Body > Paras {start_para_idx+1}-{end_para_idx}"
+            
+            # Chunk accumulated paragraphs
+            para_chunks = chunk_text(
+                text=current_text,
+                section_path=section_path,
+                doc_id=doc_id,
+                start_offset=current_pos,
+            )
+            
+            # Update position tracker
+            current_pos += len(current_text) + 1  # +1 for the newline
+            
+            # Add metadata to chunks
+            for i, chunk in enumerate(para_chunks):
+                # Skip chunks that are too short
+                if len(chunk["chunk_text"]) < MIN_TOKENS * CHARS_PER_TOKEN:
+                    continue
+                    
+                # Extract entities
+                entities = extract_entities(chunk["chunk_text"])
+                
+                # Generate chunk ID
+                chunk_id = generate_chunk_id(
+                    doc_id=doc_id,
+                    section_path=chunk["section_path"],
+                    start_char=chunk["start_char"],
+                    end_char=chunk["end_char"],
+                    chunk_text=chunk["chunk_text"],
+                )
+                
+                try:
+                    # Create full chunk object
+                    full_chunk = Chunk(
+                        chunk_id=chunk_id,
+                        doc_id=doc_id,
+                        chunk_text=chunk["chunk_text"],
+                        section_path=chunk["section_path"],
+                        start_char=chunk["start_char"],
+                        end_char=chunk["end_char"],
+                        num_tokens=chunk["num_tokens"],
+                        language=language,
+                        doc_type=doc_type,
+                        date_context=date_context,
+                        entities=entities,
+                        source_url=source_url,
+                        metadata={
+                            "title": title,
+                            "court": court,
+                            "canonical_citation": canonical_citation,
+                            "chunk_index": i,
+                        },
+                    )
+                    
+                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                except Exception as e:
+                    logger.warning(f"Skipping invalid body chunk for document {doc_id}: {e}")
+            
+            # Move window with overlap
+            overlap_paras = max(1, (end_para_idx - start_para_idx) // 5)  # ~20% overlap
+            start_para_idx = end_para_idx - overlap_paras
+    
+    return all_chunks
+
+
+def process_documents(input_file: Path, output_file: Path, verbose: bool = False) -> None:
+    """
+    Process documents from input file and write chunks to output file.
+    
+    Args:
+        input_file: Path to input JSONL file
+        output_file: Path to output JSONL file
+        verbose: Whether to print verbose output
+    """
+    # Load documents
+    documents = load_jsonl(input_file)
+    all_chunks = []
+    
+    # Process each document
+    for doc in tqdm(documents, desc="Chunking documents"):
+        try:
+            # Determine document type and apply appropriate chunking strategy
+            if doc.get("doc_type") == "act":
+                chunks = chunk_legislation(doc)
+            else:  # judgment or other
+                chunks = chunk_judgment(doc)
+            
+            all_chunks.extend(chunks)
+            
+            if verbose:
+                logger.info(f"Generated {len(chunks)} chunks for document {doc.get('doc_id')}")
+        
+        except Exception as e:
+            logger.error(f"Error processing document {doc.get('doc_id')}: {e}")
+            if verbose:
+                import traceback
+                logger.error(traceback.format_exc())
+    
+    # Write chunks to output file
+    write_jsonl(output_file, all_chunks)
+    
+    # Log statistics
+    avg_tokens = sum(chunk["num_tokens"] for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
+    avg_chars = sum(len(chunk["chunk_text"]) for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
+    
+    logger.info(f"Generated {len(all_chunks)} chunks from {len(documents)} documents")
+    logger.info(f"Average chunk size: {avg_tokens:.1f} tokens, {avg_chars:.1f} characters")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Chunk normalized documents into optimal segments for embedding")
+    parser.add_argument("--input_file", type=Path, default="data/processed/docs.jsonl", 
+                        help="Path to input JSONL file")
+    parser.add_argument("--output_file", type=Path, default="data/processed/chunks.jsonl", 
+                        help="Path to output JSONL file")
+    parser.add_argument("--verbose", action="store_true", help="Print verbose output")
+    
+    args = parser.parse_args()
+    
+    try:
+        process_documents(args.input_file, args.output_file, args.verbose)
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        if args.verbose:
+            import traceback
+            logger.error(traceback.format_exc())
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
