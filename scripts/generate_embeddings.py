@@ -94,11 +94,17 @@ def upload_to_milvus(collection: Collection, data: List[Dict[str, Any]], batch_s
         batch = data[i:i + batch_size]
         
         # Prepare batch data
+        # Order must match schema (excluding auto primary key):
+        # doc_id, doc_type, language, court, date_context, chunk_text, embedding, metadata
         batch_data = [
-            [item["doc_id"] for item in batch],           # doc_id
-            [item["chunk_text"] for item in batch],       # chunk_text  
-            [item["embedding"] for item in batch],        # embedding
-            [item["metadata"] for item in batch],         # metadata
+            [item.get("doc_id", "") for item in batch],                 # doc_id
+            [item.get("doc_type", item.get("metadata", {}).get("doc_type", "unknown")) for item in batch],  # doc_type
+            [item.get("language", item.get("metadata", {}).get("language", "eng")) for item in batch],      # language
+            [item.get("court", item.get("metadata", {}).get("court", "")) for item in batch],              # court
+            [item.get("date_context", item.get("metadata", {}).get("date_context", "")) for item in batch],# date_context
+            [item["chunk_text"] for item in batch],                       # chunk_text
+            [item["embedding"] for item in batch],                        # embedding
+            [item["metadata"] for item in batch],                         # metadata
         ]
         
         # Insert batch
@@ -185,6 +191,11 @@ def main():
                 "doc_id": chunk["doc_id"],
                 "chunk_text": chunk["chunk_text"],
                 "embedding": embedding,
+                # Promote common scalar fields with safe defaults
+                "doc_type": chunk.get("doc_type", "unknown"),
+                "language": chunk.get("language", "eng"),
+                "court": chunk.get("court", ""),
+                "date_context": chunk.get("date_context", ""),
                 "metadata": {
                     "source_url": chunk.get("source_url", ""),
                     "title": chunk.get("title", ""),
@@ -192,6 +203,11 @@ def main():
                     "chunk_index": chunk.get("chunk_index", 0),
                     "start_char": chunk.get("start_char", 0),
                     "end_char": chunk.get("end_char", 0),
+                    # Carry through additional context if present
+                    "doc_type": chunk.get("doc_type"),
+                    "language": chunk.get("language"),
+                    "court": chunk.get("court"),
+                    "date_context": chunk.get("date_context"),
                 }
             }
             processed_chunks.append(processed_chunk)

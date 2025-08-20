@@ -15,11 +15,14 @@ PyYAML==6.0.2
 # Document Processing
 beautifulsoup4==4.12.3
 lxml==5.2.2
-pymupdf==1.24.9
+#pymupdf==1.24.9
 
 # AI & Vector Store
 openai==1.3.7
-pymilvus==2.3.4
+# Upgrade to a version with prebuilt wheels compatible with Python 3.13/ARM
+pymilvus==2.6.0
+# Ensure grpc wheel is used; prevents local builds on macOS ARM
+grpcio==1.74.0
 
 # Utilities
 orjson==3.10.6
