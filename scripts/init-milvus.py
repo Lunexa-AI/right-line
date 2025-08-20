@@ -68,6 +68,31 @@ def create_collection_schema() -> CollectionSchema:
             max_length=100,
             description="Source document identifier"
         ),
+        # Recommended scalar fields for filtering (see INGESTION_AND_CHUNKING.md)
+        FieldSchema(
+            name="doc_type",
+            dtype=DataType.VARCHAR,
+            max_length=20,
+            description="Document type: act | judgment | constitution | si | other"
+        ),
+        FieldSchema(
+            name="language",
+            dtype=DataType.VARCHAR,
+            max_length=10,
+            description="Language code, e.g., eng"
+        ),
+        FieldSchema(
+            name="court",
+            dtype=DataType.VARCHAR,
+            max_length=100,
+            description="Court name for judgments (optional)"
+        ),
+        FieldSchema(
+            name="date_context",
+            dtype=DataType.VARCHAR,
+            max_length=32,
+            description="Date context (ISO), e.g., version_effective_date or judgment date"
+        ),
         FieldSchema(
             name="chunk_text",
             dtype=DataType.VARCHAR,
@@ -150,6 +175,17 @@ def main():
             field_name="embedding",
             index_params=index_params
         )
+
+        # Create inverted indexes for scalar filter fields (optional but recommended)
+        try:
+            print("🧭 Creating INVERTED indexes for scalar fields (doc_type, language, court, date_context)...")
+            for scalar_field in ["doc_type", "language", "court", "date_context"]:
+                collection.create_index(
+                    field_name=scalar_field,
+                    index_params={"index_type": "INVERTED", "params": {}}
+                )
+        except Exception as e:
+            print(f"⚠️  Skipped creating scalar indexes: {e}")
         
         # Load collection into memory
         print("💾 Loading collection into memory...")
@@ -162,6 +198,7 @@ def main():
         print(f"   Primary key: id (auto-generated)")
         print(f"   Vector field: embedding (1536 dimensions)")
         print(f"   Index: HNSW with COSINE similarity")
+        print(f"   Scalar filter fields: doc_type, language, court, date_context")
         
         # Display next steps
         print("\n📝 Next steps:")
