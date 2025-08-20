@@ -1,47 +1,29 @@
-# Deployment Configuration
+# DEPRECATED: Deployment Configuration
 
-This directory contains all Docker and deployment-related files that were previously cluttering the root directory.
+⚠️ **This directory is deprecated in favor of Vercel serverless deployment.**
 
-## 📦 Files
+The Docker-based deployment approach has been replaced with:
+- **Vercel Functions** for serverless API deployment
+- **Milvus Cloud** for vector storage
+- **OpenAI API** for AI capabilities
 
-### Docker Compose Files
-- **docker-compose.dev.yml** - Development environment with hot reload
-- **docker-compose.staging.yml** - Staging environment configuration  
-- **docker-compose.production.yml** - Production environment with HA setup
-- **docker-compose.override.yml** - Local development overrides
+## 🚀 New Deployment Approach
 
-### Docker Configuration
-- **Dockerfile** - Main application Dockerfile (moved from root)
+See the updated deployment documentation:
+- [**Deployment Guide**](../docs/DEPLOYMENT.md) - Vercel deployment instructions
+- [**Quick Start**](../docs/QUICKSTART.md) - Get running in 5 minutes
+- [**MVP Architecture**](../docs/project/MVP_ARCHITECTURE.md) - Serverless architecture
 
-## 🚀 Usage
+## 📦 Migration
 
-### Development
-```bash
-# From project root
-docker-compose up                    # Uses root docker-compose.yml + override
-docker-compose -f deploy/docker-compose.dev.yml up  # Explicit dev config
-```
+To migrate from Docker to Vercel:
+1. Set up Vercel account and CLI
+2. Configure OpenAI API key
+3. Set up Milvus Cloud cluster
+4. Deploy with `vercel --prod`
 
-### Staging
-```bash
-make up-staging
-# or
-docker-compose -f deploy/docker-compose.staging.yml up -d
-```
-
-### Production
-```bash
-make up-prod
-# or  
-docker-compose -f deploy/docker-compose.production.yml up -d
-```
-
-## 📁 Related Documentation
-
-- **Docker Guide**: [../docs/docker/README.md](../docs/docker/README.md)
-- **Deployment Guide**: [../docs/deployment/README.md](../docs/deployment/README.md)
-- **Configuration**: [../docs/configuration.md](../docs/configuration.md)
+See [MIGRATION_NOTES.md](../MIGRATION_NOTES.md) for detailed migration steps.
 
 ---
 
-*This organization keeps deployment files together while maintaining the convenience of `docker-compose up` from the root.*
+*This directory is kept for reference only. Use Vercel deployment for new installations.*

@@ -1,210 +1,204 @@
-# RightLine MVP Deployment Guide (Lightweight Edition)
+# RightLine MVP Deployment Guide (Vercel Serverless Edition)
 
-> **📦 Minimal deployment for MVP**: Single VM, Docker Compose with FastAPI API and Postgres. Aligns with MVP_ARCHITECTURE.md. Total setup: ~10 minutes. Extend to V2 for production features.
+> **📦 Serverless deployment for MVP**: Vercel functions with Milvus Cloud and OpenAI. Aligns with MVP_ARCHITECTURE.md. Total setup: ~15 minutes. Pay-per-use scaling.
 
 ## 🎯 Deployment Philosophy
-- **Ultra-Low Budget**: $5/month VPS.
-- **Minimal**: API + DB only; no extras until needed.
-- **Secure Basics**: HTTPS via VPS, API key auth.
-- **Fast**: <2s responses; local models.
+- **Serverless-First**: Zero server management; auto-scaling.
+- **Managed Services**: Vercel + Milvus Cloud + OpenAI; no infrastructure.
+- **Secure by Default**: HTTPS, API keys, edge functions.
+- **Fast**: <2s responses; global CDN distribution.
 
-## 📊 Platform: Basic VPS (e.g., Hetzner/Contabo)
-- **Why**: Cheaper than Lightsail for MVP ($3-5/month, 1vCPU/2GB/20GB).
-- **Alternative**: Lightsail if AWS preferred.
+## 📊 Platform: Vercel + Milvus Cloud + OpenAI
+- **Vercel**: Free tier (100GB-hours/month), then $20/month Pro
+- **Milvus Cloud**: Free tier (1GB storage), then $0.10/million queries
+- **OpenAI**: Pay-per-use ($0.50/1M embedding tokens, $1.50/1M GPT-3.5 tokens)
 
 ## 🚀 Quick Start
 ### Prerequisites
-- VPS with Ubuntu 22.04 (2GB RAM minimum)
-- SSH access as root or sudo user
-- Domain name (optional for MVP)
+- GitHub account (for code repository)
+- Vercel account (free tier available)
+- OpenAI API account (pay-per-use)
+- Milvus Cloud account (free tier available)
 
-### Step 1: Server Setup (3 minutes)
+### Step 1: Service Setup (5 minutes)
+
+#### 1.1 OpenAI API Key
 ```bash
-# SSH into your VPS
-ssh root@your-vps-ip
-
-# Run the setup script
-wget https://raw.githubusercontent.com/yourusername/right-line/main/scripts/setup-vps.sh
-bash setup-vps.sh
-
-# Or manually:
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-compose git ufw
-sudo systemctl enable docker && sudo systemctl start docker
-sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
-sudo ufw --force enable
+# Get API key from https://platform.openai.com/api-keys
+# Example: sk-proj-abc123...
+export OPENAI_API_KEY="sk-proj-your-key-here"
 ```
 
-### Step 2: Clone and Configure (2 minutes)
+#### 1.2 Milvus Cloud Setup
 ```bash
-# Clone the repository
-cd /opt
-git clone https://github.com/yourusername/right-line.git rightline
-cd rightline
-
-# Create production environment file
-cat > .env.production << 'EOF'
-# Security
-RIGHTLINE_SECRET_KEY=$(openssl rand -hex 32)
-
-# Database
-RIGHTLINE_DATABASE_URL=postgresql://rightline:rightline@postgres:5432/rightline
-
-# App
-RIGHTLINE_APP_ENV=production
-RIGHTLINE_LOG_LEVEL=INFO
-
-# LLM (local)
-RIGHTLINE_LLM_MODEL_PATH=/models/tinyllama-1.1b-chat.Q4_K_M.gguf
-RIGHTLINE_LLM_MAX_TOKENS=120
-EOF
-
-chmod 600 .env.production
+# Sign up at https://cloud.milvus.io/
+# Create a cluster (free tier: 1 cluster, 1GB storage)
+# Get connection details:
+export MILVUS_ENDPOINT="https://your-cluster.api.gcp-us-west1.zillizcloud.com"
+export MILVUS_TOKEN="your-cluster-token"
 ```
 
-### Step 3: Download LLM Model (1 minute)
+#### 1.3 Vercel Account
 ```bash
-mkdir -p models
-# Example: TinyLlama 1.1B Chat Q4_K_M (adjust URL to a valid GGUF source)
-curl -L -o models/tinyllama-1.1b-chat.Q4_K_M.gguf "https://your-model-hosting/tinyllama-1.1b-chat.Q4_K_M.gguf"
+# Sign up at https://vercel.com/
+# Install Vercel CLI
+npm install -g vercel
+vercel login
 ```
 
-### Step 4: Deploy Application (2 minutes)
+### Step 2: Repository Setup (3 minutes)
 ```bash
-# Compose mounts ./models to /models in the container
-# (already set in docker-compose.mvp.yml instructions)
-docker-compose -f docker-compose.mvp.yml build
-docker-compose -f docker-compose.mvp.yml up -d
+# Fork/clone the repository
+git clone https://github.com/yourusername/right-line.git
+cd right-line
+
+# Install dependencies locally (for development)
+pip install -r requirements.txt
+
+# Test local development
+vercel dev
 ```
 
-### Step 5: Verify LLM Generation (1 minute)
+### Step 3: Environment Configuration (2 minutes)
 ```bash
-curl -X POST http://localhost/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{"text": "What is notice period for termination?"}'
-# Expect: EXACT 3 lines, ≤100 chars each, with citations appended
+# Set Vercel environment variables
+vercel env add RIGHTLINE_SECRET_KEY
+# Enter: your-secret-key-at-least-32-characters-long
+
+vercel env add OPENAI_API_KEY
+# Enter: sk-proj-your-openai-key
+
+vercel env add MILVUS_ENDPOINT  
+# Enter: https://your-cluster.api.gcp-us-west1.zillizcloud.com
+
+vercel env add MILVUS_TOKEN
+# Enter: your-cluster-token
+
+vercel env add RIGHTLINE_APP_ENV
+# Enter: production
 ```
 
-### Step 4: Verify Deployment (1 minute)
+### Step 4: Deploy to Vercel (2 minutes)
 ```bash
-# Check services are running
-docker ps
+# Deploy to production
+vercel --prod
 
-# Test the API
-curl http://localhost/healthz
+# Your app will be available at:
+# https://right-line-your-username.vercel.app
+```
 
-# Test a query
-curl -X POST http://localhost/v1/query \
+### Step 5: Verify Deployment (1 minute)
+```bash
+# Test the API health
+curl https://right-line-your-username.vercel.app/api/healthz
+
+# Test a query (should work with hardcoded responses)
+curl -X POST https://right-line-your-username.vercel.app/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"text": "What is minimum wage?"}'
 
-# Check logs if issues
-docker logs rightline-api
+# Check Vercel function logs
+vercel logs
 ```
 
-### Step 5: Add HTTPS (Optional but Recommended)
+### Step 6: Custom Domain (Optional)
 ```bash
-# Install certbot
-sudo apt install -y certbot python3-certbot-nginx nginx
+# In Vercel dashboard, add custom domain
+# Go to Project Settings > Domains
+# Add: yourdomain.com
+# Configure DNS A record to point to Vercel's IP
 
-# Configure nginx as reverse proxy
-sudo cat > /etc/nginx/sites-available/rightline << 'EOF'
-server {
-    listen 80;
-    server_name your-domain.com;
-    
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-EOF
+# Or via CLI:
+vercel domains add yourdomain.com
+```
 
-sudo ln -s /etc/nginx/sites-available/rightline /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl restart nginx
+## 📊 Data Ingestion (Phase 2 Setup)
 
-# Get SSL certificate
-sudo certbot --nginx -d your-domain.com
+### Milvus Collection Setup
+```python
+# Run locally to set up Milvus collection
+python scripts/init-milvus.py
+
+# Expected output:
+# ✅ Connected to Milvus Cloud
+# ✅ Collection 'legal_chunks' created
+# ✅ HNSW index created on embedding field
+```
+
+### Document Ingestion Pipeline
+```bash
+# 1. Crawl documents (run locally)
+python scripts/crawl_zimlii.py
+
+# 2. Parse and chunk documents
+python scripts/parse_docs.py
+
+# 3. Generate embeddings and upload to Milvus
+python scripts/generate_embeddings.py
+# This will use OpenAI API to generate embeddings
+# and upload them to your Milvus Cloud cluster
 ```
 
 ## 🔄 Backup Strategy
-```bash
-# Create backup script
-cat > /opt/rightline/scripts/backup.sh << 'EOF'
-#!/bin/bash
-BACKUP_DIR="/opt/rightline/backups"
-DATE=$(date +%Y%m%d_%H%M%S)
-mkdir -p $BACKUP_DIR
-
-# Backup database
-docker exec rightline-postgres pg_dump -U rightline rightline | gzip > $BACKUP_DIR/db_$DATE.sql.gz
-
-# Keep only last 7 days
-find $BACKUP_DIR -name "*.sql.gz" -mtime +7 -delete
-EOF
-
-chmod +x /opt/rightline/scripts/backup.sh
-
-# Add to crontab (daily at 2 AM)
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/rightline/scripts/backup.sh") | crontab -
-```
+- **Code**: Automatically backed up in GitHub
+- **Milvus Data**: Managed backups by Milvus Cloud (free tier: 7-day retention)
+- **Analytics**: Stored in Vercel KV (managed service)
+- **No manual backups needed** for serverless architecture
 
 ## 📈 Monitoring
-```bash
-# Simple health check script
-cat > /opt/rightline/scripts/health.sh << 'EOF'
-#!/bin/bash
-if curl -f http://localhost/healthz > /dev/null 2>&1; then
-    echo "RightLine is healthy"
-else
-    echo "RightLine is down!"
-    # Send alert (email, SMS, etc.)
-fi
-EOF
-
-chmod +x /opt/rightline/scripts/health.sh
-
-# Add to crontab (every 5 minutes)
-(crontab -l 2>/dev/null; echo "*/5 * * * * /opt/rightline/scripts/health.sh") | crontab -
-```
+- **Vercel Analytics**: Built-in request monitoring and performance metrics
+- **OpenAI Usage**: Track via OpenAI dashboard (tokens, costs)
+- **Milvus Metrics**: Monitor via Milvus Cloud console (queries, storage)
+- **Custom Logs**: View via `vercel logs` or Vercel dashboard
 
 ## 🚨 Troubleshooting
 
-### Service won't start
+### Function timeouts
 ```bash
-# Check logs
-docker logs rightline-api
-docker logs rightline-postgres
+# Check function logs
+vercel logs --follow
 
-# Check disk space
-df -h
-
-# Check memory
-free -h
+# Common issues:
+# - OpenAI API timeout (increase timeout in vercel.json)
+# - Milvus connection timeout (check credentials)
+# - Cold start delay (first request may be slow)
 ```
 
-### Database connection errors
+### Environment variable issues
 ```bash
-# Test postgres connection
-docker exec -it rightline-postgres psql -U rightline -d rightline
+# List all environment variables
+vercel env ls
 
-# Reset database
-docker-compose -f docker-compose.mvp.yml down -v
-docker-compose -f docker-compose.mvp.yml up -d
+# Update environment variable
+vercel env rm OPENAI_API_KEY
+vercel env add OPENAI_API_KEY
+
+# Pull environment variables to local
+vercel env pull .env.local
 ```
 
-### High memory usage
+### API errors
 ```bash
-# Add swap if needed
-sudo fallocate -l 2G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+# Test OpenAI connection locally
+python -c "import openai; print(openai.embeddings.create(model='text-embedding-3-small', input='test'))"
+
+# Test Milvus connection locally
+python -c "from pymilvus import connections; connections.connect(uri='YOUR_ENDPOINT', token='YOUR_TOKEN')"
+```
+
+### Performance issues
+```bash
+# Check Vercel Analytics for slow functions
+# Go to Vercel Dashboard > Your Project > Analytics
+
+# Monitor OpenAI usage and costs
+# Go to OpenAI Platform > Usage
+
+# Check Milvus performance
+# Go to Milvus Cloud > Your Cluster > Monitoring
 ```
 
 ## 📊 Scaling Path
-- **Current MVP**: Handles ~100 concurrent users on $5 VPS
-- **Next Step**: Add Redis for caching when >100 users
-- **Future (V2)**: See `docs/project/V2_ARCHITECTURE.md` for full production setup
+- **Current MVP**: Auto-scales with Vercel (0 to thousands of concurrent users)
+- **Cost Optimization**: Monitor usage and optimize OpenAI token usage
+- **Future (V2)**: See `docs/project/V2_ARCHITECTURE.md` for advanced features

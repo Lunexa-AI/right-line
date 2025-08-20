@@ -1,5 +1,7 @@
--- Initialize RightLine Database
--- This script sets up the database schema and extensions
+-- DEPRECATED: Initialize RightLine PostgreSQL Database
+-- This file is deprecated in favor of serverless architecture (Vercel + Milvus + OpenAI)
+-- Analytics are now handled by Vercel KV, vector storage by Milvus Cloud
+-- Keep this file for reference only
 
 -- Create extensions
 CREATE EXTENSION IF NOT EXISTS vector;

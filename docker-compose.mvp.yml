@@ -1,5 +1,7 @@
-# Minimal Docker Compose for RightLine MVP
-# Only what's absolutely necessary: API + PostgreSQL with pgvector
+# DEPRECATED: Docker Compose for RightLine MVP
+# This file is deprecated in favor of Vercel serverless deployment
+# See vercel.json and docs/DEPLOYMENT.md for the new serverless approach
+# Keep this file for reference or local development with containers if needed
 version: '3.8'
 
 services:

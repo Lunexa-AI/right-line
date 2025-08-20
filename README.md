@@ -35,9 +35,9 @@ RightLine is a legal information assistant that provides instant access to Zimba
 ### Prerequisites
 
 - Python 3.11+
-- PostgreSQL 15+ with pgvector
-- Redis 7+
-- Docker & Docker Compose (optional)
+- Node.js 18+ (for Vercel CLI)
+- OpenAI API account
+- Milvus Cloud account (optional for Phase 1)
 
 ### Installation
 
@@ -46,25 +46,22 @@ RightLine is a legal information assistant that provides instant access to Zimba
 git clone https://github.com/Lunexa-AI/right-line.git
 cd right-line
 
-# Install dependencies
+# Install dependencies and Vercel CLI
 make setup
 
 # Copy environment variables
-cp .env.example .env
-# Edit .env with your configuration
+cp configs/example.env .env.local
+# Edit .env.local with your OpenAI API key and other configuration
 
-# Run with Docker Compose
-make up
-
-# Or run locally
+# Start Vercel development server
 make dev
 ```
 
 ### Basic Usage
 
-```python
-# Example API request
-curl -X POST http://localhost:8000/v1/query \
+```bash
+# Example API request (local development)
+curl -X POST http://localhost:3000/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "text": "What is the penalty for theft?",
@@ -90,11 +87,12 @@ curl -X POST http://localhost:8000/v1/query \
 
 ## 📚 Documentation
 
-- [**Architecture**](docs/project/ARCHITECTURE.md) - System design and technical specifications
-- [**API Reference**](docs/api/README.md) - Complete API documentation
-- [**Deployment Guide**](docs/deployment/README.md) - Production deployment instructions
+- [**MVP Architecture**](docs/project/MVP_ARCHITECTURE.md) - Serverless system design (Vercel + Milvus + OpenAI)
+- [**V2 Architecture**](docs/project/V2_ARCHITECTURE.md) - Production-scale system design
+- [**Quick Start**](docs/QUICKSTART.md) - Get running in 5 minutes
+- [**Deployment Guide**](docs/DEPLOYMENT.md) - Vercel deployment instructions
 - [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to RightLine
-- [**Roadmap**](docs/project/ROADMAP.md) - Development milestones and progress
+- [**MVP Task List**](docs/project/MVP_TASK_LIST.md) - Development milestones and progress
 
 ## 🛠️ Development
 

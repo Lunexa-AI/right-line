@@ -1,11 +1,12 @@
-# RightLine MVP Quick Start Guide
+# RightLine MVP Quick Start Guide (Vercel Edition)
 
-> **Get RightLine running in 5 minutes** - This guide gets you from zero to a working legal Q&A system.
+> **Get RightLine running in 5 minutes** - This guide gets you from zero to a working serverless legal Q&A system.
 
 ## Prerequisites
-- Ubuntu 22.04 VPS with 2GB RAM (or local Docker)
 - Python 3.11+
-- Docker & Docker Compose
+- Node.js 18+ (for Vercel CLI)
+- OpenAI API account
+- Milvus Cloud account (optional for Phase 1)
 
 ## Step 1: Clone and Setup (1 minute)
 ```bash
@@ -13,127 +14,130 @@
 git clone https://github.com/yourusername/right-line.git
 cd right-line
 
-# Create environment file
-cat > .env << EOF
+# Install Vercel CLI
+npm install -g vercel
+
+# Install Python dependencies
+pip install -r requirements.txt
+```
+
+## Step 2: Environment Setup (1 minute)
+```bash
+# Create local environment file
+cat > .env.local << EOF
 RIGHTLINE_SECRET_KEY=your-secret-key-at-least-32-characters-long
-RIGHTLINE_DATABASE_URL=postgresql://rightline:rightline@localhost:5432/rightline
-RIGHTLINE_REDIS_URL=redis://localhost:6379/0
 RIGHTLINE_APP_ENV=development
+OPENAI_API_KEY=sk-proj-your-openai-api-key-here
+# Milvus (optional for Phase 1, needed for Phase 2)
+# MILVUS_ENDPOINT=https://your-cluster.api.gcp-us-west1.zillizcloud.com
+# MILVUS_TOKEN=your-cluster-token
 EOF
 ```
 
-## Step 2: Start Services (2 minutes)
+## Step 2: Start Local Development (1 minute)
 ```bash
-# Download a tiny local LLM (GGUF)
-mkdir -p models
-# Example placeholder: replace with a valid URL you have access to
-curl -L -o models/tinyllama-1.1b-chat.Q4_K_M.gguf "https://your-model-hosting/tinyllama-1.1b-chat.Q4_K_M.gguf"
+# Start Vercel development server
+vercel dev
 
-# Create minimal docker-compose for MVP
-cat > docker-compose.mvp.yml << 'EOF'
-version: '3.8'
-services:
-  postgres:
-    image: pgvector/pgvector:pg15
-    environment:
-      POSTGRES_DB: rightline
-      POSTGRES_USER: rightline
-      POSTGRES_PASSWORD: rightline
-    ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
-
-  api:
-    build: services/api
-    ports: ["8000:8000"]
-    environment:
-      RIGHTLINE_APP_ENV: ${RIGHTLINE_APP_ENV}
-      RIGHTLINE_SECRET_KEY: ${RIGHTLINE_SECRET_KEY}
-      RIGHTLINE_DATABASE_URL: postgresql://rightline:rightline@postgres:5432/rightline
-      RIGHTLINE_LLM_MODEL_PATH: /models/tinyllama-1.1b-chat.Q4_K_M.gguf
-      RIGHTLINE_LLM_MAX_TOKENS: 120
-    volumes:
-      - ./models:/models
-    depends_on: [postgres]
-
-volumes:
-  pgdata:
-EOF
-
-# Start services
-docker-compose -f docker-compose.mvp.yml up -d
+# This will:
+# 1. Start local serverless functions
+# 2. Serve static files
+# 3. Hot reload on changes
+# 4. Available at http://localhost:3000
 ```
 
 ## Step 3: Test It Works (1 minute)
 ```bash
 # Test API health
-curl http://localhost:8000/healthz
+curl http://localhost:3000/api/healthz
 
-# Test a query
-curl -X POST http://localhost:8000/v1/query \
+# Test a query (hardcoded responses work immediately)
+curl -X POST http://localhost:3000/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"text": "What is the minimum wage in Zimbabwe?"}'
 
 # Open web UI
-open http://localhost:8000
+open http://localhost:3000
 ```
 
 ## Step 4: Deploy to Production (1 minute)
 ```bash
-# On your VPS
-ssh your-vps-ip
+# Login to Vercel (if not already)
+vercel login
 
-# Install Docker (if not installed)
-curl -fsSL https://get.docker.com | sh
+# Deploy to production
+vercel --prod
 
-# Copy files and deploy
-rsync -avz . user@your-vps-ip:/opt/rightline/
-ssh user@your-vps-ip "cd /opt/rightline && docker-compose -f docker-compose.mvp.yml up -d"
+# Your app will be live at:
+# https://right-line-your-username.vercel.app
+
+# Set production environment variables
+vercel env add OPENAI_API_KEY
+# Enter your OpenAI API key when prompted
 ```
 
 ## What You Get
 ✅ **Working Now (Phase 1 - Complete)**:
-- Web interface for legal queries
-- 36 pre-configured legal topics
+- Serverless web interface for legal queries
+- 36 pre-configured legal topics with hardcoded responses
 - WhatsApp webhook ready
-- Basic analytics and feedback
+- Auto-scaling with zero server management
+- Global CDN distribution
 
 🔴 **Coming Next (Phase 2 - In Progress)**:
 - Real document ingestion from ZimLII
-- Vector search with pgvector
+- Milvus Cloud vector search
+- OpenAI embeddings and completion
 - Hybrid retrieval (keyword + semantic)
-- Automatic summarization
 
 ## Common Issues & Fixes
 
-### Port 8000 already in use
+### Vercel CLI not found
 ```bash
-# Find and kill the process
-lsof -i :8000
-kill -9 <PID>
+# Install Node.js first, then:
+npm install -g vercel
 ```
 
-### Database connection failed
+### Function timeout
 ```bash
-# Check postgres is running
-docker ps
 # Check logs
-docker logs rightline-postgres
+vercel logs --follow
+
+# Common causes:
+# - OpenAI API slow response
+# - Cold start delay (first request)
 ```
 
-### Slow responses
-- This is normal on first start while services initialize
-- Subsequent queries should be <1 second
+### Environment variables not working
+```bash
+# Pull production env vars to local
+vercel env pull .env.local
+
+# List all env vars
+vercel env ls
+```
+
+### Local development issues
+```bash
+# Make sure you're in the project directory
+cd right-line
+
+# Try clearing Vercel cache
+vercel dev --debug
+```
 
 ## Next Steps
-1. **Add WhatsApp**: Configure Meta Business API webhook to `http://your-domain:8000/webhook`
-2. **Add HTTPS**: Use Let's Encrypt with certbot
+1. **Add WhatsApp**: Configure Meta Business API webhook to `https://your-app.vercel.app/api/webhook`
+2. **Custom Domain**: Add your domain in Vercel dashboard
 3. **Ingest Documents**: Run `python scripts/crawl_zimlii.py` to fetch legal documents
 4. **Enable RAG**: Follow Phase 2 tasks in `docs/project/MVP_TASK_LIST.md`
+5. **Monitor Costs**: Track OpenAI usage in their dashboard
 
 ## Need Help?
-- Check logs: `docker logs rightline-api`
+- Check logs: `vercel logs --follow`
 - Review architecture: `docs/project/MVP_ARCHITECTURE.md`
 - See full deployment guide: `docs/DEPLOYMENT.md`
+- Vercel docs: https://vercel.com/docs
 
 ---
-**Time to first query: ~5 minutes** 🚀
+**Time to first serverless query: ~5 minutes** 🚀

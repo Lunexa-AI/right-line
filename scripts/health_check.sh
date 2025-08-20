@@ -1,6 +1,8 @@
 #!/bin/bash
-# Health check script for RightLine services
-# Usage: ./health_check.sh [staging|production]
+# DEPRECATED: Health check script for RightLine Docker services
+# This script is deprecated in favor of Vercel serverless monitoring
+# Use Vercel Analytics and `vercel logs` for monitoring instead
+# Keep this file for reference only
 
 set -euo pipefail
 
