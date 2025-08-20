@@ -42,8 +42,8 @@ CHARS_PER_TOKEN = 4  # Approximate characters per token for English text
 # Entity extraction patterns
 PATTERNS = {
     "dates": r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b",
-    "statute_refs": r"\bs(?:ection)?\s*\d+[A-Z]?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\b[A-Za-z]+\s+Act\s+\[Chapter\s+\d+:\d+\]",
-    "case_refs": r"\[\d{4}\]\s+[A-Z]{2,5}\s+\d+|\d{4}\s*\(\d+\)\s*[A-Z]{2,5}\s*\d+",
+    "statute_refs": r"\bs(?:ection)?\s*\d+[A-Z]?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?|\b[A-Za-z]+\s+Act\s+\[Chapter\s+\d+:\d+\]|\b[A-Za-z]+\s+Act\b",
+    "case_refs": r"\[\d{4}\]\s+[A-Z]{2,5}\s+\d+|\d{4}\s*\(\d+\)\s*[A-Z]{2,5}\s*\d+|S\s+v\s+[A-Z][a-z]+\s+[A-Z]{2,5}\s+\d+/\d+",
     "courts": r"\b(?:High Court|Supreme Court|Constitutional Court|Magistrates Court|Labour Court)\b"
 }
 
@@ -149,9 +149,30 @@ def find_sentence_boundary(text: str, position: int) -> int:
     # Search backward for the previous sentence boundary
     text_before = text[:position]
     backward_matches = list(re.finditer(sentence_end_pattern, text_before))
-    backward_pos = backward_matches[-1].end() if backward_matches else 0
+    backward_pos = backward_matches[-1].end() if backward_matches and backward_matches else 0
     
-    # Return the closest boundary
+    # If no sentence boundaries found, just find word boundaries
+    if forward_pos == len(text) and backward_pos == 0:
+        # Try to find a space near the position
+        if position < len(text) and text[position] == ' ':
+            return position
+        
+        # Look for the nearest space
+        space_before = text[:position].rfind(' ')
+        space_after = text[position:].find(' ')
+        
+        if space_before == -1:
+            space_before = 0
+        if space_after == -1:
+            space_after = len(text) - position
+            
+        # Return the closest space
+        if position - space_before <= space_after:
+            return space_before
+        else:
+            return position + space_after
+    
+    # Return the closest sentence boundary
     if position - backward_pos <= forward_pos - position:
         return backward_pos
     else:
@@ -473,18 +494,25 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         filtered_body = []
         boilerplate_patterns = [
             "Download PDF", "Download DOCX", "Share", "Report a problem", 
-            "Document detail", "Related documents", "Sign up or Log in"
+            "Document detail", "Related documents", "Sign up or Log in",
+            "https://", "www.", ".html", ".pdf", "accessed on", "cite_note",
+            "contents of #navigation", "data-offcanvas", "navigation-column"
         ]
+        
+        # Track paragraph numbers for better section paths
+        para_number = 0
         
         for para in body:
             is_boilerplate = False
+            
+            # Check for boilerplate patterns
             for pattern in boilerplate_patterns:
                 if pattern in para:
                     is_boilerplate = True
                     break
             
             # Skip navigation content
-            if "navigation-content" in para or "navigation-column" in para:
+            if "navigation-content" in para or "navigation-column" in para or "#" in para:
                 is_boilerplate = True
                 
             # Skip very short paragraphs (likely navigation elements)
@@ -492,81 +520,45 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                 is_boilerplate = True
                 
             if not is_boilerplate:
-                filtered_body.append(para)
-        
-        # Join paragraphs with newlines to preserve paragraph boundaries
-        body_text = " ".join(filtered_body)
+                para_number += 1
+                # Add paragraph number as metadata
+                filtered_body.append((para_number, para))
         
         # Skip if body is too short after filtering
-        if len(body_text) < MIN_TOKENS * CHARS_PER_TOKEN:
+        if not filtered_body:
             logger.warning(f"Body text too short after filtering for document {doc_id}")
             return all_chunks
         
-        # Split into paragraphs for processing
-        paragraphs = re.split(r'\n+', body_text)
+        # Improved chunking with paragraph awareness
+        chunk_size = TARGET_TOKENS * CHARS_PER_TOKEN
+        overlap_size = int(chunk_size * OVERLAP_RATIO)
         
-        # Track paragraph indices for section_path
-        start_para_idx = 0
-        current_pos = 0
+        current_chunk_text = ""
+        current_chunk_paras = []
+        chunk_index = 0
         
-        # Process paragraphs in sliding window
-        while start_para_idx < len(paragraphs):
-            current_text = ""
-            end_para_idx = start_para_idx
+        # Process paragraphs to create chunks
+        for i, (para_num, para) in enumerate(filtered_body):
+            # Normalize paragraph text
+            para_text = normalize_text(para)
             
-            # Accumulate paragraphs until target size is reached
-            while end_para_idx < len(paragraphs):
-                next_para = paragraphs[end_para_idx]
-                test_text = current_text + " " + next_para if current_text else next_para
+            # If adding this paragraph would exceed target size and we already have content
+            if current_chunk_text and len(current_chunk_text + " " + para_text) > chunk_size:
+                # Create a chunk from accumulated paragraphs
+                start_para = current_chunk_paras[0]
+                end_para = current_chunk_paras[-1]
+                section_path = f"Body > Paras {start_para}-{end_para}"
                 
-                if estimate_tokens(test_text) > TARGET_TOKENS and current_text:
-                    # We've reached target size
-                    break
-                
-                current_text = test_text
-                end_para_idx += 1
-            
-            # If we didn't accumulate anything, take at least one paragraph
-            if start_para_idx == end_para_idx:
-                current_text = paragraphs[start_para_idx]
-                end_para_idx = start_para_idx + 1
-            
-            # Skip if chunk is too short
-            if len(current_text) < MIN_TOKENS * CHARS_PER_TOKEN:
-                start_para_idx += 1
-                current_pos += len(current_text) + 1
-                continue
-            
-            # Create section path
-            section_path = f"Body > Paras {start_para_idx+1}-{end_para_idx}"
-            
-            # Chunk accumulated paragraphs
-            para_chunks = chunk_text(
-                text=current_text,
-                section_path=section_path,
-                doc_id=doc_id,
-                start_offset=current_pos,
-            )
-            
-            # Update position tracker
-            current_pos += len(current_text) + 1  # +1 for the newline
-            
-            # Add metadata to chunks
-            for i, chunk in enumerate(para_chunks):
-                # Skip chunks that are too short
-                if len(chunk["chunk_text"]) < MIN_TOKENS * CHARS_PER_TOKEN:
-                    continue
-                    
                 # Extract entities
-                entities = extract_entities(chunk["chunk_text"])
+                entities = extract_entities(current_chunk_text)
                 
                 # Generate chunk ID
                 chunk_id = generate_chunk_id(
                     doc_id=doc_id,
-                    section_path=chunk["section_path"],
-                    start_char=chunk["start_char"],
-                    end_char=chunk["end_char"],
-                    chunk_text=chunk["chunk_text"],
+                    section_path=section_path,
+                    start_char=0,  # We don't track exact character positions in this version
+                    end_char=len(current_chunk_text),
+                    chunk_text=current_chunk_text,
                 )
                 
                 try:
@@ -574,11 +566,11 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     full_chunk = Chunk(
                         chunk_id=chunk_id,
                         doc_id=doc_id,
-                        chunk_text=chunk["chunk_text"],
-                        section_path=chunk["section_path"],
-                        start_char=chunk["start_char"],
-                        end_char=chunk["end_char"],
-                        num_tokens=chunk["num_tokens"],
+                        chunk_text=current_chunk_text,
+                        section_path=section_path,
+                        start_char=0,  # Simplified
+                        end_char=len(current_chunk_text),
+                        num_tokens=estimate_tokens(current_chunk_text),
                         language=language,
                         doc_type=doc_type,
                         date_context=date_context,
@@ -588,17 +580,92 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                             "title": title,
                             "court": court,
                             "canonical_citation": canonical_citation,
-                            "chunk_index": i,
+                            "chunk_index": chunk_index,
+                            "paragraph_range": f"{start_para}-{end_para}"
                         },
                     )
                     
                     all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    chunk_index += 1
                 except Exception as e:
                     logger.warning(f"Skipping invalid body chunk for document {doc_id}: {e}")
+                
+                # Calculate how many paragraphs to keep for overlap
+                # We want to keep approximately OVERLAP_RATIO of the text
+                overlap_paras = []
+                overlap_text = ""
+                
+                # Start from the end and work backwards
+                # Always include at least one paragraph for overlap
+                min_overlap_paras = 1
+                
+                for para_idx in reversed(current_chunk_paras):
+                    para_content = next((p for n, p in filtered_body if n == para_idx), "")
+                    para_content = normalize_text(para_content)
+                    
+                    if len(overlap_text + " " + para_content) <= overlap_size or len(overlap_paras) < min_overlap_paras:
+                        overlap_paras.insert(0, para_idx)
+                        overlap_text = para_content + " " + overlap_text if overlap_text else para_content
+                    else:
+                        break
+                
+                # Reset for next chunk, keeping overlap paragraphs
+                current_chunk_paras = overlap_paras
+                current_chunk_text = overlap_text
             
-            # Move window with overlap
-            overlap_paras = max(1, (end_para_idx - start_para_idx) // 5)  # ~20% overlap
-            start_para_idx = end_para_idx - overlap_paras
+            # Add current paragraph to the chunk
+            if current_chunk_text:
+                current_chunk_text += " " + para_text
+            else:
+                current_chunk_text = para_text
+            
+            current_chunk_paras.append(para_num)
+        
+        # Don't forget the last chunk if there's content left
+        if current_chunk_text and estimate_tokens(current_chunk_text) >= MIN_TOKENS:
+            start_para = current_chunk_paras[0]
+            end_para = current_chunk_paras[-1]
+            section_path = f"Body > Paras {start_para}-{end_para}"
+            
+            # Extract entities
+            entities = extract_entities(current_chunk_text)
+            
+            # Generate chunk ID
+            chunk_id = generate_chunk_id(
+                doc_id=doc_id,
+                section_path=section_path,
+                start_char=0,
+                end_char=len(current_chunk_text),
+                chunk_text=current_chunk_text,
+            )
+            
+            try:
+                # Create full chunk object
+                full_chunk = Chunk(
+                    chunk_id=chunk_id,
+                    doc_id=doc_id,
+                    chunk_text=current_chunk_text,
+                    section_path=section_path,
+                    start_char=0,
+                    end_char=len(current_chunk_text),
+                    num_tokens=estimate_tokens(current_chunk_text),
+                    language=language,
+                    doc_type=doc_type,
+                    date_context=date_context,
+                    entities=entities,
+                    source_url=source_url,
+                    metadata={
+                        "title": title,
+                        "court": court,
+                        "canonical_citation": canonical_citation,
+                        "chunk_index": chunk_index,
+                        "paragraph_range": f"{start_para}-{end_para}"
+                    },
+                )
+                
+                all_chunks.append(full_chunk.model_dump(exclude_none=True))
+            except Exception as e:
+                logger.warning(f"Skipping invalid body chunk for document {doc_id}: {e}")
     
     return all_chunks
 
