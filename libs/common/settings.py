@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="RIGHTLINE_",
-        env_file=".env",
+        env_file=None,  # Disable .env file loading temporarily
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -26,8 +26,15 @@ class Settings(BaseSettings):
     debug: bool = False
     secret_key: str = Field(..., min_length=32)
 
-    # CORS
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "https://localhost:3000"])
+    # CORS - use string to avoid JSON parsing issues
+    cors_origins_str: str = Field(default="http://localhost:3000,https://localhost:3000", alias="cors_origins")
+    
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parse CORS origins from string."""
+        if not self.cors_origins_str.strip():
+            return ["http://localhost:3000", "https://localhost:3000"]
+        return [origin.strip() for origin in self.cors_origins_str.split(",") if origin.strip()]
 
     # Channel integrations
     whatsapp_verify_token: str | None = None
@@ -54,12 +61,7 @@ class Settings(BaseSettings):
 # - MILVUS_TOKEN
 # - MILVUS_COLLECTION_NAME
 
-    @validator("cors_origins", pre=True)
-    def parse_cors_origins(cls, v):
-        """Parse CORS origins from comma-separated string."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+
 
     @validator("secret_key")
     def validate_secret_key(cls, v):

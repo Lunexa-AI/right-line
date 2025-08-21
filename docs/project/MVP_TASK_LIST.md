@@ -219,38 +219,38 @@
 
 > **Goal**: Implement a serverless RAG system on top of Phase 1: Milvus Cloud vector store, OpenAI embeddings/completion, Vercel deployment. Total effort: ~35 hours. Follow MVP_ARCHITECTURE.md for serverless design.
 
-### 2.1 Corpus & Ingestion 🔴
+### 2.1 Corpus & Ingestion ✅
 
 #### 2.1.1 Source acquisition & policy ✅
 - [x] Automated crawler created: `scripts/crawl_zimlii.py` downloads Labour Act, SIs, and cases
 - [x] .gitignore configured: Excludes `data/raw/**` keeping only `.gitkeep`
-- [ ] Run crawler to fetch documents: `python scripts/crawl_zimlii.py` (Effort: 0.5 hours)
-- [ ] Update `docs/data/SOURCES.md` with fetched sources (Effort: 0.5 hours)
+- [x] Run crawler to fetch documents: `python scripts/crawl_zimlii.py` (Effort: 0.5 hours)
+- [x] Documents fetched: Labour Act + 23 judgments processed
 
-#### 2.1.2 Milvus Cloud setup
-- [ ] Create Milvus Cloud account and cluster (free tier: 1 cluster, 1GB storage) (Effort: 0.5 hours)
-- [ ] Create collection schema script `scripts/init-milvus.py`:
+#### 2.1.2 Milvus Cloud setup ✅
+- [x] Create Milvus Cloud account and cluster (free tier: 1 cluster, 1GB storage) (Effort: 0.5 hours)
+- [x] Create collection schema script `scripts/init-milvus.py`:
   ```python
   # Collection: legal_chunks
   # Fields: id (int64), doc_id (varchar), chunk_text (varchar), embedding (float_vector[1536]), metadata (json)
   ```
   (Tests: Collection created successfully; Effort: 1 hour)
-- [ ] Get Milvus connection credentials (endpoint, token) (Effort: 0.25 hours)
+- [x] Get Milvus connection credentials (endpoint, token) (Effort: 0.25 hours)
 
-#### 2.1.3 Document parsing & chunking
-- [ ] Create `scripts/parse_docs.py`: Parse HTML with BeautifulSoup, extract sections (Effort: 2 hours)
-- [ ] Add chunking logic: Split into ~512 token chunks with overlap (Effort: 1 hour)
-- [ ] Store parsed chunks locally (JSON/CSV for ingestion) (Tests: Chunks readable; Effort: 1 hour)
+#### 2.1.3 Document parsing & chunking ✅
+- [x] Create `scripts/parse_docs.py`: Parse HTML with BeautifulSoup, extract AKN sections (Effort: 2 hours)
+- [x] Add chunking logic: Split into ~512 token chunks with overlap (Effort: 1 hour)
+- [x] Store parsed chunks locally: `data/processed/chunks.jsonl` with 472 chunks (Tests: Chunks readable; Effort: 1 hour)
 
-#### 2.1.4 Text normalization
-- [ ] Add normalization to parser: Strip whitespace, standardize section numbers (Effort: 1 hour)
-- [ ] Error handling: Log failed files, continue processing (Effort: 0.5 hours)
+#### 2.1.4 Text normalization ✅
+- [x] Add normalization to parser: Strip whitespace, standardize section numbers (Effort: 1 hour)
+- [x] Error handling: Log failed files, continue processing (Effort: 0.5 hours)
 
-### 2.2 OpenAI Embeddings & Milvus Store 🔴
+### 2.2 OpenAI Embeddings & Milvus Store ✅
 
-#### 2.2.1 OpenAI embedding setup
-- [ ] Install dependencies: `pip install openai pymilvus` (Effort: 0.5 hours)
-- [ ] Create `scripts/generate_embeddings.py`:
+#### 2.2.1 OpenAI embedding setup ✅
+- [x] Install dependencies: `pip install openai pymilvus` (Effort: 0.5 hours)
+- [x] Create `scripts/generate_embeddings.py`:
   ```python
   import openai
   from pymilvus import connections, Collection
@@ -259,70 +259,70 @@
   ```
   (Tests: Generates 1536-dim vectors; Effort: 2.5 hours)
 
-#### 2.2.2 Milvus vector indexing
-- [ ] Create HNSW index on Milvus collection: `collection.create_index("embedding", {"index_type": "HNSW"})` (Effort: 0.5 hours)
-- [ ] Test similarity search works: Query returns similar chunks (Effort: 1 hour)
-- [ ] Load collection and verify performance (Effort: 0.5 hours)
+#### 2.2.2 Milvus vector indexing ✅
+- [x] Create HNSW index on Milvus collection: `collection.create_index("embedding", {"index_type": "HNSW"})` (Effort: 0.5 hours)
+- [x] Test similarity search works: Query returns similar chunks (Effort: 1 hour)
+- [x] Load collection and verify performance: 472 chunks indexed (Effort: 0.5 hours)
 
-### 2.3 Milvus Retrieval & Reranking 🔴
+### 2.3 Milvus Retrieval & Reranking ✅
 
-#### 2.3.1 Vector search implementation
-- [ ] Create `api/retrieval.py` (Vercel function structure) with Milvus similarity search. (Tests: Returns relevant chunks; Effort: 2 hours)
-- [ ] Add query embedding with OpenAI `text-embedding-3-small`. (Tests: Query vectorized; Effort: 1 hour)
+#### 2.3.1 Vector search implementation ✅
+- [x] Create `api/retrieval.py` (Vercel function structure) with Milvus similarity search. (Tests: Returns relevant chunks; Effort: 2 hours)
+- [x] Add query embedding with OpenAI `text-embedding-3-small`. (Tests: Query vectorized; Effort: 1 hour)
 
-#### 2.3.2 Hybrid search and reranking
-- [ ] Add keyword-based boost for exact legal term matches. (Tests: Legal terms prioritized; Effort: 1 hour)
-- [ ] Temporal filter by date if provided in query. (Tests: Correct version filtering; Effort: 0.5 hours)
+#### 2.3.2 Hybrid search and reranking ✅
+- [x] Add keyword-based boost for exact legal term matches. (Tests: Legal terms prioritized; Effort: 1 hour)
+- [x] Temporal filter by date if provided in query. (Tests: Correct version filtering; Effort: 0.5 hours)
 
-#### 2.3.3 Confidence scoring
-- [ ] Compute confidence from similarity scores and result diversity. (Tests: Sensible distribution; Effort: 0.5 hours)
+#### 2.3.3 Confidence scoring ✅
+- [x] Compute confidence from similarity scores and result diversity. (Tests: Sensible distribution; Effort: 0.5 hours)
 
-### 2.4 OpenAI Answer Composition 🔴
+### 2.4 OpenAI Answer Composition ✅
 
-#### 2.4.1 OpenAI GPT setup
-- [ ] Add OpenAI client to dependencies and configuration. (Effort: 0.5 hours)
-- [ ] Choose model: `gpt-3.5-turbo` (fast, cheap) or `gpt-4o-mini` (better). (Effort: 0.25 hours)
-- [ ] Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MAX_TOKENS=300`. (Effort: 0.25 hours)
+#### 2.4.1 OpenAI GPT setup ✅
+- [x] Add OpenAI client to dependencies and configuration. (Effort: 0.5 hours)
+- [x] Choose model: `gpt-4o-mini` (better quality). (Effort: 0.25 hours)
+- [x] Env vars: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MAX_TOKENS=300`. (Effort: 0.25 hours)
 
-#### 2.4.2 Structured prompt composition
-- [ ] Create `api/composer.py` with JSON schema prompt for OpenAI:
+#### 2.4.2 Structured prompt composition ✅
+- [x] Create `api/composer.py` with JSON schema prompt for OpenAI:
   - `tldr` (≤220 chars)
   - `key_points` (3–5 bullets, ≤25 words each)
   - `citations` (document references)
   - `suggestions` (2–3 follow-ups)
   (Tests: Valid JSON output; Effort: 2 hours)
-- [ ] Add extractive fallback if OpenAI fails/times out. (Tests: Graceful degradation; Effort: 1 hour)
+- [x] Add extractive fallback if OpenAI fails/times out. (Tests: Graceful degradation; Effort: 1 hour)
 
-#### 2.4.3 Confidence-aware flow
-- [ ] High: answer directly; Medium: answer + 1 clarifying question; Low: ask for clarification first. (Tests: Branching; Effort: 1 hour)
+#### 2.4.3 Confidence-aware flow ✅
+- [x] High: answer directly; Medium: answer + 1 clarifying question; Low: ask for clarification first. (Tests: Branching; Effort: 1 hour)
 
-### 2.5 Vercel Deployment Setup 🔴
+### 2.5 Vercel Deployment Setup ✅
 
-#### 2.5.1 Vercel configuration
-- [ ] Create `vercel.json` with function routes and build settings. (Effort: 1 hour)
-- [ ] Move FastAPI app to `api/` directory for Vercel functions. (Effort: 1.5 hours)
-- [ ] Add Mangum adapter for FastAPI-to-ASGI-to-Vercel. (Effort: 0.5 hours)
+#### 2.5.1 Vercel configuration ✅
+- [x] Create `vercel.json` with function routes and build settings. (Effort: 1 hour)
+- [x] Move FastAPI app to `api/` directory for Vercel functions. (Effort: 1.5 hours)
+- [x] Add Mangum adapter for FastAPI-to-ASGI-to-Vercel. (Effort: 0.5 hours)
 
-#### 2.5.2 Environment setup
-- [ ] Configure Vercel environment variables (OpenAI, Milvus credentials). (Effort: 0.5 hours)
-- [ ] Update analytics to use Vercel KV instead of SQLite. (Effort: 2 hours)
-- [ ] Test local development with Vercel CLI. (Effort: 1 hour)
+#### 2.5.2 Environment setup ✅
+- [x] Configure Vercel environment variables (OpenAI, Milvus credentials). (Effort: 0.5 hours)
+- [x] Update analytics to use Vercel KV instead of SQLite. (Effort: 2 hours)
+- [x] Test local development with Vercel CLI. (Effort: 1 hour)
 
-### 2.6 Rendering (Channel-specific) 🔴
-- [ ] WhatsApp renderer: Title, TL;DR, bullets, citations list, follow-up numeric options. (Tests: Formatting; Effort: 1 hour)
-- [ ] Web renderer: Move to `web/` directory, build static site. (Tests: DOM checks; Effort: 1.5 hours)
+### 2.6 Rendering (Channel-specific) ✅
+- [x] WhatsApp renderer: Title, TL;DR, bullets, citations list, follow-up numeric options. (Tests: Formatting; Effort: 1 hour)
+- [x] Web renderer: Move to `web/` directory, build static site. (Tests: DOM checks; Effort: 1.5 hours)
 
 ### 2.7 Evaluation 🔴
 - [ ] Golden set: 20–30 QA pairs; evaluate Recall@k and manual faithfulness spot checks. (Effort: 2 hours)
 - [ ] Latency tests: Ensure Milvus search ≤500ms, OpenAI compose ≤1s; overall P95 <2s. (Effort: 1 hour)
 
-### 2.8 Basic Ops 🔴
-- [ ] Metrics: per-stage timings (retrieve, compose, total), confidence, OpenAI usage. (Effort: 1 hour)
-- [ ] Indexing CLI: idempotent re-embed/reindex to Milvus. (Effort: 2 hours)
+### 2.8 Basic Ops ✅
+- [x] Metrics: per-stage timings (retrieve, compose, total), confidence, OpenAI usage. (Effort: 1 hour)
+- [x] Indexing CLI: idempotent re-embed/reindex to Milvus. (Effort: 2 hours)
 
-### 2.9 Integration & Deployment 🔴
-- [ ] Wire RAG + OpenAI in `/api/v1/query`; test with Milvus connection. (Effort: 1.5 hours)
-- [ ] End-to-end tests with WhatsApp and Web outputs. (Effort: 1 hour)
+### 2.9 Integration & Deployment ✅
+- [x] Wire RAG + OpenAI in `/api/v1/query`; test with Milvus connection. (Effort: 1.5 hours)
+- [x] End-to-end tests with WhatsApp and Web outputs. (Effort: 1 hour)
 - [ ] Deploy to Vercel and verify P95 <2s performance. (Effort: 1 hour)
 
 ## 🏗️ PHASE 3: PRODUCTION EXTENSION (Post-MVP)

@@ -14,7 +14,8 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import FileResponse, ORJSONResponse
+from fastapi.staticfiles import StaticFiles
 from mangum import Mangum
 
 from libs.common.settings import get_settings
@@ -26,6 +27,7 @@ from api.analytics import (
 )
 from api.models import (
     AnalyticsResponse,
+    Citation,
     CommonQueriesResponse,
     FeedbackRequest,
     FeedbackResponse,
@@ -34,6 +36,8 @@ from api.models import (
     QueryResponse,
 )
 from api.responses import get_hardcoded_response
+from api.retrieval import search_legal_documents
+from api.composer import compose_legal_answer
 from api.whatsapp import (
     WhatsAppWebhookPayload,
     WhatsAppWebhookVerification,
@@ -74,12 +78,13 @@ def create_app() -> FastAPI:
         # No lifespan for serverless - connections created per request
     )
     
-    # Add CORS middleware
+    # Add CORS middleware - allow all localhost origins for development
+    cors_origins = ["*"] if settings.is_development else settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_origins=cors_origins,
+        allow_credentials=False if settings.is_development else True,
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
     
@@ -133,7 +138,17 @@ def create_app() -> FastAPI:
 # Create the FastAPI app
 app = create_app()
 
-# No static file mounting for serverless - handled by Vercel static hosting
+# Mount static files for local development
+if os.path.exists("web"):
+    app.mount("/static", StaticFiles(directory="web"), name="static")
+
+@app.get("/", include_in_schema=False)
+async def serve_index():
+    """Serve the web interface."""
+    if os.path.exists("web/index.html"):
+        return FileResponse("web/index.html")
+    else:
+        raise HTTPException(status_code=404, detail="Web interface not found")
 
 
 @app.get("/healthz", response_model=HealthResponse, tags=["Health"])
@@ -184,10 +199,10 @@ async def query_legal_information(
     request: Request,
     query_request: QueryRequest,
 ) -> QueryResponse:
-    """Query legal information with hardcoded responses.
+    """Query legal information using RAG (Retrieval-Augmented Generation).
     
-    This MVP endpoint returns hardcoded legal responses based on keyword matching.
-    Responses include exact statute sections, 3-line summaries, and citations.
+    This endpoint uses vector search on legal documents combined with OpenAI 
+    for intelligent answer composition. Falls back to hardcoded responses if RAG fails.
     
     Args:
         request: FastAPI request object
@@ -222,11 +237,66 @@ async def query_legal_information(
     )
     
     try:
-        # Get hardcoded response based on query
-        response = get_hardcoded_response(query_request.text, query_request.lang_hint)
+        # Use RAG system for query processing
+        try:
+            # Step 1: Retrieve relevant chunks from Milvus
+            logger.info("Starting RAG retrieval", query=query_request.text[:100])
+            retrieval_results, retrieval_confidence = await search_legal_documents(
+                query=query_request.text,
+                top_k=10,
+                date_filter=query_request.date_ctx,
+                min_score=0.1
+            )
+            
+            logger.info(
+                "RAG retrieval completed",
+                results_count=len(retrieval_results),
+                confidence=retrieval_confidence
+            )
+            
+            # Step 2: Compose answer from retrieved chunks
+            composed_answer = await compose_legal_answer(
+                results=retrieval_results,
+                query=query_request.text,
+                confidence=retrieval_confidence,
+                lang=query_request.lang_hint or "en",
+                use_openai=True  # Enable OpenAI enhancement
+            )
+            
+            # Step 3: Convert ComposedAnswer to QueryResponse format
+            # Convert citations from retrieval format to API format
+            api_citations = []
+            for citation in composed_answer.citations:
+                api_citations.append(Citation(
+                    title=citation.get("title", "Legal Document"),
+                    url=citation.get("source_url", ""),
+                    page=None,  # Not available in current format
+                    sha=None    # Not available in current format
+                ))
+            
+            response = QueryResponse(
+                tldr=composed_answer.tldr,
+                key_points=composed_answer.key_points,
+                citations=api_citations,
+                suggestions=composed_answer.suggestions,
+                confidence=composed_answer.confidence,
+                source=composed_answer.source,
+                request_id=request_id,
+                processing_time_ms=None  # Will be set below
+            )
+            
+        except Exception as rag_error:
+            # Fallback to hardcoded responses if RAG fails
+            logger.warning(
+                "RAG system failed, falling back to hardcoded responses",
+                error=str(rag_error)
+            )
+            response = get_hardcoded_response(query_request.text, query_request.lang_hint)
+            response.request_id = request_id
         
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)
+        response.processing_time_ms = response_time_ms
         
         # Log query to analytics (Vercel KV)
         try:
