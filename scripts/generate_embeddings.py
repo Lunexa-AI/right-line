@@ -188,7 +188,7 @@ def estimate_tokens(text: str) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate embeddings for chunks using OpenAI API")
-    parser.add_argument("--input_file", type=Path, default="data/processed/chunks_enriched.jsonl", 
+    parser.add_argument("--input_file", type=Path, default="data/processed/chunks.jsonl", 
                         help="Path to input JSONL file")
     parser.add_argument("--output_file", type=Path, default="data/processed/chunks_with_embeddings.jsonl", 
                         help="Path to output JSONL file")

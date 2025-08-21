@@ -223,8 +223,80 @@ def extract_text_with_structure(element: Tag) -> List[Dict[str, Any]]:
     return result
 
 
-def extract_sections_legislation(content: Tag) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def extract_akn_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Extract Akoma Ntoso legislation structure."""
+    parts = []
+    section_ids = []
+    part_map = {}
+    
+    # Find all parts in the legislation
+    akn_parts = content.find_all("section", class_="akn-part")
+    
+    for part_elem in akn_parts:
+        part_id = part_elem.get("id", "")
+        
+        # Extract part title from h2
+        part_title_elem = part_elem.find("h2")
+        part_title = normalize_whitespace(part_title_elem.get_text()) if part_title_elem else f"Part {part_id}"
+        
+        # Find all sections within this part
+        sections = []
+        part_section_ids = []
+        akn_sections = part_elem.find_all("section", class_="akn-section", recursive=False)
+        
+        for section_elem in akn_sections:
+            section_id = section_elem.get("id", "")
+            
+            # Extract section title from h3
+            section_title_elem = section_elem.find("h3")
+            section_title = normalize_whitespace(section_title_elem.get_text()) if section_title_elem else f"Section {section_id}"
+            
+            # Extract all paragraphs within this section
+            paragraphs = []
+            
+            # Get all akn-p elements within this section (content paragraphs)
+            akn_paragraphs = section_elem.find_all("span", class_="akn-p")
+            
+            for para_elem in akn_paragraphs:
+                para_text = normalize_whitespace(para_elem.get_text())
+                if para_text and len(para_text.strip()) > 10:  # Skip very short paragraphs
+                    paragraphs.append(para_text)
+            
+            if paragraphs:  # Only add sections that have content
+                section_ids.append(section_id)
+                part_section_ids.append(section_id)
+                
+                sections.append({
+                    "id": section_id,
+                    "title": section_title,
+                    "anchor": f"#{section_id}",
+                    "paragraphs": paragraphs
+                })
+        
+        if sections:  # Only add parts that have sections
+            part_map[part_title] = part_section_ids
+            parts.append({
+                "title": part_title,
+                "id": part_id,
+                "sections": sections
+            })
+    
+    content_tree = {"parts": parts}
+    extra = {
+        "section_ids": section_ids,
+        "part_map": part_map
+    }
+    
+    return content_tree, extra
+
+
+def extract_sections_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Extract sections from legislation content."""
+    # First try AKN structure
+    if content.find("section", class_="akn-part"):
+        return extract_akn_legislation(content)
+    
+    # Fallback to generic HTML parsing
     sections = []
     section_ids = []
     part_map = {}
@@ -274,7 +346,7 @@ def extract_sections_legislation(content: Tag) -> Tuple[List[Dict[str, Any]], Di
                 # Create section object
                 section = {
                     "id": section_id,
-                    "heading": element["text"],
+                    "title": element["text"],
                     "anchor": f"#{section_id}",
                     "paragraphs": section_paragraphs
                 }

@@ -251,12 +251,32 @@ def extract_entities(text: str) -> Dict[str, List[str]]:
     # Extract statute references
     statute_refs = re.findall(PATTERNS["statute_refs"], text)
     if statute_refs:
-        entities["statute_refs"] = list(set(statute_refs))
+        # Flatten tuples and filter out empty strings
+        flattened_refs = []
+        for ref in statute_refs:
+            if isinstance(ref, tuple):
+                # Join non-empty parts of the tuple
+                ref_text = " ".join([part for part in ref if part.strip()])
+                if ref_text.strip():
+                    flattened_refs.append(ref_text.strip())
+            elif isinstance(ref, str) and ref.strip():
+                flattened_refs.append(ref.strip())
+        entities["statute_refs"] = list(set(flattened_refs))
     
     # Extract case citations
     case_refs = re.findall(PATTERNS["case_refs"], text)
     if case_refs:
-        entities["case_refs"] = list(set(case_refs))
+        # Flatten tuples and filter out empty strings
+        flattened_refs = []
+        for ref in case_refs:
+            if isinstance(ref, tuple):
+                # Join non-empty parts of the tuple
+                ref_text = " ".join([part for part in ref if part.strip()])
+                if ref_text.strip():
+                    flattened_refs.append(ref_text.strip())
+            elif isinstance(ref, str) and ref.strip():
+                flattened_refs.append(ref.strip())
+        entities["case_refs"] = list(set(flattened_refs))
     
     # Extract courts
     courts = []
@@ -286,11 +306,12 @@ def extract_entities(text: str) -> Dict[str, List[str]]:
     party_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Za-z]+)*)\b'
     parties = re.findall(party_pattern, text)
     if parties:
-        party_pairs = []
+        party_strings = []
         for applicant, respondent in parties:
-            party_pairs.append({"applicant": applicant, "respondent": respondent})
-        if party_pairs:
-            entities["parties"] = party_pairs
+            if applicant.strip() and respondent.strip():
+                party_strings.append(f"{applicant.strip()} v {respondent.strip()}")
+        if party_strings:
+            entities["parties"] = party_strings
     
     return entities
 
@@ -427,7 +448,15 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Process each section
         for section_idx, section in enumerate(sections):
             section_title = section.get("title", f"Section {section_idx + 1}")
-            section_content = section.get("content", "")
+            
+            # Get section content from paragraphs
+            section_paragraphs = section.get("paragraphs", [])
+            if not section_paragraphs:
+                # Fallback to legacy "content" field
+                section_content = section.get("content", "")
+            else:
+                # Join all paragraphs in the section
+                section_content = " ".join(section_paragraphs)
             
             # Skip empty sections
             if not section_content.strip():
@@ -436,53 +465,118 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
             # Create section path
             section_path = f"{part_title} > {section_title}"
             
-            # Chunk section content
-            section_chunks = chunk_text(
-                text=section_content,
-                section_path=section_path,
-                doc_id=doc_id,
-            )
-            
-            # Add metadata to chunks
-            for i, chunk in enumerate(section_chunks):
-                # Add header to first chunk if multiple chunks
-                if i == 0 and len(section_chunks) > 1 and section_title:
-                    chunk["chunk_text"] = f"{section_title}: {chunk['chunk_text']}"
+            # For legislation, if section is too short, merge with adjacent sections
+            if estimate_tokens(section_content) < MIN_TOKENS:
+                # Try to merge with next sections in the same part
+                merged_content = section_content
+                merged_sections = [section_title]
+                
+                for next_idx in range(section_idx + 1, len(sections)):
+                    next_section = sections[next_idx]
+                    next_paragraphs = next_section.get("paragraphs", [])
+                    if next_paragraphs:
+                        next_content = " ".join(next_paragraphs)
+                        if estimate_tokens(merged_content + " " + next_content) <= TARGET_TOKENS * 2:
+                            merged_content += " " + next_content
+                            merged_sections.append(next_section.get("title", f"Section {next_idx + 1}"))
+                        else:
+                            break
+                
+                # If still too short, skip this section (will be picked up by next iteration)
+                if estimate_tokens(merged_content) < MIN_TOKENS:
+                    continue
+                
+                # Create a single chunk for the merged sections
+                section_path = f"{part_title} > {' + '.join(merged_sections)}"
                 
                 # Extract entities
-                entities = extract_entities(chunk["chunk_text"])
+                entities = extract_entities(merged_content)
                 
                 # Generate chunk ID
                 chunk_id = generate_chunk_id(
                     doc_id=doc_id,
-                    section_path=chunk["section_path"],
-                    start_char=chunk["start_char"],
-                    end_char=chunk["end_char"],
-                    chunk_text=chunk["chunk_text"],
+                    section_path=section_path,
+                    start_char=0,
+                    end_char=len(merged_content),
+                    chunk_text=merged_content,
                 )
                 
-                # Create full chunk object
-                full_chunk = Chunk(
-                    chunk_id=chunk_id,
+                try:
+                    # Create full chunk object
+                    full_chunk = Chunk(
+                        chunk_id=chunk_id,
+                        doc_id=doc_id,
+                        chunk_text=merged_content,
+                        section_path=section_path,
+                        start_char=0,
+                        end_char=len(merged_content),
+                        num_tokens=estimate_tokens(merged_content),
+                        language=language,
+                        doc_type=doc_type,
+                        date_context=date_context,
+                        entities=entities,
+                        source_url=source_url,
+                        metadata={
+                            "title": title,
+                            "sections": merged_sections,
+                            "chunk_index": 0,
+                        },
+                    )
+                    
+                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                except Exception as e:
+                    logger.warning(f"Skipping invalid merged chunk for document {doc_id}: {e}")
+            else:
+                # Section is long enough, chunk normally
+                section_chunks = chunk_text(
+                    text=section_content,
+                    section_path=section_path,
                     doc_id=doc_id,
-                    chunk_text=chunk["chunk_text"],
-                    section_path=chunk["section_path"],
-                    start_char=chunk["start_char"],
-                    end_char=chunk["end_char"],
-                    num_tokens=chunk["num_tokens"],
-                    language=language,
-                    doc_type=doc_type,
-                    date_context=date_context,
-                    entities=entities,
-                    source_url=source_url,
-                    metadata={
-                        "title": title,
-                        "section": section_title,
-                        "chunk_index": i,
-                    },
                 )
                 
-                all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                # Add metadata to chunks
+                for i, chunk in enumerate(section_chunks):
+                    # Add header to first chunk if multiple chunks
+                    if i == 0 and len(section_chunks) > 1 and section_title:
+                        chunk["chunk_text"] = f"{section_title}: {chunk['chunk_text']}"
+                    
+                    # Extract entities
+                    entities = extract_entities(chunk["chunk_text"])
+                    
+                    # Generate chunk ID
+                    chunk_id = generate_chunk_id(
+                        doc_id=doc_id,
+                        section_path=chunk["section_path"],
+                        start_char=chunk["start_char"],
+                        end_char=chunk["end_char"],
+                        chunk_text=chunk["chunk_text"],
+                    )
+                    
+                    try:
+                        # Create full chunk object
+                        full_chunk = Chunk(
+                            chunk_id=chunk_id,
+                            doc_id=doc_id,
+                            chunk_text=chunk["chunk_text"],
+                            section_path=chunk["section_path"],
+                            start_char=chunk["start_char"],
+                            end_char=chunk["end_char"],
+                            num_tokens=chunk["num_tokens"],
+                            language=language,
+                            doc_type=doc_type,
+                            date_context=date_context,
+                            entities=entities,
+                            source_url=source_url,
+                            metadata={
+                                "title": title,
+                                "section": section_title,
+                                "chunk_index": i,
+                            },
+                        )
+                        
+                        all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    except Exception as e:
+                        logger.warning(f"Skipping invalid chunk for document {doc_id}: {e}")
     
     return all_chunks
 
