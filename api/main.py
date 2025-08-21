@@ -35,7 +35,6 @@ from api.models import (
     QueryRequest,
     QueryResponse,
 )
-from api.responses import get_hardcoded_response
 from api.retrieval import search_legal_documents
 from api.composer import compose_legal_answer
 from api.whatsapp import (
@@ -286,13 +285,29 @@ async def query_legal_information(
             )
             
         except Exception as rag_error:
-            # Fallback to hardcoded responses if RAG fails
+            # Fallback to simple error response if RAG fails
             logger.warning(
-                "RAG system failed, falling back to hardcoded responses",
+                "RAG system failed, using fallback response",
                 error=str(rag_error)
             )
-            response = get_hardcoded_response(query_request.text, query_request.lang_hint)
-            response.request_id = request_id
+            response = QueryResponse(
+                tldr="I'm having trouble accessing legal information right now. Please try again later.",
+                key_points=[
+                    "System temporarily unavailable",
+                    "Please try again in a few minutes", 
+                    "For urgent matters, contact legal counsel"
+                ],
+                citations=[],
+                suggestions=[
+                    "Try asking again",
+                    "Contact legal support",
+                    "Check system status"
+                ],
+                confidence=0.1,
+                source="fallback",
+                request_id=request_id,
+                processing_time_ms=None
+            )
         
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

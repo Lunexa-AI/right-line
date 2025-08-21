@@ -6,7 +6,10 @@ for the RightLine legal information API.
 Main components:
 - main.py: FastAPI application with endpoints
 - models.py: Pydantic models for requests and responses
-- responses.py: Hardcoded legal responses for MVP
+- retrieval.py: RAG system for document retrieval
+- composer.py: OpenAI-powered answer composition
+- whatsapp.py: WhatsApp Business API integration
+- analytics.py: Analytics and feedback system
 """
 
 from api.main import app, create_app

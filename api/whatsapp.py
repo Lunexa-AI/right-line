@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 
 from libs.common.settings import get_settings
 from api.models import QueryRequest, QueryResponse
-from api.responses import get_hardcoded_response
+from api.retrieval import search_legal_documents
+from api.composer import compose_legal_answer
 
 logger = structlog.get_logger(__name__)
 
@@ -339,8 +340,47 @@ async def process_whatsapp_message(message: WhatsAppMessage, from_number: str) -
     
     # Process as legal query
     try:
-        # Get response from hardcoded responses
-        query_response = get_hardcoded_response(message_text, lang_hint="en")
+        # Use RAG system for query processing
+        try:
+            # Step 1: Retrieve relevant chunks from Milvus
+            retrieval_results, retrieval_confidence = await search_legal_documents(
+                query=message_text,
+                top_k=5,  # Fewer results for WhatsApp
+                min_score=0.1
+            )
+            
+            # Step 2: Compose answer from retrieved chunks
+            composed_answer = await compose_legal_answer(
+                results=retrieval_results,
+                query=message_text,
+                confidence=retrieval_confidence,
+                lang="en",
+                use_openai=True
+            )
+            
+            # Step 3: Convert to QueryResponse format for WhatsApp formatting
+            query_response = QueryResponse(
+                tldr=composed_answer.tldr,
+                key_points=composed_answer.key_points,
+                citations=[],  # Simplified for WhatsApp
+                suggestions=composed_answer.suggestions,
+                confidence=composed_answer.confidence,
+                source=composed_answer.source,
+                request_id=f"whatsapp_{int(time.time() * 1000)}"
+            )
+            
+        except Exception as rag_error:
+            # Fallback to simple error response if RAG fails
+            logger.warning("RAG failed for WhatsApp, using fallback", error=str(rag_error))
+            query_response = QueryResponse(
+                tldr="I'm having trouble accessing legal information right now. Please try again later.",
+                key_points=["System temporarily unavailable", "Please try again in a few minutes", "For urgent matters, contact legal counsel"],
+                citations=[],
+                suggestions=["Try asking again", "Contact legal support"],
+                confidence=0.1,
+                source="fallback",
+                request_id=f"whatsapp_fallback_{int(time.time() * 1000)}"
+            )
         
         # Format for WhatsApp
         formatted_response = format_whatsapp_response(query_response)
