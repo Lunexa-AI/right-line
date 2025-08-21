@@ -903,20 +903,18 @@
         }
 
         // Update suggestions bar
-        function updateSuggestions(relatedSections) {
+        function updateSuggestions(suggestionsArray) {
             suggestionPills.innerHTML = '';
             
-            const suggestions = relatedSections && relatedSections.length > 0 
-                ? relatedSections.slice(0, 4)
+            const suggestions = suggestionsArray && suggestionsArray.length > 0 
+                ? suggestionsArray.slice(0, 4)
                 : SEED_SUGGESTIONS;
             
             suggestions.forEach(suggestion => {
                 const pill = document.createElement('button');
                 pill.className = 'suggestion-pill whitespace-nowrap';
                 pill.textContent = suggestion;
-                pill.onclick = () => handleSuggestionClick(
-                    relatedSections ? `Tell me about section ${suggestion}` : suggestion
-                );
+                pill.onclick = () => handleSuggestionClick(suggestion);
                 suggestionPills.appendChild(pill);
             });
             
@@ -1052,6 +1050,9 @@
             const typingId = addTypingIndicator();
             
             try {
+                console.log('Making API request to:', API_URL);
+                console.log('Request payload:', { text: question, channel: 'web' });
+                
                 const response = await fetch(API_URL, {
                     method: 'POST',
                     headers: {
@@ -1062,6 +1063,9 @@
                         channel: 'web'
                     })
                 });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', [...response.headers.entries()]);
                 
                 const data = await response.json();
                 
@@ -1076,7 +1080,7 @@
                 addBotResponse(data);
                 
                 // Update suggestions based on response
-                updateSuggestions(data.related_sections);
+                updateSuggestions(data.suggestions);
                 
                 // Manage chat history (keep last 3 exchanges)
                 chatHistory.push({ user: question, bot: data });
@@ -1091,6 +1095,13 @@
                 }
                 
             } catch (error) {
+                console.error('Query failed:', error);
+                console.error('Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                
                 // Remove typing indicator
                 removeTypingIndicator(typingId);
                 
@@ -1150,10 +1161,10 @@
                                    data.confidence > 0.4 ? 'confidence-medium' : 
                                    'confidence-low';
             
-            // Determine source type
-            const sourceType = data.section_ref.act.includes('Statutory') ? 'official' :
-                              data.section_ref.act.includes('Labour Act') ? 'official' :
-                              data.citations && data.citations.some(c => c.url.includes('veritas')) ? 'veritas' :
+            // Determine source type based on citations and source
+            const sourceType = data.source === 'hybrid' || data.source === 'openai' ? 'official' :
+                              data.citations && data.citations.some(c => c.title.includes('Labour Act')) ? 'official' :
+                              data.citations && data.citations.some(c => c.url && c.url.includes('veritas')) ? 'veritas' :
                               'interpreted';
             
             const sourceBadgeHtml = sourceType === 'official' ? 
@@ -1174,15 +1185,15 @@
                                     <span class="text-xs" style="color: var(--text-tertiary);">${data.citations ? data.citations.length : 0} sources</span>
                                 </div>
                                 <div class="flex items-center gap-1">
-                                    <button onclick="copyToClipboard('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}', this)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Copy summary" title="Copy summary">
+                                    <button onclick="copyToClipboard('${escapeHtml(data.tldr).replace(/'/g, "\\'")}', this)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Copy summary" title="Copy summary">
                                         📋 Copy
                                     </button>
-                                    <button onclick="shareResponse('${escapeHtml(data.summary_3_lines).replace(/'/g, "\\'")}')" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Share response" title="Share response">
+                                    <button onclick="shareResponse('${escapeHtml(data.tldr).replace(/'/g, "\\'")}')" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Share response" title="Share response">
                                         🔗 Share
                                     </button>
                                 </div>
                             </div>
-                        <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.summary_3_lines)}</p>
+                        <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.tldr)}</p>
                     </div>
                     
                     <!-- Confidence Bar -->
@@ -1207,27 +1218,20 @@
                     <!-- Expandable Details Section -->
                     <div id="${messageId}-details" class="details-section mt-3">
                         <div class="pt-3 space-y-3">
-                            <!-- Legal Reference -->
-                            <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
-                                <div class="flex items-start justify-between">
-                                    <div class="flex-1">
-                                        <p class="text-xs font-medium mb-1" style="color: var(--text-secondary);">Legal Reference</p>
-                                        <p class="text-sm font-semibold" style="color: var(--text-primary);">
-                                            ${escapeHtml(data.section_ref.act)} 
-                                            [Ch. ${escapeHtml(data.section_ref.chapter)}] 
-                                            §${escapeHtml(data.section_ref.section)}
-                                        </p>
-                                        ${data.section_ref.version ? `
-                                            <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-                                                Last updated: ${escapeHtml(data.section_ref.version)}
-                                            </p>
-                                        ` : ''}
+                            <!-- Key Points -->
+                            ${data.key_points && data.key_points.length > 0 ? `
+                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                    <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Key Points</p>
+                                    <div class="space-y-2">
+                                        ${data.key_points.map((point, index) => `
+                                            <div class="flex items-start gap-2">
+                                                <span class="text-xs font-medium mt-0.5 w-4 h-4 rounded-full flex items-center justify-center" style="background: var(--primary); color: white;">${index + 1}</span>
+                                                <p class="text-sm flex-1" style="color: var(--text-primary);">${escapeHtml(point)}</p>
+                                            </div>
+                                        `).join('')}
                                     </div>
-                                    <button onclick="copyToClipboard('${escapeHtml(data.section_ref.act)} [Ch. ${escapeHtml(data.section_ref.chapter)}] §${escapeHtml(data.section_ref.section)}', this)" class="text-xs p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Copy legal reference" title="Copy legal reference">
-                                        📋
-                                    </button>
                                 </div>
-                            </div>
+                            ` : ''}
                             
                             <!-- Citations -->
                             ${data.citations && data.citations.length > 0 ? `
@@ -1235,7 +1239,7 @@
                                     <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
                                     <div class="space-y-1">
                                         ${data.citations.map(c => `
-                                            <a href="${escapeHtml(c.url)}" target="_blank" class="text-xs block hover:underline" style="color: var(--primary);">
+                                            <a href="${escapeHtml(c.url || '')}" target="_blank" class="text-xs block hover:underline" style="color: var(--primary);">
                                                 → ${escapeHtml(c.title)}
                                                 ${c.page ? ` (Page ${c.page})` : ''}
                                             </a>
@@ -1244,19 +1248,13 @@
                                 </div>
                             ` : ''}
                             
-                            <!-- Related Sections -->
-                            ${data.related_sections && data.related_sections.length > 0 ? `
-                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
-                                    <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Related Sections</p>
-                                    <div class="flex flex-wrap gap-1">
-                                        ${data.related_sections.map(s => `
-                                            <button onclick="handleSuggestionClick('Tell me about section ${escapeHtml(s)}')" class="text-xs px-2 py-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700" style="background: var(--bg-tertiary); color: var(--text-primary);">
-                                                §${escapeHtml(s)}
-                                            </button>
-                                        `).join('')}
-                                    </div>
+                            <!-- Additional Info -->
+                            <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
+                                    <span>Answer composed using: ${data.source}</span>
+                                    ${data.processing_time_ms ? `<span>${Math.round(data.processing_time_ms)}ms</span>` : ''}
                                 </div>
-                            ` : ''}
+                            </div>
                         </div>
                     </div>
                 </div>
