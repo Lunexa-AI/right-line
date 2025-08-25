@@ -1,4 +1,4 @@
-# RightLine: Remaining Tasks to MVP
+# Gweta: Remaining Tasks to MVP
 
 > **🎯 Final sprint to MVP completion**  
 > Based on current repository state analysis. We have a working end-to-end RAG system and need to complete deployment, WhatsApp integration, and final polish.

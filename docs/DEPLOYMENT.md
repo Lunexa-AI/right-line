@@ -1,4 +1,4 @@
-# RightLine MVP Deployment Guide (Vercel Serverless Edition)
+# Gweta MVP Deployment Guide (Vercel Serverless Edition)
 
 > **📦 Serverless deployment for MVP**: Vercel functions with Milvus Cloud and OpenAI. Aligns with MVP_ARCHITECTURE.md. Total setup: ~15 minutes. Pay-per-use scaling.
 
@@ -49,8 +49,8 @@ vercel login
 ### Step 2: Repository Setup (3 minutes)
 ```bash
 # Fork/clone the repository
-git clone https://github.com/yourusername/right-line.git
-cd right-line
+git clone https://github.com/yourusername/gweta.git
+cd gweta
 
 # Install dependencies locally (for development)
 pip install -r requirements.txt
@@ -84,16 +84,16 @@ vercel env add RIGHTLINE_APP_ENV
 vercel --prod
 
 # Your app will be available at:
-# https://right-line-your-username.vercel.app
+# https://gweta-your-username.vercel.app
 ```
 
 ### Step 5: Verify Deployment (1 minute)
 ```bash
 # Test the API health
-curl https://right-line-your-username.vercel.app/api/healthz
+curl https://gweta-your-username.vercel.app/api/healthz
 
 # Test a query (should work with hardcoded responses)
-curl -X POST https://right-line-your-username.vercel.app/api/v1/query \
+curl -X POST https://gweta-your-username.vercel.app/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{"text": "What is minimum wage?"}'
 

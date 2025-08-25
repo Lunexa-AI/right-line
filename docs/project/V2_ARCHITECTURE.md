@@ -1,4 +1,4 @@
-# RightLine V2 Architecture (Production Extension)
+# Gweta V2 Architecture (Production Extension)
 
 > **Note**: This V2 builds on the lightweight MVP in `MVP_ARCHITECTURE.md`. Start with MVP for proof-of-concept, then add V2 features for production scaling, resilience, and advanced RAG. Objectives: Maintain low-latency (<1s P95), security, traceability, cost-effectiveness; scale to 1000 QPS.
 

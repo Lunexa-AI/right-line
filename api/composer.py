@@ -1,4 +1,4 @@
-"""OpenAI-based answer composition for RightLine.
+"""OpenAI-based answer composition for Gweta.
 
 This module implements two-stage answer composition:
 1. Extractive fallback - Fast, deterministic summary from retrieved chunks

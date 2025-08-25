@@ -1,4 +1,4 @@
-# RightLine
+# Gweta
 
 <p align="center">
   <strong>Get the law right, on the line.</strong><br>
@@ -12,15 +12,15 @@
   <a href="https://github.com/Lunexa-AI/right-line/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Lunexa-AI/right-line"></a>
 </p>
 
-## What is RightLine?
+## What is Gweta?
 
-RightLine is a legal information assistant that provides instant access to Zimbabwean law via WhatsApp. Ask a question in plain language (English, Shona, or Ndebele) and get:
+Gweta is a legal information assistant that provides instant access to Zimbabwean law via WhatsApp. Ask a question in plain language (English, Shona, or Ndebele) and get:
 
 - 📜 **Exact statute section** relevant to your query
 - 📝 **3-line summary** in your language
 - 📚 **Citations** with page references
 
-> ⚠️ **Disclaimer**: RightLine provides legal information, not legal advice. Always consult qualified legal counsel for legal matters.
+> ⚠️ **Disclaimer**: Gweta provides legal information, not legal advice. Always consult qualified legal counsel for legal matters.
 
 ## ✨ Key Features
 
@@ -91,7 +91,7 @@ curl -X POST http://localhost:3000/api/v1/query \
 - [**V2 Architecture**](docs/project/V2_ARCHITECTURE.md) - Production-scale system design
 - [**Quick Start**](docs/QUICKSTART.md) - Get running in 5 minutes
 - [**Deployment Guide**](docs/DEPLOYMENT.md) - Vercel deployment instructions
-- [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to RightLine
+- [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to Gweta
 - [**MVP Task List**](docs/project/MVP_TASK_LIST.md) - Development milestones and progress
 
 ## 🛠️ Development
@@ -114,7 +114,7 @@ make help
 
 ## 🏗️ Architecture
 
-RightLine uses a microservices architecture optimized for low latency and high reliability:
+Gweta uses a microservices architecture optimized for low latency and high reliability:
 
 - **API Gateway** - FastAPI with request orchestration
 - **Retrieval Service** - Hybrid BM25 + vector search

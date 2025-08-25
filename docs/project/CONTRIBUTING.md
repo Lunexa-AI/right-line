@@ -1,6 +1,6 @@
-# Contributing to RightLine
+# Contributing to Gweta
 
-Thank you for your interest in contributing to RightLine! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Gweta! This document provides guidelines and instructions for contributing to the project.
 
 ## 📋 Table of Contents
 
@@ -28,7 +28,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md). We are committ
    ```
 3. **Add upstream remote**:
    ```bash
-   git remote add upstream https://github.com/Lunexa-AI/right-line.git
+   git remote add upstream https://github.com/Lunexa-AI/gweta.git
    ```
 
 ## 🛠️ Development Setup
@@ -98,7 +98,7 @@ We welcome various types of contributions:
 
 ### Finding Issues to Work On
 
-1. Check our [issue tracker](https://github.com/Lunexa-AI/right-line/issues)
+1. Check our [issue tracker](https://github.com/Lunexa-AI/gweta/issues)
 2. Look for issues labeled:
    - `good first issue` - Great for newcomers
    - `help wanted` - We need help with these
@@ -318,7 +318,7 @@ async def test_hybrid_search_returns_results():
 
 ### Submitting a PR
 
-1. Go to [GitHub](https://github.com/Lunexa-AI/right-line)
+1. Go to [GitHub](https://github.com/Lunexa-AI/gweta)
 2. Click "New Pull Request"
 3. Select your fork and branch
 4. Fill out the PR template:
@@ -396,8 +396,8 @@ See [CI Management Guide](docs/development/ci-management.md) for how to enable/d
 ## 🆘 Getting Help
 
 - **Discord**: [Join our Discord](https://discord.gg/rightline) (coming soon)
-- **Discussions**: [GitHub Discussions](https://github.com/Lunexa-AI/right-line/discussions)
-- **Issues**: [GitHub Issues](https://github.com/Lunexa-AI/right-line/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Lunexa-AI/gweta/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Lunexa-AI/gweta/issues)
 
 ## 🙏 Recognition
 
@@ -412,4 +412,4 @@ By contributing, you agree that your contributions will be licensed under the sa
 
 ---
 
-Thank you for contributing to RightLine! Your efforts help make legal information more accessible in Zimbabwe. 🇿🇼
+Thank you for contributing to Gweta! Your efforts help make legal information more accessible in Zimbabwe. 🇿🇼

@@ -2,12 +2,12 @@
 
 ## Overview
 
-RightLine provides a RESTful API for legal information queries. The API is designed for low latency and high reliability.
+Gweta provides a RESTful API for legal information queries. The API is designed for low latency and high reliability.
 
 ## Base URL
 
-- **Production**: `https://api.rightline.zw/v1`
-- **Staging**: `https://staging-api.rightline.zw/v1`
+- **Production**: `https://api.gweta.zw/v1`
+- **Staging**: `https://staging-api.gweta.zw/v1`
 - **Local**: `http://localhost:8000/v1`
 
 ## Authentication
@@ -16,7 +16,7 @@ Currently, the API is open for MVP development. Production will require API keys
 
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
-     https://api.rightline.zw/v1/query
+     https://api.gweta.zw/v1/query
 ```
 
 ## Endpoints
@@ -191,4 +191,4 @@ Full OpenAPI 3.0 specification available at:
 
 For API support, please contact:
 - GitHub Issues: [Report an issue](https://github.com/Lunexa-AI/right-line/issues)
-- Email: api-support@rightline.zw (coming soon)
+- Email: api-support@gweta.zw (coming soon)

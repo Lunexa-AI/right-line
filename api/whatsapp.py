@@ -1,4 +1,4 @@
-"""WhatsApp Business API integration for RightLine.
+"""WhatsApp Business API integration for Gweta.
 
 This module handles WhatsApp webhook verification and message processing.
 Follows Meta's WhatsApp Business API specifications.
@@ -311,7 +311,7 @@ async def process_whatsapp_message(message: WhatsAppMessage, from_number: str) -
     # Handle special commands
     if message_text.upper() == "HELP":
         return (
-            "🤖 *RightLine Legal Assistant*\n\n"
+            "🤖 *Gweta Legal Assistant*\n\n"
             "I can help you with Zimbabwe labour law questions.\n\n"
             "*How to use:*\n"
             "• Send any legal question in plain language\n"

@@ -1,7 +1,7 @@
-"""RightLine API Service.
+"""Gweta API Service.
 
 This package contains the FastAPI application and related components
-for the RightLine legal information API.
+for the Gweta legal information API.
 
 Main components:
 - main.py: FastAPI application with endpoints
