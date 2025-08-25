@@ -1,11 +1,11 @@
-# RightLine Makefile (Vercel + Milvus + OpenAI Edition)
+# Gweta Makefile (Vercel + Milvus + OpenAI Edition)
 # Common development and deployment commands for serverless architecture
 
 .PHONY: help setup test lint format clean dev deploy
 
 # Default target - show help
 help:
-	@echo "RightLine Development Commands (Serverless)"
+	@echo "Gweta Development Commands (Serverless)"
 	@echo "==========================================="
 	@echo "Setup & Installation:"
 	@echo "  make setup        - Initial project setup (install deps, hooks, Vercel CLI)"
@@ -36,7 +36,7 @@ help:
 
 # Initial setup
 setup:
-	@echo "🚀 Setting up RightLine serverless development environment..."
+	@echo "🚀 Setting up Gweta serverless development environment..."
 	poetry install --with dev
 	poetry run pre-commit install
 	@echo "📦 Installing Vercel CLI..."

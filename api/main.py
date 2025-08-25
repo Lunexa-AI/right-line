@@ -1,6 +1,6 @@
-"""RightLine API Service - Serverless FastAPI for Vercel.
+"""Gweta API Service - Serverless FastAPI for Vercel.
 
-This is the main FastAPI application for RightLine's serverless MVP.
+This is the main FastAPI application for Gweta's serverless MVP.
 Optimized for Vercel functions with Mangum adapter.
 """
 
@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     
     app = FastAPI(
-        title="RightLine API",
+        title="Gweta API",
         description="WhatsApp-first legal copilot for Zimbabwe (Serverless)",
         version="0.1.0",
         default_response_class=ORJSONResponse,

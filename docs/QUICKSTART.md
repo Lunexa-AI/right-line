@@ -1,6 +1,6 @@
-# RightLine MVP Quick Start Guide (Vercel Edition)
+# Gweta MVP Quick Start Guide (Vercel Edition)
 
-> **Get RightLine running in 5 minutes** - This guide gets you from zero to a working serverless legal Q&A system.
+> **Get Gweta running in 5 minutes** - This guide gets you from zero to a working serverless legal Q&A system.
 
 ## Prerequisites
 - Python 3.11+
@@ -11,8 +11,8 @@
 ## Step 1: Clone and Setup (1 minute)
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/right-line.git
-cd right-line
+git clone https://github.com/yourusername/gweta.git
+cd gweta
 
 # Install Vercel CLI
 npm install -g vercel
@@ -69,7 +69,7 @@ vercel login
 vercel --prod
 
 # Your app will be live at:
-# https://right-line-your-username.vercel.app
+# https://gweta-your-username.vercel.app
 
 # Set production environment variables
 vercel env add OPENAI_API_KEY
@@ -120,7 +120,7 @@ vercel env ls
 ### Local development issues
 ```bash
 # Make sure you're in the project directory
-cd right-line
+cd gweta
 
 # Try clearing Vercel cache
 vercel dev --debug

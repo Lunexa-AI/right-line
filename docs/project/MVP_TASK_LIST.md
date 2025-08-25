@@ -1,6 +1,6 @@
-# RightLine MVP Task List
+# Gweta MVP Task List
 
-> **📋 Comprehensive implementation roadmap for RightLine MVP**  
+> **📋 Comprehensive implementation roadmap for Gweta MVP**  
 > Each task is designed to be completed in a single PR with tests, following TDD practices.  
 > Tasks are organized by milestone and include acceptance criteria and estimated effort.
 

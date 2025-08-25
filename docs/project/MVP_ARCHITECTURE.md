@@ -1,4 +1,4 @@
-# RightLine MVP Architecture (Vercel + Milvus Edition)
+# Gweta MVP Architecture (Vercel + Milvus Edition)
 
 ## 0) Product Promise (Non-Negotiables)
 - **< 2.0s P95** end-to-end response on low bandwidth for short queries.

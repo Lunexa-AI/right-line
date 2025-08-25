@@ -1,6 +1,6 @@
-# RightLine Documentation
+# Gweta Documentation
 
-Welcome to the RightLine documentation. This directory contains comprehensive guides for using, deploying, and contributing to RightLine.
+Welcome to the Gweta documentation. This directory contains comprehensive guides for using, deploying, and contributing to Gweta.
 
 ## 📚 Documentation Structure
 
@@ -51,7 +51,7 @@ Welcome to the RightLine documentation. This directory contains comprehensive gu
 Choose your path:
 
 1. **I want to use the API** → [API Documentation](api/README.md)
-2. **I want to deploy RightLine** → [Deployment Guide](deployment/README.md)
+2. **I want to deploy Gweta** → [Deployment Guide](deployment/README.md)
 3. **I want to contribute** → [Contributing Guide](../CONTRIBUTING.md)
 4. **I want to understand the architecture** → [Architecture](../ARCHITECTURE.md)
 
