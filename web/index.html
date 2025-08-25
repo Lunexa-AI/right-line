@@ -358,25 +358,23 @@
             border-radius: 1rem;
             position: relative;
             word-wrap: break-word;
-            box-shadow: var(--shadow-sm);
-            transition: box-shadow var(--transition-fast);
+            box-shadow: none;
+            transition: none;
         }
 
-        .message-bubble:hover {
-            box-shadow: var(--elevation-2);
-        }
+        .message-bubble:hover { box-shadow: none; }
 
         .message.user .message-bubble {
             background: transparent;
             color: var(--text-primary);
-            border: 1px solid var(--border-color);
+            border: none;
             border-bottom-right-radius: 0.25rem;
         }
 
         .message.bot .message-bubble {
             background: transparent;
             color: var(--text-primary);
-            border: 1px solid var(--border-color);
+            border: none;
             border-bottom-left-radius: 0.25rem;
         }
 
@@ -1207,7 +1205,7 @@
             const messageId = 'msg-' + Date.now();
             
             messageDiv.innerHTML = `
-                <div class="message-bubble">
+                <div class="message-bubble" style="border: none;">
                     <!-- Summary Section (Always Visible) -->
                     <div class="mb-3">
                                                     <div class="flex items-start justify-between mb-2">
@@ -1260,7 +1258,7 @@
                         <div class="pt-3 space-y-3">
                             <!-- Key Points -->
                             ${data.key_points && data.key_points.length > 0 ? `
-                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                <div class="p-3 rounded-lg" style="background: transparent;">
                                     <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Key Points</p>
                                     <div class="space-y-2">
                                         ${data.key_points.map((point, index) => `
@@ -1275,7 +1273,7 @@
                             
                             <!-- Citations -->
                             ${data.citations && data.citations.length > 0 ? `
-                                <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                                <div class="p-3 rounded-lg" style="background: transparent;">
                                     <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
                                     <div class="space-y-1">
                                         ${data.citations.map(c => `
@@ -1289,7 +1287,7 @@
                             ` : ''}
                             
                             <!-- Additional Info -->
-                            <div class="p-3 rounded-lg" style="background: var(--bg-secondary);">
+                            <div class="p-3 rounded-lg" style="background: transparent;">
                                 <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
                                     <span>Answer composed using: ${data.source}</span>
                                     ${data.processing_time_ms ? `<span>${Math.round(data.processing_time_ms)}ms</span>` : ''}
