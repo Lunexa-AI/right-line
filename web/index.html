@@ -695,11 +695,6 @@
                 <form id="welcomeQueryForm" class="flex gap-2 items-center" style="background: transparent; border: none;">
                     <!-- Upload on the left -->
                     <input id="welcomeDocInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                    <button type="button" id="welcomeUploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: transparent; color: var(--text-primary); border: none;" aria-label="Upload document" title="Upload document">
-                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M12 5v14M5 12h14" />
-                        </svg>
-                    </button>
                     <div class="flex-1 relative">
                         <button type="button" id="welcomeUploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
                             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -707,7 +702,7 @@
                             </svg>
                         </button>
                         <textarea id="welcomeQueryInput" class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target" style="background: transparent; outline: none; box-shadow: none;" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
-                        <button type="submit" id="welcomeSendBtn" class="absolute right-3 top-1/2 -translate-y-1/2 touch-target text-white rounded-lg text-sm hidden" style="background: var(--primary); padding: 0.5rem;" aria-label="Send">
+                        <button type="submit" id="welcomeSendBtn" class="absolute right-2 top-1/2 -translate-y-1/2 touch-target rounded-full text-sm hidden" style="background: var(--bg-secondary); color: var(--primary); border: 1px solid var(--border-color); width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center;" aria-label="Send">
                             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M17 11l-5-5-5 5"/>
                                 <path d="M12 4v16"/>
@@ -730,14 +725,9 @@
         <div class="floating-input-container safe-left safe-right" style="max-width: 64rem;">
             <form id="queryForm" class="flex gap-2 items-center">
                 <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: transparent; color: var(--text-primary); border: none;" aria-label="Upload document" title="Upload document">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M12 5v14M5 12h14" />
-                    </svg>
-                </button>
                 <div class="flex-1 relative">
                     <!-- Upload (inside textbox, left) -->
-                    <button type="button" id="uploadBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
+                    <button type="button" id="uploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
                         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M12 5v14M5 12h14" />
                         </svg>
@@ -759,8 +749,8 @@
                     <button
                         type="submit"
                         id="sendBtn"
-                        class="absolute right-3 top-1/2 -translate-y-1/2 touch-target text-white rounded-lg text-sm hidden"
-                        style="background: var(--primary); padding: 0.5rem;"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 touch-target rounded-full text-sm hidden"
+                        style="background: var(--bg-secondary); color: var(--primary); border: 1px solid var(--border-color); width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center;"
                         aria-label="Send message"
                     >
                         <svg id="sendIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -773,7 +763,7 @@
                             <span></span>
                         </div>
                     </button>
-                    <span id="charCount" class="absolute bottom-2 text-xs" style="color: var(--text-tertiary); right: 2.5rem;">0/1000</span>
+                    <span id="charCount" class="absolute bottom-2 text-xs" style="color: var(--text-tertiary); right: 2.75rem;">0/1000</span>
                 </div>
             </form>
             <!-- Keyboard hints - hidden on mobile, subtle on desktop -->
@@ -813,8 +803,8 @@
         const sunIcon = document.getElementById('sunIcon');
         const moonIcon = document.getElementById('moonIcon');
         const langToggle = document.getElementById('langToggle');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const welcomeUploadBtn = document.getElementById('welcomeUploadBtn');
+        const uploadBtn = document.getElementById('uploadInsideBtn');
+        const welcomeUploadBtn = null; // outer welcome button removed
         const welcomeDocInput = document.getElementById('welcomeDocInput');
         const docInput = document.getElementById('docInput');
         // evidence rail removed; use per-response sources only
