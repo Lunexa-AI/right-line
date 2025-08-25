@@ -1,4 +1,4 @@
-# Gweta MVP Task List
+# Gweta MVP Task List — Research First
 
 > **📋 Comprehensive implementation roadmap for Gweta MVP**  
 > Each task is designed to be completed in a single PR with tests, following TDD practices.  
@@ -7,20 +7,17 @@
 ## 🎯 MVP Strategy: Build Fast, Iterate, Scale
 
 **Phase 1: Lightweight MVP (Weeks 2-4)**
-- Single FastAPI service with hardcoded responses
-- Basic WhatsApp integration
-- Simple in-memory search
-- Validate concept and user feedback
+- Serverless FastAPI endpoints on Vercel
+- RAG search/research with Milvus + OpenAI
+- Enterprise web UI (less‑ink chat/research)
 
 **Phase 2: Enhanced MVP (Weeks 5-6)**  
-- Add real document processing
-- Implement basic search
-- Add persistence layer
+- Ingestion + parsing + chunking pipeline
+- Embeddings and Milvus collection
+- End‑to‑end RAG integration
 
-**Phase 3: Production Enhancement (Weeks 7-12)**
-- Microservices architecture
-- Advanced search (BM25 + vectors)
-- Full monitoring and scaling
+**Phase 3: Production Extension (V2 kick‑off)**
+- Uploads, tool‑calling, drafting, workspaces (see V2 doc)
 
 ## 📊 Task Tracking
 
@@ -325,5 +322,5 @@
 - [x] End-to-end tests with WhatsApp and Web outputs. (Effort: 1 hour)
 - [ ] Deploy to Vercel and verify P95 <2s performance. (Effort: 1 hour)
 
-## 🏗️ PHASE 3: PRODUCTION EXTENSION (Post-MVP)
-> Refer to V2_ARCHITECTURE.md for details. Implement after MVP validation: add scaling, Milvus, full ops, etc. Effort: ~80 hours.
+## 🏗️ PHASE 3: V2 PREVIEW (Post‑MVP)
+Preview agentic features in a feature‑flagged path. See `V2_ARCHITECTURE.md`.
