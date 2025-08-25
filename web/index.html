@@ -716,22 +716,9 @@
                 </form>
             </div>
 
-            <!-- Two-column layout: messages + evidence rail -->
-            <div class="flex gap-4">
-                <div class="flex-1">
-                    <!-- Messages Container -->
-                    <div id="messagesContainer" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
-                        <!-- Messages will be inserted here -->
-                    </div>
-                </div>
-                <aside id="evidenceRail" class="hidden lg:block w-80">
-                    <div class="sticky top-20">
-                        <div class="p-3 rounded-lg" style="background: var(--bg-primary); border: 1px solid var(--border-color);">
-                            <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
-                            <ol id="evidenceRailList" class="space-y-1 text-xs" style="color: var(--text-primary);"></ol>
-                        </div>
-                    </div>
-                </aside>
+            <!-- Messages Container (centered) -->
+            <div id="messagesContainer" class="max-w-2xl mx-auto" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+                <!-- Messages will be inserted here -->
             </div>
         </div>
         </div>
@@ -757,7 +744,11 @@
                     <span id="charCount" class="absolute bottom-2 right-3 text-xs" style="color: var(--text-tertiary);">0/1000</span>
                 </div>
                 <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">Upload</button>
+                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
                 <button
                     type="submit"
                     id="sendBtn"
@@ -765,9 +756,9 @@
                     style="background: var(--primary);"
                     aria-label="Send message"
                 >
-                    <span id="sendText">Send</span>
-                    <svg id="sendIcon" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                    <svg id="sendIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M17 11l-5-5-5 5"/>
+                        <path d="M12 4v16"/>
                     </svg>
                     <div id="sendLoading" class="loading-dots hidden">
                         <span></span>
@@ -815,7 +806,7 @@
         const langToggle = document.getElementById('langToggle');
         const uploadBtn = document.getElementById('uploadBtn');
         const docInput = document.getElementById('docInput');
-        const evidenceRailList = document.getElementById('evidenceRailList');
+        // evidence rail removed; use per-response sources only
         const copyToast = document.getElementById('copyToast');
 
         // Chat state (max 3 exchanges in memory)
@@ -1058,7 +1049,6 @@
             
             // Show loading state
             sendBtn.disabled = true;
-            sendText.classList.add('hidden');
             sendIcon.classList.add('hidden');
             sendLoading.classList.remove('hidden');
             
@@ -1094,18 +1084,7 @@
                 
                 // Add bot response with progressive disclosure
                 addBotResponse(data);
-                // Populate evidence rail
-                try {
-                    const rail = document.getElementById('evidenceRailList');
-                    if (rail) {
-                        rail.innerHTML = '';
-                        (data.citations || []).forEach((c, i) => {
-                            const li = document.createElement('li');
-                            li.innerHTML = `<a href="${escapeHtml(c.url || '')}" target="_blank" style="color: var(--primary);">${i+1}. ${escapeHtml(c.title)}</a>`;
-                            rail.appendChild(li);
-                        });
-                    }
-                } catch (e) { /* ignore */ }
+                // Evidence rail removed; sources shown per response
                 
                 // Update suggestions based on response
                 updateSuggestions(data.suggestions);
@@ -1138,7 +1117,6 @@
             } finally {
                 // Reset button state
                 sendBtn.disabled = false;
-                sendText.classList.remove('hidden');
                 sendIcon.classList.remove('hidden');
                 sendLoading.classList.add('hidden');
                 
