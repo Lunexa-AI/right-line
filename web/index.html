@@ -674,65 +674,31 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
                     </svg>
                 </button>
-                <button id="clearBtn" class="touch-target text-sm px-3 py-1.5 rounded-md" style="color: var(--text-secondary); background: var(--bg-secondary);" aria-label="Clear conversation" title="Clear conversation">
-                    Clear
-                </button>
             </div>
         </div>
     </header>
 
-    <!-- Contextual Suggestions Bar -->
-    <div id="suggestionsBar" class="border-b" style="background: var(--bg-primary); border-color: var(--border-color);">
-        <div class="max-w-4xl mx-auto px-4 py-2">
-            <div class="flex items-center gap-2 suggestion-pills-container" style="overflow-x: auto;">
-                <span class="text-xs font-medium whitespace-nowrap" style="color: var(--text-secondary);">Suggested:</span>
-                <div id="suggestionPills" class="flex gap-2">
-                    <!-- Dynamic suggestions will be inserted here -->
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- Main Chat Container -->
     <main id="main-content" class="flex-1 overflow-hidden smooth-scroll" role="main">
         <div id="chatContainer" class="chat-container">
+            <!-- Trust Banner (always visible) -->
+            <div class="bg-yellow-100 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded-r-lg mb-4">
+                <div class="flex gap-3">
+                    <svg class="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                    </svg>
+                    <p class="text-sm warning-text">
+                        <strong>Legal Information Only:</strong> This provides general legal information, not legal advice. Always consult a qualified lawyer for specific legal matters.
+                    </p>
+                </div>
+            </div>
             <!-- Welcome Message -->
             <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable">
-                <!-- Disclaimer -->
-                <div class="bg-yellow-100 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded-r-lg">
-                    <div class="flex gap-3">
-                        <svg class="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                        </svg>
-                        <p class="text-sm warning-text">
-                            <strong>Legal Information Only:</strong> This provides general legal information, not legal advice. Always consult a qualified lawyer for specific legal matters.
-                        </p>
-                    </div>
-                </div>
-
                 <!-- Welcome Card -->
                 <div class="card card-enter hover-elevate">
                     <h2 class="text-2xl font-bold mb-3" style="color: var(--text-primary);">Welcome to Gweta</h2>
                     <p class="mb-6" style="color: var(--text-secondary);">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
-                    
-                    <!-- Popular Questions -->
-                    <div class="space-y-2">
-                        <h3 class="text-sm font-semibold" style="color: var(--text-primary);">Try asking:</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Popular legal questions">
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about minimum wage">
-                                <span aria-hidden="true">💰</span> What is the minimum wage?
-                            </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about annual leave entitlement">
-                                <span aria-hidden="true">🏖️</span> How much annual leave am I entitled to?
-                            </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about maternity leave">
-                                <span aria-hidden="true">👶</span> Can I get maternity leave?
-                            </button>
-                            <button class="suggestion-btn text-left text-sm p-3 rounded-lg transition-all hover-elevate touch-target" style="background: var(--bg-secondary); color: var(--text-primary);" aria-label="Ask about dismissal rights">
-                                <span aria-hidden="true">⚖️</span> What are my rights if I'm fired?
-                            </button>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -751,7 +717,7 @@
                     <textarea
                         id="queryInput"
                         class="auto-expand w-full px-4 py-2.5 pr-16 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm touch-target"
-                        placeholder="Ask a legal question..."
+                        placeholder="Search or ask about Zimbabwean law..."
                         rows="1"
                         maxlength="1000"
                         aria-label="Legal question input"
@@ -899,15 +865,7 @@
         });
 
         // Suggestion button clicks
-        suggestionBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const question = btn.textContent.trim().replace(/^[^\s]+\s/, ''); // Remove emoji
-                queryInput.value = question;
-                autoExpand(queryInput);
-                charCount.textContent = `${question.length}/1000`;
-                queryForm.dispatchEvent(new Event('submit'));
-            });
-        });
+        // Removed suggestion buttons in less‑ink UI
 
         // Handle suggestion pill clicks
         function handleSuggestionClick(text) {
@@ -918,24 +876,7 @@
         }
 
         // Update suggestions bar
-        function updateSuggestions(suggestionsArray) {
-            suggestionPills.innerHTML = '';
-            
-            const suggestions = suggestionsArray && suggestionsArray.length > 0 
-                ? suggestionsArray.slice(0, 4)
-                : SEED_SUGGESTIONS;
-            
-            suggestions.forEach(suggestion => {
-                const pill = document.createElement('button');
-                pill.className = 'suggestion-pill whitespace-nowrap';
-                pill.textContent = suggestion;
-                pill.onclick = () => handleSuggestionClick(suggestion);
-                suggestionPills.appendChild(pill);
-            });
-            
-            // Always show suggestions bar
-            suggestionsBar.classList.remove('hidden');
-        }
+        function updateSuggestions() { /* no-op: suggestions removed */ }
 
         // Copy to clipboard functionality with success flash
         async function copyToClipboard(text, buttonElement) {
@@ -1401,8 +1342,7 @@
             }
         }, 500);
         
-        // Show initial suggestions
-        updateSuggestions([]);
+        // No suggestions in less‑ink UI
     </script>
 </body>
 </html>
