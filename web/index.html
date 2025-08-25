@@ -687,21 +687,21 @@
             <!-- Welcome Message with centered search -->
             <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable" style="margin-top: 12vh;">
                 <!-- Welcome Card -->
-                <div class="card card-enter hover-elevate">
+                <div class="card card-enter hover-elevate" style="border: none;">
                     <h2 class="text-2xl font-bold mb-3" style="color: var(--text-primary);">Welcome to Gweta</h2>
                     <p class="mb-6" style="color: var(--text-secondary);">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
                 </div>
                 <!-- Center search form (shares logic with bottom composer) -->
-                <form id="welcomeQueryForm" class="flex gap-2 items-center card" style="background: var(--bg-primary);">
+                <form id="welcomeQueryForm" class="flex gap-2 items-center" style="background: transparent; border: none;">
                     <!-- Upload on the left -->
                     <input id="welcomeDocInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                    <button type="button" id="welcomeUploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
+                    <button type="button" id="welcomeUploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: transparent; color: var(--text-primary); border: none;" aria-label="Upload document" title="Upload document">
                         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M12 5v14M5 12h14" />
                         </svg>
                     </button>
                     <div class="flex-1 relative">
-                        <textarea id="welcomeQueryInput" class="auto-expand w-full px-4 py-3 pr-16 rounded-lg text-sm touch-target" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
+                        <textarea id="welcomeQueryInput" class="auto-expand w-full px-4 py-3 pr-16 rounded-lg text-sm touch-target" style="background: transparent;" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
                     </div>
                     <button type="submit" class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm" style="background: var(--primary);" aria-label="Send">
                         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
