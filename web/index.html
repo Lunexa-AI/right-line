@@ -696,7 +696,7 @@
                     <!-- Upload on the left -->
                     <input id="welcomeDocInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
                     <div class="flex-1 relative">
-                        <button type="button" id="welcomeUploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
+                        <button type="button" id="welcomeUploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none; display: none;" aria-label="Upload document" title="Upload document">
                             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M12 5v14M5 12h14" />
                             </svg>
@@ -727,7 +727,7 @@
                 <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
                 <div class="flex-1 relative">
                     <!-- Upload (inside textbox, left) -->
-                    <button type="button" id="uploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
+                    <button type="button" id="uploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none; display: none;" aria-label="Upload document" title="Upload document">
                         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M12 5v14M5 12h14" />
                         </svg>
@@ -869,7 +869,7 @@
         }
 
         // Upload document (skeleton only)
-        if (uploadBtn && docInput) {
+        if (false && uploadBtn && docInput) {
             uploadBtn.addEventListener('click', () => docInput.click());
             docInput.addEventListener('change', () => {
                 if (!docInput.files || docInput.files.length === 0) return;
@@ -878,7 +878,7 @@
             });
         }
 
-        if (welcomeUploadBtn && welcomeDocInput) {
+        if (false && welcomeUploadBtn && welcomeDocInput) {
             welcomeUploadBtn.addEventListener('click', () => welcomeDocInput.click());
             welcomeDocInput.addEventListener('change', () => {
                 if (!welcomeDocInput.files || welcomeDocInput.files.length === 0) return;
@@ -889,7 +889,7 @@
 
         // Mirror upload icon inside welcome input
         const welcomeUploadInsideBtn = document.getElementById('welcomeUploadInsideBtn');
-        if (welcomeUploadInsideBtn && welcomeDocInput) {
+        if (false && welcomeUploadInsideBtn && welcomeDocInput) {
             welcomeUploadInsideBtn.addEventListener('click', () => welcomeDocInput.click());
         }
 
