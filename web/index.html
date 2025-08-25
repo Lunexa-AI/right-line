@@ -1208,17 +1208,8 @@
                                    data.confidence > 0.4 ? 'confidence-medium' : 
                                    'confidence-low';
             
-            // Determine source type based on citations and source
-            const sourceType = data.source === 'hybrid' || data.source === 'openai' ? 'official' :
-                              data.citations && data.citations.some(c => c.title.includes('Labour Act')) ? 'official' :
-                              data.citations && data.citations.some(c => c.url && c.url.includes('veritas')) ? 'veritas' :
-                              'interpreted';
-            
-            const sourceBadgeHtml = sourceType === 'official' ? 
-                '<span class="source-badge official">✓ OFFICIAL</span>' :
-                sourceType === 'veritas' ?
-                '<span class="source-badge veritas">VERITAS</span>' :
-                '<span class="source-badge interpreted">INTERPRETED</span>';
+            // Source badges removed for cleaner UI
+            const sourceBadgeHtml = '';
             
             const messageId = 'msg-' + Date.now();
             
@@ -1243,9 +1234,6 @@
                                     </button>
                                     <button onclick="sendFeedback('${data.request_id}', -1)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Not helpful" title="Not helpful">
                                         👎
-                                    </button>
-                                    <button onclick="explainInShona()" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Explain in Shona" title="Explain in Shona">
-                                        🇿🇼 Shona
                                     </button>
                                 </div>
                             </div>
@@ -1295,13 +1283,7 @@
                                 </div>
                             ` : ''}
                             
-                            <!-- Additional Info -->
-                            <div class="p-3 rounded-lg" style="background: transparent;">
-                                <div class="flex items-center justify-between text-xs" style="color: var(--text-secondary);">
-                                    <span>Answer composed using: ${data.source}</span>
-                                    ${data.processing_time_ms ? `<span>${Math.round(data.processing_time_ms)}ms</span>` : ''}
-                                </div>
-                            </div>
+                            
                         </div>
                     </div>
                 </div>
