@@ -353,7 +353,7 @@
         }
 
         .message-bubble {
-            max-width: 75%;
+            max-width: 88%;
             padding: 0.75rem 1rem;
             border-radius: 1rem;
             position: relative;
@@ -708,16 +708,28 @@
                     <p class="mb-6" style="color: var(--text-secondary);">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
                 </div>
                 <!-- Center search form (shares logic with bottom composer) -->
-                <form id="welcomeQueryForm" class="flex gap-2 card" style="background: var(--bg-primary);">
+                <form id="welcomeQueryForm" class="flex gap-2 items-center card" style="background: var(--bg-primary);">
+                    <!-- Upload on the left -->
+                    <input id="welcomeDocInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
+                    <button type="button" id="welcomeUploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 5v14M5 12h14" />
+                        </svg>
+                    </button>
                     <div class="flex-1 relative">
                         <textarea id="welcomeQueryInput" class="auto-expand w-full px-4 py-3 pr-16 rounded-lg text-sm touch-target" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
                     </div>
-                    <button type="submit" class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm" style="background: var(--primary);">Search</button>
+                    <button type="submit" class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm" style="background: var(--primary);" aria-label="Send">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M17 11l-5-5-5 5"/>
+                            <path d="M12 4v16"/>
+                        </svg>
+                    </button>
                 </form>
             </div>
 
             <!-- Messages Container (centered) -->
-            <div id="messagesContainer" class="max-w-2xl mx-auto" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+            <div id="messagesContainer" class="mx-auto" style="max-width: min(900px, 88vw);" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
                 <!-- Messages will be inserted here -->
             </div>
         </div>
@@ -727,7 +739,13 @@
     <!-- Floating Input Bar (hidden until first message) -->
     <div class="floating-input thumb-zone" id="composerBar">
         <div class="floating-input-container safe-left safe-right" style="max-width: 64rem;">
-            <form id="queryForm" class="flex gap-2">
+            <form id="queryForm" class="flex gap-2 items-center">
+                <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
+                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
                 <div class="flex-1 relative">
                     <textarea
                         id="queryInput"
@@ -743,12 +761,6 @@
                     ></textarea>
                     <span id="charCount" class="absolute bottom-2 right-3 text-xs" style="color: var(--text-tertiary);">0/1000</span>
                 </div>
-                <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M12 5v14M5 12h14" />
-                    </svg>
-                </button>
                 <button
                     type="submit"
                     id="sendBtn"
@@ -805,6 +817,8 @@
         const moonIcon = document.getElementById('moonIcon');
         const langToggle = document.getElementById('langToggle');
         const uploadBtn = document.getElementById('uploadBtn');
+        const welcomeUploadBtn = document.getElementById('welcomeUploadBtn');
+        const welcomeDocInput = document.getElementById('welcomeDocInput');
         const docInput = document.getElementById('docInput');
         // evidence rail removed; use per-response sources only
         const copyToast = document.getElementById('copyToast');
@@ -873,6 +887,15 @@
             docInput.addEventListener('change', () => {
                 if (!docInput.files || docInput.files.length === 0) return;
                 const file = docInput.files[0];
+                addMessage('bot', `Uploading “${file.name}”… (parse → chunk → ready)`, false);
+            });
+        }
+
+        if (welcomeUploadBtn && welcomeDocInput) {
+            welcomeUploadBtn.addEventListener('click', () => welcomeDocInput.click());
+            welcomeDocInput.addEventListener('change', () => {
+                if (!welcomeDocInput.files || welcomeDocInput.files.length === 0) return;
+                const file = welcomeDocInput.files[0];
                 addMessage('bot', `Uploading “${file.name}”… (parse → chunk → ready)`, false);
             });
         }
