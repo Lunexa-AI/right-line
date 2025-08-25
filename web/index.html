@@ -674,6 +674,9 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
                     </svg>
                 </button>
+                <button id="langToggle" class="touch-target text-xs px-2 py-1 rounded-md" style="color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border-color);" aria-label="Toggle language" title="Toggle language">
+                    EN
+                </button>
                 <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Account">
                     G
                 </div>
@@ -684,6 +687,7 @@
 
     <!-- Main Chat Container -->
     <main id="main-content" class="flex-1 overflow-hidden smooth-scroll" role="main">
+        <div class="max-w-4xl mx-auto px-4">
         <div id="chatContainer" class="chat-container">
             <!-- Trust Banner (always visible) -->
             <div class="bg-yellow-100 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded-r-lg mb-4">
@@ -705,10 +709,24 @@
                 </div>
             </div>
 
-            <!-- Messages Container -->
-            <div id="messagesContainer" class="max-w-2xl mx-auto" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
-                <!-- Messages will be inserted here -->
+            <!-- Two-column layout: messages + evidence rail -->
+            <div class="flex gap-4">
+                <div class="flex-1">
+                    <!-- Messages Container -->
+                    <div id="messagesContainer" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+                        <!-- Messages will be inserted here -->
+                    </div>
+                </div>
+                <aside id="evidenceRail" class="hidden lg:block w-72">
+                    <div class="sticky top-20">
+                        <div class="p-3 rounded-lg" style="background: var(--bg-primary); border: 1px solid var(--border-color);">
+                            <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
+                            <ol id="evidenceRailList" class="space-y-1 text-xs" style="color: var(--text-primary);"></ol>
+                        </div>
+                    </div>
+                </aside>
             </div>
+        </div>
         </div>
     </main>
 
@@ -731,6 +749,8 @@
                     ></textarea>
                     <span id="charCount" class="absolute bottom-2 right-3 text-xs" style="color: var(--text-tertiary);">0/1000</span>
                 </div>
+                <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
+                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">Upload</button>
                 <button
                     type="submit"
                     id="sendBtn"
@@ -783,8 +803,10 @@
         const themeToggle = document.getElementById('themeToggle');
         const sunIcon = document.getElementById('sunIcon');
         const moonIcon = document.getElementById('moonIcon');
-        const suggestionsBar = document.getElementById('suggestionsBar');
-        const suggestionPills = document.getElementById('suggestionPills');
+        const langToggle = document.getElementById('langToggle');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const docInput = document.getElementById('docInput');
+        const evidenceRailList = document.getElementById('evidenceRailList');
         const copyToast = document.getElementById('copyToast');
 
         // Chat state (max 3 exchanges in memory)
@@ -833,6 +855,24 @@
             localStorage.setItem('theme', newTheme);
             updateThemeIcon(newTheme === 'dark');
         });
+
+        // Language toggle (EN ↔ SN)
+        if (langToggle) {
+            langToggle.addEventListener('click', () => {
+                const isEn = langToggle.textContent.trim().toUpperCase() === 'EN';
+                langToggle.textContent = isEn ? 'SN' : 'EN';
+            });
+        }
+
+        // Upload document (skeleton only)
+        if (uploadBtn && docInput) {
+            uploadBtn.addEventListener('click', () => docInput.click());
+            docInput.addEventListener('change', () => {
+                if (!docInput.files || docInput.files.length === 0) return;
+                const file = docInput.files[0];
+                addMessage('bot', `Uploading “${file.name}”… (parse → chunk → ready)`, false);
+            });
+        }
 
         // Auto-expand textarea functionality
         function autoExpand(textarea) {
@@ -1040,6 +1080,18 @@
                 
                 // Add bot response with progressive disclosure
                 addBotResponse(data);
+                // Populate evidence rail
+                try {
+                    const rail = document.getElementById('evidenceRailList');
+                    if (rail) {
+                        rail.innerHTML = '';
+                        (data.citations || []).forEach((c, i) => {
+                            const li = document.createElement('li');
+                            li.innerHTML = `<a href="${escapeHtml(c.url || '')}" target="_blank" style="color: var(--primary);">${i+1}. ${escapeHtml(c.title)}</a>`;
+                            rail.appendChild(li);
+                        });
+                    }
+                } catch (e) { /* ignore */ }
                 
                 // Update suggestions based on response
                 updateSuggestions(data.suggestions);
