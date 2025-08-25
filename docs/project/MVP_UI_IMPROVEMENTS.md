@@ -1,16 +1,16 @@
-# RightLine — MVP UI Revamp / Improvements
+# Gweta — Enterprise Web UI (MVP) Improvements
 
-**Product vision:** A Zimbabwe‑first, enterprise‑grade Legal AI assistant that’s trustworthy, fast, and easy to adopt — starting with employment law Q\&A and document help, scaling to multi‑domain legal ops for enterprises.
+**Product vision:** Gweta is an AI‑native, enterprise‑grade legal assistant for Zimbabwean organisations (law firms, enterprises, government). It prioritises accuracy, citations, and speed. For citizens, Gweta WhatsApp is a free “smart lawyer friend.”
 
 ---
 
 ## 1) UX pillars (decision filters)
 
-* **Clarity over cleverness.** Plain language, simple flows, visible citations.
-* **Trust by design.** Source transparency, version stamps of laws, safe defaults, and audit trails.
-* **Speed you can feel.** Streamed answers, optimistic UI, keyboard‑first.
-* **Focus.** One primary task per screen; progressive disclosure for power features.
-* **Local first.** English ⇄ Shona instant switch; Zimbabwe legal taxonomy & entities baked in.
+* **Less ink.** Hide non‑essentials; fewer controls, fewer borders, fewer words.
+* **Evidence‑first.** Citations and provenance must be one glance away; no speculation.
+* **Speed you can feel.** Streamed answers, minimal layout shifts, keyboard‑first.
+* **Single‑task focus.** One primary action on screen; progressive disclosure.
+* **Local first.** EN ⇄ Shona instant switch; ZW legal taxonomy & entities.
 
 Use these pillars to accept/reject features during MVP triage.
 
@@ -26,11 +26,12 @@ Use these pillars to accept/reject features during MVP triage.
 
 ## 3) Information Architecture (MVP scope)
 
-* **Home** (Getting started + suggested tasks + recents)
-* **Chat Workbench** (core Q\&A + citations + export)
-* **Document Review** (upload PDF/DOCX → extract + explain + cite)
-* **Library** (Acts/Statutory Instruments/Case law indexes; link‑outs for now)
-* **Settings** (Org & privacy, language, tone presets, model choices)
+Single, focused workspace (no suggested chips, no busy home):
+* **Header**: Brand, environment badge, account menu, theme toggle.
+* **Omnibox (command bar)**: One field to search/ask. `Cmd/Ctrl+K` opens it anywhere.
+* **Conversation area**: Streamed answers with TL;DR and key points.
+* **Evidence rail (right)**: Source list with quick jump; collapsible.
+* **Attachment affordance**: Minimal “Upload document” near the composer for basic doc Q&A.
 
 Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Console**, **Usage Analytics**.
 
@@ -38,27 +39,16 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ## 4) Screen blueprints (MVP)
 
-### A) Home (Launchpad)
+### A) Workspace (single‑screen MVP)
 
-**Goal:** Orient and route users in 5 seconds.
-
-* Top bar: brand + **Environment badge** (Preview/Enterprise) + quick links (Library, Docs, Settings).
-* Hero search: “**Ask about Zimbabwe law**…” with pill chips (Working hours • Overtime • Dismissal • Medical leave).
-* **Trust banner**: “Legal information only” — terse, non‑blocking; link to full policy.
-* **Quick actions grid** (cards):
-
-  * Ask about employment rights
-  * Upload a document to review
-  * Draft a letter (demand, warning, dismissal)
-  * Compare a contract to the Labour Act
-* **Recent sessions** (list with rename, pin, share, delete).
-* **What’s new** (release notes popover) + **Help** (shortcuts & examples).
-
-**Empty‑state copy** must be warm, local, and credible.
+* Top bar (minimal). No secondary nav, no suggested pills.
+* Centered Omnibox with placeholder “Search or ask about Zimbabwean law…”.
+* Below: conversation stream; first answer replaces empty state.
+* Discreet trust banner (one line) above stream.
 
 ---
 
-### B) Chat Workbench (Research & Drafting)
+### B) Conversation
 
 **Three‑pane layout:**
 
@@ -75,10 +65,9 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 **Answer block:**
 
-* Streamed text with **confidence band** (Low/Med/High) and **Last updated** law version stamp.
-* **Footnote citations** \[1]\[2]\[3] with **hover cards** (title, section, year) + **Open section** action.
-* **Action row**: Copy • Export (DOCX/PDF) • Save to Matter • Share link • Ask a lawyer (human escalation placeholder).
-* **Reasoning controls**: “Show outline” (bullet view), “Explain in Shona,” “Legal test applied.”
+* Answer card: TL;DR, key points, copy/share, confidence band. Minimal chrome.
+* Evidence rail: ordered citations; hover card shows title/section/year; “open source”.
+* Controls: feedback (👍/👎), “Explain in Shona”, “Export PDF”.
 
 **Right rail (sticky):**
 
@@ -88,17 +77,12 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ---
 
-### C) Document Review Workbench
+### C) Document Q&A (lightweight)
 
 **Split view:** Left **document viewer** (PDF/DOCX with section TOC), Right **Insights**.
 
-* Upload → show **ingest steps** (upload → parse → index → ready) with skeleton loaders.
-* **Insights tabs:**
-
-  * **Summary** (bullets) • **Issues** (risk flags) • **Clauses** (detected) • **Citations** (to law) • **Checklist** (compliance gaps).
-* **Inline highlights**: Click a finding to scroll & highlight the relevant passage.
-* **Actions**: Draft letter/response → select template (disciplinary invite, demand, termination, policy update).
-* **Export**: Annotated PDF, DOCX summary, or JSON (devs).
+* Upload PDF/DOCX → show ingest steps (parse → chunk → ready). Skeletons only; no heavy viewers.
+* Ask questions about the uploaded file; answers cite both doc passages and statutes.
 
 ---
 
@@ -110,17 +94,19 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ---
 
-## 5) Components & patterns (design system seed)
+## 5) Components & patterns (ink‑diet edition)
 
 * **Design tokens:**
 
   * Color: Trust blues + emerald accents; accessible contrast AA+; warning amber for disclaimers.
   * Spacing: 4/8/12/16/24/32 scale. Radius: 12–16px (2xl for cards). Shadows: soft.
   * Typography: Inter/IBM Plex; 16px base; 600 for headings, 400 body; 14px meta.
-* **Cards** (elevated, hover lift), **Chips** (filter & action), **Badges** (Preview, Beta), **Tabs** (underline motion), **Toasts** (non‑blocking), **Skeletons** (shimmer), **Empty states** (icon + one‑line + primary CTA), **Pills** for modes.
-* **Citations** pattern: numeric footnotes in‑line, right‑rail list with deep links.
-* **File chips**: name + pages count + remove.
-* **Pagination**: cursor‑based; infinite scroll for chat history with year separators.
+* Omnibox: single input, supports `/` commands; grows multi‑line as needed.
+* Answer card: generous line‑height, no frames; faint divider between turns.
+* Evidence list: numbered links; no cards; truncate long titles with tooltip.
+* Toasts not modals; skeletons for loading; focus rings for accessibility.
+
+Removed: suggestion chips/pills, busy quick‑action grids, left sidebar by default.
 
 ---
 
@@ -142,22 +128,21 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ---
 
-## 8) Performance & perceived speed
+## 8) Performance principles
 
 * Pre‑warm models; show **TTFT** progress; stream tokens.
-* Optimistic UI: attachments appear immediately; placeholders for citations that resolve.
-* Cache last 5 sources per session; prefetch likely sections on hover.
+* Avoid heavy DOM; no permanent side rails on small screens.
+* Cache last sources for quick hover previews.
 
 ---
 
-## 9) Microcopy (tone & examples)
+## 9) Microcopy (enterprise tone)
 
 * Friendly, brief, local. Avoid legalese until asked.
-* Examples for home and empty states:
-
-  * “What is the lawful maximum overtime per week?”
-  * “Draft a dismissal letter compliant with SI 15/2006, section 5.”
-  * “Explain maternity leave rules in Shona for factory workers.”
+* Omnibox placeholder: “Search or ask about Zimbabwean law…”
+* Feedback: “Helpful?” / “Not helpful?”
+* Evidence label: “Sources”.
+* WhatsApp tagline: “Get the smart lawyer friend you always wanted.”
 
 ---
 
@@ -165,25 +150,22 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 * Instrument: query type, TTFT, tokens, citation clicks, export events, user feedback (👍/👎 with reason).
 * Session replay (privacy‑safe) for UX; redact PII in logs by default.
-* Quality dashboard: % answers with ≥2 authoritative citations, avg confidence, deflection to human.
+* Quality dashboard (later): % answers with ≥2 authoritative citations, avg confidence, deflection to human.
 
 ---
 
-## 11) MVP backlog (MoSCoW)
+## 11) MVP scope (MoSCoW)
 
 **Must‑have**
 
-* Home launchpad with chips + trust banner + recents.
-* Chat workbench with streaming answers, footnote citations, right‑rail sources.
-* /slash commands for modes; EN/Shona toggle.
-* Upload and basic Document Review (summary + citations + export PDF/DOCX).
-* Keyboard shortcuts; error states; skeletons.
+* Omnibox + streamed answers with citations & confidence.
+* Evidence rail with jump links; copy/share.
+* EN/Shona; basic doc upload for Q&A.
 
 **Should‑have**
 
-* Confidence band + law version stamps.
-* Library index with search across Acts/SIs (subset).
-* Shareable read‑only conversation link.
+* Export answer as PDF; shareable read‑only link.
+* Minimal analytics events (TTFT, feedback, citation clicks).
 
 **Could‑have**
 
@@ -196,24 +178,20 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ---
 
-## 12) Implementation notes (React stack)
+## 12) Implementation notes (stack‑agnostic)
 
-* **Next.js + React + Tailwind + shadcn/ui + lucide-react**.
-* **State**: TanStack Query for IO; Zustand for UI state.
-* **Editor**: TipTap/textarea hybrid; file preview with PDF.js.
-* **i18n**: i18next.
-* **Theming**: CSS variables for tokens; dark & light.
-* **Testing**: Playwright for flows, Storybook for components.
+* Keep DOM shallow; prefer CSS variables; avoid heavy bespoke components.
+* Keyboard: `Enter` send; `Shift+Enter` newline; `Cmd/Ctrl+K` for command palette.
+* Responsiveness: evidence rail collapses under 1024px; omnibox stays sticky.
 
 ---
 
 ## 13) Acceptance criteria (MVP)
 
-* A: From Home, user asks “How much annual leave am I entitled to?” → streamed answer with ≥2 citations; export to PDF works.
-* B: User uploads a contract → sees summary + at least 3 clause detections + jump‑to highlights.
-* C: Toggling Shona re‑phrases the last answer without losing citations.
-* D: Confidence + law version stamps visible on every answer block.
-* E: Accessibility: All interactive controls reachable via keyboard; contrast AA+.
+* Ask: “Annual leave entitlement” → streamed answer with ≥2 sources + confidence.
+* Upload a contract → ask “Is notice period compliant?” → cites doc + statute.
+* Toggle to Shona maintains citations.
+* Accessibility: all core actions keyboard‑reachable; AA contrast.
 
 ---
 
@@ -229,8 +207,8 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 **Week 1–2**
 
-* Tokens + theme; header; Home chips; trust banner; recents.
-* Chat shell with streaming + footnotes + right‑rail sources.
+* Tokens + theme; header; workspace shell (no suggestions).
+* Chat shell with streaming + evidence rail.
 
 **Week 3–4**
 
@@ -239,8 +217,8 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 **Week 5–6**
 
-* Library index + law version stamps + confidence band.
-* Error handling, empty states, analytics events, basic audit export.
+* Library index (later) + confidence band.
+* Error handling, analytics events, basic audit export.
 
 **Week 7–8**
 
@@ -265,4 +243,4 @@ Nice‑to‑have later: **Matters/Projects**, **Prompt Library**, **Admin Consol
 
 ---
 
-**Outcome:** If we ship these improvements, RightLine will feel as simple as ChatGPT, as transparent as a research tool, and as pragmatic as CoCounsel — but tailored for Zimbabwe from day one.
+**Outcome:** An enterprise‑ready, less‑ink, evidence‑first MVP that is actually useful today (RAG + citations + doc Q&A), while preparing the surface for agentic features later. Citizens get a free WhatsApp “lawyer friend.”

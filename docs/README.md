@@ -5,6 +5,8 @@ Welcome to the Gweta documentation. This directory contains comprehensive guides
 ## 📚 Documentation Structure
 
 ### For Users
+- **Gweta Web (Enterprise)**: Evidence‑first legal research workbench for organisations (see UI improvements in `project/MVP_UI_IMPROVEMENTS.md`)
+- **Gweta WhatsApp (Citizens)**: Free chatbot — “Get the smart lawyer friend you always wanted.”
 - [**API Reference**](api/README.md) - Complete API documentation with examples
 - [**Quick Start Guide**](../README.md#-quick-start) - Get started quickly
 

@@ -14,7 +14,12 @@
 
 ## What is Gweta?
 
-Gweta is a legal information assistant that provides instant access to Zimbabwean law via WhatsApp. Ask a question in plain language (English, Shona, or Ndebele) and get:
+Gweta is an AI‑native legal assistant for Zimbabwe.
+
+- **Gweta Web (Enterprise)**: an enterprise research workbench for law firms, enterprises, and government. Evidence‑first RAG with citations, built to evolve into agentic tooling (drafting, tool calling, web search).
+- **Gweta WhatsApp (Citizens)**: a free chatbot for ordinary citizens — “Get the smart lawyer friend you always wanted.”
+
+Ask in plain language (English, Shona, or Ndebele) and get:
 
 - 📜 **Exact statute section** relevant to your query
 - 📝 **3-line summary** in your language
