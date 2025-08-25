@@ -701,14 +701,19 @@
                         </svg>
                     </button>
                     <div class="flex-1 relative">
-                        <textarea id="welcomeQueryInput" class="auto-expand w-full px-4 py-3 pr-16 rounded-lg text-sm touch-target" style="background: transparent;" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
+                        <button type="button" id="welcomeUploadInsideBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 5v14M5 12h14" />
+                            </svg>
+                        </button>
+                        <textarea id="welcomeQueryInput" class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target" style="background: transparent; outline: none; box-shadow: none;" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
+                        <button type="submit" id="welcomeSendBtn" class="absolute right-3 top-1/2 -translate-y-1/2 touch-target text-white rounded-lg text-sm hidden" style="background: var(--primary); padding: 0.5rem;" aria-label="Send">
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M17 11l-5-5-5 5"/>
+                                <path d="M12 4v16"/>
+                            </svg>
+                        </button>
                     </div>
-                    <button type="submit" class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm" style="background: var(--primary);" aria-label="Send">
-                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M17 11l-5-5-5 5"/>
-                            <path d="M12 4v16"/>
-                        </svg>
-                    </button>
                 </form>
             </div>
 
@@ -731,9 +736,15 @@
                     </svg>
                 </button>
                 <div class="flex-1 relative">
+                    <!-- Upload (inside textbox, left) -->
+                    <button type="button" id="uploadBtn" class="absolute left-3 top-1/2 -translate-y-1/2 touch-target text-sm" style="background: transparent; color: var(--text-secondary); border: none;" aria-label="Upload document" title="Upload document">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 5v14M5 12h14" />
+                        </svg>
+                    </button>
                     <textarea
                         id="queryInput"
-                        class="auto-expand w-full px-4 py-3 pr-16 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm touch-target"
+                        class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target"
                         placeholder="Search or ask about Zimbabwean law..."
                         rows="1"
                         maxlength="1000"
@@ -742,26 +753,28 @@
                         autocorrect="on"
                         autocapitalize="sentences"
                         spellcheck="true"
+                        style="outline: none; box-shadow: none;"
                     ></textarea>
-                    <span id="charCount" class="absolute bottom-2 right-3 text-xs" style="color: var(--text-tertiary);">0/1000</span>
+                    <!-- Send (inside textbox, right; hidden until typing) -->
+                    <button
+                        type="submit"
+                        id="sendBtn"
+                        class="absolute right-3 top-1/2 -translate-y-1/2 touch-target text-white rounded-lg text-sm hidden"
+                        style="background: var(--primary); padding: 0.5rem;"
+                        aria-label="Send message"
+                    >
+                        <svg id="sendIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M17 11l-5-5-5 5"/>
+                            <path d="M12 4v16"/>
+                        </svg>
+                        <div id="sendLoading" class="loading-dots hidden">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </button>
+                    <span id="charCount" class="absolute bottom-2 text-xs" style="color: var(--text-tertiary); right: 2.5rem;">0/1000</span>
                 </div>
-                <button
-                    type="submit"
-                    id="sendBtn"
-                    class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    style="background: var(--primary);"
-                    aria-label="Send message"
-                >
-                    <svg id="sendIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M17 11l-5-5-5 5"/>
-                        <path d="M12 4v16"/>
-                    </svg>
-                    <div id="sendLoading" class="loading-dots hidden">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </div>
-                </button>
             </form>
             <!-- Keyboard hints - hidden on mobile, subtle on desktop -->
             <div class="hidden sm:block mt-1 text-xs text-center opacity-50" style="color: var(--text-tertiary); font-size: 0.625rem;">
@@ -884,6 +897,12 @@
             });
         }
 
+        // Mirror upload icon inside welcome input
+        const welcomeUploadInsideBtn = document.getElementById('welcomeUploadInsideBtn');
+        if (welcomeUploadInsideBtn && welcomeDocInput) {
+            welcomeUploadInsideBtn.addEventListener('click', () => welcomeDocInput.click());
+        }
+
         // Auto-expand textarea functionality
         function autoExpand(textarea) {
             textarea.style.height = 'auto';
@@ -898,10 +917,23 @@
             const count = e.target.value.length;
             charCount.textContent = `${count}/1000`;
             charCount.classList.toggle('text-red-500', count > 950);
+            // Show/hide send button based on typing
+            const sendBtnEl = document.getElementById('sendBtn');
+            if (sendBtnEl) {
+                if (count > 0) sendBtnEl.classList.remove('hidden');
+                else sendBtnEl.classList.add('hidden');
+            }
         });
 
         if (welcomeQueryInput) {
-            welcomeQueryInput.addEventListener('input', (e) => autoExpand(e.target));
+            welcomeQueryInput.addEventListener('input', (e) => {
+                autoExpand(e.target);
+                const btn = document.getElementById('welcomeSendBtn');
+                if (btn) {
+                    if (e.target.value.length > 0) btn.classList.remove('hidden');
+                    else btn.classList.add('hidden');
+                }
+            });
             welcomeQueryInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1234,16 +1266,7 @@
                         <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.tldr)}</p>
                     </div>
                     
-                    <!-- Confidence Bar -->
-                    <div class="mb-3">
-                        <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs" style="color: var(--text-secondary);">Confidence</span>
-                            <span class="text-xs font-medium" style="color: var(--text-primary);">${confidencePercent}%</span>
-                        </div>
-                        <div class="confidence-bar">
-                            <div class="confidence-fill ${confidenceClass} pulse-gentle" style="width: ${confidencePercent}%"></div>
-                        </div>
-                    </div>
+                    <!-- Confidence removed from UI for MVP -->
                     
                     <!-- View Details Button -->
                     <button onclick="toggleDetails('${messageId}')" class="w-full text-sm font-medium py-2 px-3 rounded-lg transition-all flex items-center justify-between" style="background: var(--bg-secondary); color: var(--primary);">
