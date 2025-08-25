@@ -765,6 +765,7 @@
     <script>
         // API Configuration
         const API_URL = 'http://localhost:8000/api/v1/query';
+        const FEEDBACK_URL = 'http://localhost:8000/v1/feedback';
         
         // DOM Elements
         const chatContainer = document.getElementById('chatContainer');
@@ -789,6 +790,7 @@
         // Chat state (max 3 exchanges in memory)
         let chatHistory = [];
         const MAX_HISTORY = 3;
+        let lastUserQuestion = '';
 
         // Seed suggestions for contextual help
         const SEED_SUGGESTIONS = [
@@ -985,6 +987,7 @@
             
             const question = queryInput.value.trim();
             if (!question) return;
+            lastUserQuestion = question;
 
             // Hide welcome message on first message
             if (chatHistory.length === 0) {
@@ -1150,6 +1153,15 @@
                                     <button onclick="shareResponse('${escapeHtml(data.tldr).replace(/'/g, "\\'")}')" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Share response" title="Share response">
                                         🔗 Share
                                     </button>
+                                    <button onclick="sendFeedback('${data.request_id}', 1)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Helpful" title="Helpful">
+                                        👍
+                                    </button>
+                                    <button onclick="sendFeedback('${data.request_id}', -1)" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Not helpful" title="Not helpful">
+                                        👎
+                                    </button>
+                                    <button onclick="explainInShona()" class="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" style="color: var(--text-secondary);" aria-label="Explain in Shona" title="Explain in Shona">
+                                        🇿🇼 Shona
+                                    </button>
                                 </div>
                             </div>
                         <p class="whitespace-pre-line" style="color: var(--text-primary);">${escapeHtml(data.tldr)}</p>
@@ -1222,6 +1234,40 @@
             
             messagesContainer.appendChild(messageDiv);
             scrollToBottom();
+        }
+
+        // Feedback API
+        async function sendFeedback(requestId, rating) {
+            try {
+                await fetch(FEEDBACK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ request_id: requestId, rating: rating })
+                });
+                showToast(rating > 0 ? 'Thanks for the feedback' : 'Feedback recorded');
+            } catch (e) {
+                console.error('Feedback failed', e);
+            }
+        }
+
+        // Re-query in Shona (enterprise translate action)
+        async function explainInShona() {
+            if (!lastUserQuestion) return;
+            const typingId = addTypingIndicator();
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: lastUserQuestion, channel: 'web', lang_hint: 'sn' })
+                });
+                const data = await response.json();
+                removeTypingIndicator(typingId);
+                if (!response.ok) throw new Error(data.detail || 'Translate failed');
+                addBotResponse(data);
+            } catch (e) {
+                removeTypingIndicator(typingId);
+                addMessage('bot', `Sorry, translation failed: ${e.message}.`, true);
+            }
         }
 
         // Toggle details section
