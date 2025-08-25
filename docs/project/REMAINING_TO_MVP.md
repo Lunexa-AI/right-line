@@ -1,7 +1,7 @@
 # Gweta: Remaining Tasks to MVP
 
 > **🎯 Final sprint to MVP completion**  
-> Based on current repository state analysis. We have a working end-to-end RAG system and need to complete deployment, WhatsApp integration, and final polish.
+> New positioning: Gweta Web is an enterprise research workbench (less‑ink, evidence‑first). Gweta WhatsApp is a free chatbot for citizens (“smart lawyer friend”). We have end‑to‑end RAG; finish UI polish, deployment, and channel separation.
 
 ## 📊 Current State Analysis (What's ✅ Done)
 
@@ -31,7 +31,7 @@
 
 ## 🚀 **Remaining Tasks to MVP (Final Sprint)**
 
-### **Priority 1: WhatsApp Integration (4 hours)**
+### **Priority 1: WhatsApp Channel (Citizens) (4 hours)**
 
 #### Task 1.1: Update WhatsApp to use RAG system
 - **Current State**: WhatsApp integration exists but uses hardcoded responses
@@ -102,7 +102,17 @@
 - **Acceptance**: All core functionality verified in production
 - **Effort**: 1 hour
 
-### **Priority 3: Quality & Polish (2 hours)**
+### **Priority 3: Enterprise Web UI (2 hours)**
+#### Task 3.1: Apply less‑ink workspace (no suggestions)
+- Remove suggestion chips from UI; keep omnibox + evidence rail only (per MVP_UI_IMPROVEMENTS.md)
+- Minimal trust banner; feedback and translate controls only
+- Acceptance: clean layout, no extraneous UI, passes accessibility contrast
+
+#### Task 3.2: Basic Document Q&A
+- Add upload affordance; show ingest skeleton; allow follow‑up questions over the file
+- Acceptance: can ask one question about uploaded file; answer cites doc + statutes
+
+### **Priority 4: Quality & RAG Polish (2 hours)**
 
 #### Task 3.1: Response quality improvements
 - **Current State**: RAG responses are working but could be more accurate
@@ -121,7 +131,7 @@
 - **Acceptance**: Graceful error handling, good user experience
 - **Effort**: 1 hour
 
-### **Priority 4: Documentation & Handoff (1 hour)**
+### **Priority 5: Documentation & Handoff (1 hour)**
 
 #### Task 4.1: Update documentation
 - **Required**: Update all documentation to reflect current state
@@ -153,10 +163,12 @@
 | 2.1 | Vercel environment variables | 1h | 🔴 |
 | 2.2 | Deploy to Vercel | 1h | 🔴 |
 | 2.3 | Verify production deployment | 1h | 🔴 |
-| 3.1 | Response quality improvements | 1h | 🔴 |
-| 3.2 | Error handling & UX polish | 1h | 🔴 |
-| 4.1 | Update documentation | 0.5h | 🔴 |
-| 4.2 | Create handoff documentation | 0.5h | 🔴 |
+| 3.1 | Enterprise less‑ink workspace UI | 1h | 🔴 |
+| 3.2 | Basic Document Q&A | 1h | 🔴 |
+| 4.1 | Response quality improvements | 1h | 🔴 |
+| 4.2 | Error handling & UX polish | 1h | 🔴 |
+| 5.1 | Update documentation | 0.5h | 🔴 |
+| 5.2 | Create handoff documentation | 0.5h | 🔴 |
 
 **Total Remaining Effort**: ~10 hours
 
