@@ -90,7 +90,7 @@
 
         /* Apply theme colors */
         body {
-            background-color: var(--bg-secondary);
+            background-color: var(--bg-primary);
             color: var(--text-primary);
         }
 
@@ -336,7 +336,7 @@
             scroll-behavior: smooth;
             padding: 1.5rem;
             padding-bottom: 8rem;
-            background-color: var(--bg-chat);
+            background-color: transparent;
             -webkit-overflow-scrolling: touch;
         }
 
@@ -397,7 +397,7 @@
             left: 0;
             right: 0;
             background: transparent;
-            border-top: 1px solid var(--border-color);
+            border-top: none;
             box-shadow: none;
             z-index: 50;
             padding: 0.75rem 1rem;
@@ -655,8 +655,8 @@
         Skip to main content
     </a>
 
-    <!-- Header (Minimal with theme toggle) -->
-    <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 safe-top" style="background: var(--bg-primary); border-color: var(--border-color);" role="banner">
+    <!-- Header (Minimal, borderless) -->
+    <header class="flex-shrink-0 safe-top" style="background: transparent; border: none;" role="banner">
         <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between safe-left safe-right">
             <div class="flex items-center gap-2">
                 <svg class="h-6 w-6" style="color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -725,7 +725,7 @@
         <div class="floating-input-container safe-left safe-right" style="max-width: 64rem;">
             <form id="queryForm" class="flex gap-2 items-center">
                 <input id="docInput" type="file" accept=".pdf,.doc,.docx" class="hidden" />
-                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);" aria-label="Upload document" title="Upload document">
+                <button type="button" id="uploadBtn" class="touch-target px-3 py-2 rounded-lg text-sm" style="background: transparent; color: var(--text-primary); border: none;" aria-label="Upload document" title="Upload document">
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M12 5v14M5 12h14" />
                     </svg>
