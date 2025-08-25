@@ -701,7 +701,7 @@
                                 <path d="M12 5v14M5 12h14" />
                             </svg>
                         </button>
-                        <textarea id="welcomeQueryInput" class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target" style="background: transparent; outline: none; box-shadow: none;" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
+                        <textarea id="welcomeQueryInput" class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target" style="background: transparent; outline: none; box-shadow: none;" placeholder="Ask Gweta" rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
                         <button type="submit" id="welcomeSendBtn" class="absolute right-2 top-1/2 -translate-y-1/2 touch-target rounded-full text-sm hidden" style="background: var(--bg-secondary); color: var(--primary); border: 1px solid var(--border-color); width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center;" aria-label="Send">
                             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M17 11l-5-5-5 5"/>
@@ -735,7 +735,7 @@
                     <textarea
                         id="queryInput"
                         class="auto-expand w-full pl-10 pr-10 py-3 rounded-lg text-sm touch-target"
-                        placeholder="Search or ask about Zimbabwean law..."
+                        placeholder="Ask Gweta"
                         rows="1"
                         maxlength="1000"
                         aria-label="Legal question input"
@@ -763,7 +763,7 @@
                             <span></span>
                         </div>
                     </button>
-                    <span id="charCount" class="absolute bottom-2 text-xs" style="color: var(--text-tertiary); right: 2.75rem;">0/1000</span>
+                    
                 </div>
             </form>
             <!-- Keyboard hints - hidden on mobile, subtle on desktop -->
@@ -792,7 +792,7 @@
         const queryInput = document.getElementById('queryInput');
         const welcomeQueryForm = document.getElementById('welcomeQueryForm');
         const welcomeQueryInput = document.getElementById('welcomeQueryInput');
-        const charCount = document.getElementById('charCount');
+        const charCount = null;
         const sendBtn = document.getElementById('sendBtn');
         const sendText = document.getElementById('sendText');
         const sendIcon = document.getElementById('sendIcon');
@@ -903,10 +903,7 @@
         // Initialize auto-expand
         queryInput.addEventListener('input', (e) => {
             autoExpand(e.target);
-            // Update character count
             const count = e.target.value.length;
-            charCount.textContent = `${count}/1000`;
-            charCount.classList.toggle('text-red-500', count > 950);
             // Show/hide send button based on typing
             const sendBtnEl = document.getElementById('sendBtn');
             if (sendBtnEl) {
@@ -949,7 +946,6 @@
         function handleSuggestionClick(text) {
             queryInput.value = text;
             autoExpand(queryInput);
-            charCount.textContent = `${text.length}/1000`;
             queryForm.dispatchEvent(new Event('submit'));
         }
 
@@ -1074,7 +1070,7 @@
             // Clear input
             queryInput.value = '';
             autoExpand(queryInput);
-            charCount.textContent = '0/1000';
+            
             
             // Show loading state
             sendBtn.disabled = true;
@@ -1163,7 +1159,7 @@
                 // Push into bottom composer then reuse existing submit
                 queryInput.value = q;
                 autoExpand(queryInput);
-                charCount.textContent = `${q.length}/1000`;
+                
                 welcomeQueryInput.value = '';
                 // Trigger primary submit
                 queryForm.dispatchEvent(new Event('submit'));
