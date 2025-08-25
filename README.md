@@ -1,39 +1,43 @@
-# Gweta
+# Gweta — AI Legal Workbench for Zimbabwe
 
 <p align="center">
-  <strong>Get the law right, on the line.</strong><br>
-  WhatsApp-first legal information for Zimbabwe
+  <strong>AI‑first legal research and workflows for Zimbabwe.</strong><br>
+  Enterprise‑grade, evidence‑first, and built to become agentic.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-Pre--MVP-orange">
+  <img alt="Status" src="https://img.shields.io/badge/status-MVP-orange">
   <a href="https://github.com/Lunexa-AI/right-line/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Lunexa-AI/right-line"></a>
 </p>
 
 ## What is Gweta?
 
-Gweta is an AI‑native legal assistant for Zimbabwe.
+Gweta is an AI‑native legal assistant and workbench for Zimbabwe.
 
-- **Gweta Web (Enterprise)**: an enterprise research workbench for law firms, enterprises, and government. Evidence‑first RAG with citations, built to evolve into agentic tooling (drafting, tool calling, web search).
-- **Gweta WhatsApp (Citizens)**: a free chatbot for ordinary citizens — “Get the smart lawyer friend you always wanted.”
+- **Gweta Web (Enterprise)**: an enterprise research workbench for law firms, enterprises, and government. Evidence‑first RAG with citations — designed to evolve into agentic tooling (drafting, tool calling, strategy workflows, document analysis).
+- **Gweta WhatsApp (Citizens)**: a free chatbot for ordinary citizens (planned continuity), built on the same retrieval foundation.
 
-Ask in plain language (English, Shona, or Ndebele) and get:
+Speak in natural language (English, Shona, or Ndebele) and get cited answers from authoritative sources.
 
-- 📜 **Exact statute section** relevant to your query
-- 📝 **3-line summary** in your language
-- 📚 **Citations** with page references
+## ✨ MVP Capabilities (Today)
 
-> ⚠️ **Disclaimer**: Gweta provides legal information, not legal advice. Always consult qualified legal counsel for legal matters.
+- **Research Omnibox**: Ask anything about Zimbabwean law; get a TL;DR, key points, and citations.
+- **High‑quality retrieval**: OpenAI embeddings → Milvus Cloud → lightweight reranking.
+- **Cited answers**: Every response includes sources; copy/share/feedback controls.
+- **Fast**: Target P95 < 2s on typical networks.
+- **Accessible**: Dark/light, keyboard flow, mobile‑friendly.
 
-## ✨ Key Features
+## 🌱 Coming in V2 (Agentic Workflows)
 
-- **Multi-language**: English, Shona, and Ndebele support
-- **Fast responses**: Under 2 seconds on 2G networks
-- **Temporal queries**: Find laws as they were on specific dates
-- **Source verification**: Every response includes exact citations
-- **Offline-first**: Works even with limited connectivity
+- **Document uploads and analysis** (PDF/DOCX): summarize, compare, extract; per‑matter context.
+- **Tool calling / Agents**: drafting assistants, clause finder, citation checker, web search.
+- **Case/matter workspaces**: multi‑doc reasoning, history, notes, and tasks.
+- **Team & client onboarding**: roles/permissions, secure sharing.
+- **Connectors**: Google Drive/OneDrive/SharePoint; email intake.
+
+See the detailed roadmaps in `docs/project/MVP_ARCHITECTURE.md` and `docs/project/V2_ARCHITECTURE.md`.
 
 ## 🚀 Quick Start
 
@@ -92,8 +96,8 @@ curl -X POST http://localhost:3000/api/v1/query \
 
 ## 📚 Documentation
 
-- [**MVP Architecture**](docs/project/MVP_ARCHITECTURE.md) - Serverless system design (Vercel + Milvus + OpenAI)
-- [**V2 Architecture**](docs/project/V2_ARCHITECTURE.md) - Production-scale system design
+- [**MVP Architecture**](docs/project/MVP_ARCHITECTURE.md) — Search/Research MVP on Vercel + Milvus + OpenAI
+- [**V2 Architecture**](docs/project/V2_ARCHITECTURE.md) — Agentic extensions (uploads, drafting, workspaces)
 - [**Quick Start**](docs/QUICKSTART.md) - Get running in 5 minutes
 - [**Deployment Guide**](docs/DEPLOYMENT.md) - Vercel deployment instructions
 - [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to Gweta
@@ -117,16 +121,14 @@ make help
 
 > **Note**: Pre-commit hooks are currently disabled for rapid MVP development. See [CI Management Guide](docs/development/ci-management.md) for details.
 
-## 🏗️ Architecture
+## 🏗️ Architecture (MVP)
 
-Gweta uses a microservices architecture optimized for low latency and high reliability:
+Serverless and unover‑engineered:
 
-- **API Gateway** - FastAPI with request orchestration
-- **Retrieval Service** - Hybrid BM25 + vector search
-- **Ingestion Pipeline** - Document processing with OCR
-- **Summarizer** - Multi-tier summarization (local → API)
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+- **Vercel Functions (FastAPI + Mangum)** handle `/api/v1/query` and analytics.
+- **Milvus Cloud** stores chunk embeddings for fast similarity search.
+- **OpenAI** provides embeddings and answer composition.
+- Static **web/** UI delivers an AI‑native chat/research experience.
 
 ## 🤝 Contributing
 

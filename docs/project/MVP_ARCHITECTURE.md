@@ -1,11 +1,11 @@
-# Gweta MVP Architecture (Vercel + Milvus Edition)
+# Gweta MVP Architecture — AI‑Native Research (Vercel + Milvus + OpenAI)
 
-## 0) Product Promise (Non-Negotiables)
-- **< 2.0s P95** end-to-end response on low bandwidth for short queries.
-- **Cited, traceable answers** every time; zero speculation.
-- **Dual channel UX**: Enterprise Web workbench + citizen WhatsApp chatbot.
-- **Zero user PII by default**, opt-in feedback; all responses traceable to sources.
-- **Serverless deployment** on Vercel; pay-per-use scaling.
+## 0) Product Promise (MVP)
+- **Research‑grade answers** with citations and key points.
+- **< 2.0s P95** response for typical queries.
+- **Enterprise Web** first; WhatsApp continues as a separate, later channel.
+- **Minimal data collection**; analytics are opt‑in, no PII by default.
+- **Serverless on Vercel**; low‑ops, pay‑per‑use.
 
 ## 1) High-Level Architecture
 ```
@@ -44,9 +44,8 @@
 ```
 
 ## 2) Core Components (Serverless)
-### 2.1 Channels
-- **Gweta Web (Enterprise)**: Evidence‑first research workbench (RAG search with citations). Deployed as a static site with serverless APIs. Grows into agentic tooling (tool calling, drafting, web search).
-- **Gweta WhatsApp (Citizens)**: Free chatbot for ordinary citizens. “Get the smart lawyer friend you always wanted.” Meta Cloud API webhook → `/api/webhook`.
+### 2.1 Channel (MVP)
+- **Gweta Web (Enterprise)**: Evidence‑first research workbench (RAG with citations). Deployed as a static site with serverless APIs. V2 extends this with uploads and agentic tools.
 
 ### 2.2 Vercel Functions (FastAPI)
 - **File**: `api/main.py` (Vercel API routes)
@@ -57,7 +56,7 @@
   - `/api/webhook` - WhatsApp webhook
 - **Scaling**: Auto-scaling serverless functions
 
-### 2.3 Ingestion (Local/GitHub Actions)
+### 2.3 Ingestion (Local/CLI)
 - **Scripts** (run locally or in CI):
   - `scripts/ingest.py` - Main ingestion orchestrator
   - `scripts/parse_docs.py` - Parse & chunk documents
@@ -106,28 +105,19 @@
 }
 ```
 
-### 2.6 Rendering (Channel-Specific)
-- **WhatsApp (Citizens)**:
-  - Title: "Act §Section — Topic"
-  - TL;DR line
-  - 3–5 concise bullets
-  - Citations list: [1] main, [2] optional corroborator
-  - Follow-ups: "1 Steps · 2 Penalties · 3 Exceptions"
-- **Web (Enterprise)**:
-  - Omnibox + streamed answers; less‑ink answer cards (TL;DR + Key points)
-  - Evidence rail with numbered citations; hover previews; copy/share buttons
-  - Minimal controls: feedback, translate EN/Shona, export
+### 2.6 Rendering (Web)
+- Omnibox + streamed answers; less‑ink answer cards (TL;DR + key points)
+- Per‑answer sources with numbered citations; copy/share/feedback; translate EN/Shona
 
 ## 3) Implementation Status
-- **Phase 1 ✅**: Hardcoded responses complete (36 topics)
-- **Phase 2 🔴**: RAG + OpenAI + Milvus (serverless) next
+- **MVP**: RAG search, composition, and web UI working locally; Milvus/OpenAI wired.
 
 ## 4) Deployment (Vercel Serverless)
 - **Platform**: Vercel (free tier: 100GB-hours/month function execution)
 - **Build**: `vercel build` → static site + serverless functions
 - **Env**: Vercel environment variables for OpenAI, Milvus credentials
 
-## 5) Non-Functional Requirements
+## 5) Non‑Functional Requirements
 - **Latency**: P95 <2s (Milvus search ≤500ms; OpenAI compose ≤1s; overhead ≤300ms)
 - **Security**: API key auth, rate limiting, HMAC user IDs
 - **Monitoring**: Vercel Analytics + OpenAI usage tracking

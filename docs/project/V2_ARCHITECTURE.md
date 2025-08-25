@@ -1,15 +1,15 @@
-# Gweta V2 Architecture (Production Extension)
+# Gweta V2 Architecture — Agentic Legal Workbench
 
-> **Note**: This V2 builds on the lightweight MVP in `MVP_ARCHITECTURE.md`. Start with MVP for proof-of-concept, then add V2 features for production scaling, resilience, and advanced RAG. Objectives: Maintain low-latency (<1s P95), security, traceability, cost-effectiveness; scale to 1000 QPS.
+> Builds on the MVP research core. V2 introduces uploads, tool‑calling, drafting, case/matter workspaces, and connectors — an AI‑first assistant similar in spirit to CoCounsel, focused on Zimbabwe.
 
-## 0) Product Promise (Enhanced for V2)
-- **< 1.0s P95** with edge optimization.
-- **Exact + contextual summaries** with multi-modal support (e.g., diagram extraction).
-- **Multi-channel** (WhatsApp, Telegram, Web PWA, USSD).
-- **Zero PII**, advanced telemetry with consent.
-- **Scales to $100/month cluster** for high load.
+## 0) Product Promise (V2)
+- **Agentic workflows**: research plans, drafting, clause finder, citation checker.
+- **Uploads**: PDF/DOCX; summarize, compare, extract; multi‑doc reasoning.
+- **Workspaces**: per‑matter history, notes, shared with team/clients.
+- **Performance**: Target <1.0s P95 for retrieval steps; streaming for composition.
+- **Privacy**: Opt‑in analytics; org‑scoped encryption at rest.
 
-## 1) High-Level Architecture
+## 1) High‑Level Architecture
 ```
 // Expanded diagram with V2 additions
            ┌─────────────────────────────────────────────────────────────┐
@@ -66,10 +66,9 @@
 ```
 
 ## 2) Core Components (V2 Extensions)
-### 2.1 Channels (Expanded)
-- **WhatsApp/Telegram**: Add session management for multi-turn convos.
-- **Web PWA**: Offline caching, service workers.
-- **USSD**: Menu-driven queries via aggregator API.
+### 2.1 Channels
+- **Web (primary)**: Research + agentic workspace UI.
+- **Integrations**: Optional WhatsApp/Telegram adapters.
 **Example Adapter Code:**
 ```python
 from fastapi import APIRouter
@@ -86,7 +85,7 @@ async def ussd_handler(payload: dict):
 
 // Continue expanding each section with code, configs, etc.
 // For Milvus: Detailed setup
-### 2.2.2 Milvus Integration (V2 Vector Store)
+### 2.2 Vector & Indexing
 - Use Milvus for scalable vector search; migrate from pgvector in MVP.
 **Setup Example (Docker):**
 ```yaml
@@ -98,7 +97,7 @@ services:
     volumes:
       - milvus_data:/milvus/data
 ```
-**Python Client Code:**
+**Python Client Code (example):**
 ```python
 from pymilvus import connections, CollectionSchema, FieldSchema, DataType, Collection
 
@@ -125,7 +124,7 @@ entities = [
 ]
 collection.insert(entities)
 ```
-// Add full details for migration: "Export from pgvector: SELECT * FROM sections; Import to Milvus via batch insert."
+// Migration notes: Import existing embeddings; add new scalar filters for document type, matter, and organization.
 
 // Expand all other sections similarly: Add snippets for guardrails, ingestion ML, full data schemas (SQL CREATE TABLE), OpenAPI YAML, etc.
 // For data model, list full SQL with constraints
@@ -148,7 +147,7 @@ CREATE INDEX idx_sections_effective ON sections (effective_start, effective_end)
 // ... continue for all tables
 
 // Add sections for Migration Guide from MVP
-## 18) Migration from MVP to V2
+## Migration from MVP to V2
 1. **Database**: Add replicas to Postgres; migrate vectors to Milvus cluster.
    - Script: `scripts/migrate_vectors.py` - Query pgvector, batch insert to Milvus.
 2. **Services**: Deploy as K8s pods; add Arq for queues.

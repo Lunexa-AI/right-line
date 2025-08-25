@@ -1,7 +1,7 @@
 # Gweta: Remaining Tasks to MVP
 
 > **🎯 Final sprint to MVP completion**  
-> New positioning: Gweta Web is an enterprise research workbench (less‑ink, evidence‑first). Gweta WhatsApp is a free chatbot for citizens (“smart lawyer friend”). We have end‑to‑end RAG; finish UI polish, deployment, and channel separation.
+> Positioning: Gweta Web is an enterprise research workbench (less‑ink, evidence‑first). WhatsApp is out‑of‑scope for MVP; planned later. Focus now: research quality, UI polish, deployment.
 
 ## 📊 Current State Analysis (What's ✅ Done)
 
@@ -31,27 +31,14 @@
 
 ## 🚀 **Remaining Tasks to MVP (Final Sprint)**
 
-### **Priority 1: WhatsApp Channel (Citizens) (4 hours)**
+### **Priority 1: Research Quality & UI (6 hours)**
 
-#### Task 1.1: Update WhatsApp to use RAG system
-- **Current State**: WhatsApp integration exists but uses hardcoded responses
-- **Required**: Update `api/whatsapp.py` to use RAG system instead of `get_hardcoded_response`
-- **Files to modify**: 
-  - `api/whatsapp.py` (line 343: replace `get_hardcoded_response` with RAG calls)
-  - Test WhatsApp formatting with new response structure
-- **Acceptance**: WhatsApp messages use RAG responses with proper formatting
-- **Effort**: 2 hours
-
-#### Task 1.2: WhatsApp Business API setup & testing
-- **Required**: Configure WhatsApp Business API credentials for testing
-- **Environment variables needed**:
-  ```bash
-  RIGHTLINE_WHATSAPP_VERIFY_TOKEN=your_verify_token
-  RIGHTLINE_WHATSAPP_ACCESS_TOKEN=your_access_token  
-  RIGHTLINE_WHATSAPP_PHONE_NUMBER_ID=your_phone_id
-  ```
-- **Acceptance**: Can send/receive messages via WhatsApp webhook
-- **Effort**: 2 hours
+#### Task 1.1: Retrieval tuning
+- Tune `top_k`, overlap, and filters; evaluate with a small golden set.
+#### Task 1.2: Answer composition prompt polish
+- Improve templates for TL;DR and bullets; ensure consistent tone.
+#### Task 1.3: UI finishing
+- Finalize welcome search, icons, responsive widths, feedback/translate.
 
 ### **Priority 2: Vercel Deployment (3 hours)**
 
@@ -102,15 +89,8 @@
 - **Acceptance**: All core functionality verified in production
 - **Effort**: 1 hour
 
-### **Priority 3: Enterprise Web UI (2 hours)**
-#### Task 3.1: Apply less‑ink workspace (no suggestions)
-- Remove suggestion chips from UI; keep omnibox + evidence rail only (per MVP_UI_IMPROVEMENTS.md)
-- Minimal trust banner; feedback and translate controls only
-- Acceptance: clean layout, no extraneous UI, passes accessibility contrast
-
-#### Task 3.2: Basic Document Q&A
-- Add upload affordance; show ingest skeleton; allow follow‑up questions over the file
-- Acceptance: can ask one question about uploaded file; answer cites doc + statutes
+### **Priority 3: Docs & Roadmap (2 hours)**
+- Update README, MVP and V2 architecture, and task list (this PR).
 
 ### **Priority 4: Quality & RAG Polish (2 hours)**
 
@@ -158,8 +138,8 @@
 
 | Priority | Task | Effort | Status |
 |----------|------|---------|---------|
-| 1.1 | Update WhatsApp to use RAG | 2h | 🔴 |
-| 1.2 | WhatsApp Business API setup | 2h | 🔴 |
+| 1.1 | Retrieval tuning | 2h | 🔴 |
+| 1.2 | Prompt polish | 2h | 🔴 |
 | 2.1 | Vercel environment variables | 1h | 🔴 |
 | 2.2 | Deploy to Vercel | 1h | 🔴 |
 | 2.3 | Verify production deployment | 1h | 🔴 |
