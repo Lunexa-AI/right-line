@@ -687,7 +687,7 @@
 
     <!-- Main Chat Container -->
     <main id="main-content" class="flex-1 overflow-hidden smooth-scroll" role="main">
-        <div class="max-w-4xl mx-auto px-4">
+        <div class="max-w-6xl mx-auto px-4">
         <div id="chatContainer" class="chat-container">
             <!-- Trust Banner (always visible) -->
             <div class="bg-yellow-100 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded-r-lg mb-4">
@@ -700,13 +700,20 @@
                     </p>
                 </div>
             </div>
-            <!-- Welcome Message -->
-            <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable">
+            <!-- Welcome Message with centered search -->
+            <div id="welcomeMessage" class="max-w-2xl mx-auto space-y-comfortable" style="margin-top: 12vh;">
                 <!-- Welcome Card -->
                 <div class="card card-enter hover-elevate">
                     <h2 class="text-2xl font-bold mb-3" style="color: var(--text-primary);">Welcome to Gweta</h2>
                     <p class="mb-6" style="color: var(--text-secondary);">Get instant answers to your Zimbabwe legal questions. Ask about labor laws, contracts, rights, and more.</p>
                 </div>
+                <!-- Center search form (shares logic with bottom composer) -->
+                <form id="welcomeQueryForm" class="flex gap-2 card" style="background: var(--bg-primary);">
+                    <div class="flex-1 relative">
+                        <textarea id="welcomeQueryInput" class="auto-expand w-full px-4 py-3 pr-16 rounded-lg text-sm touch-target" placeholder="Search or ask about Zimbabwean law..." rows="1" maxlength="1000" aria-label="Legal question input (welcome)"></textarea>
+                    </div>
+                    <button type="submit" class="touch-target px-4 py-2 text-white rounded-lg font-medium text-sm" style="background: var(--primary);">Search</button>
+                </form>
             </div>
 
             <!-- Two-column layout: messages + evidence rail -->
@@ -717,7 +724,7 @@
                         <!-- Messages will be inserted here -->
                     </div>
                 </div>
-                <aside id="evidenceRail" class="hidden lg:block w-72">
+                <aside id="evidenceRail" class="hidden lg:block w-80">
                     <div class="sticky top-20">
                         <div class="p-3 rounded-lg" style="background: var(--bg-primary); border: 1px solid var(--border-color);">
                             <p class="text-xs font-medium mb-2" style="color: var(--text-secondary);">Sources</p>
@@ -730,14 +737,14 @@
         </div>
     </main>
 
-    <!-- Floating Input Bar -->
-    <div class="floating-input thumb-zone">
-        <div class="floating-input-container safe-left safe-right">
+    <!-- Floating Input Bar (hidden until first message) -->
+    <div class="floating-input thumb-zone" id="composerBar">
+        <div class="floating-input-container safe-left safe-right" style="max-width: 64rem;">
             <form id="queryForm" class="flex gap-2">
                 <div class="flex-1 relative">
                     <textarea
                         id="queryInput"
-                        class="auto-expand w-full px-4 py-2.5 pr-16 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm touch-target"
+                        class="auto-expand w-full px-4 py-3 pr-16 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm touch-target"
                         placeholder="Search or ask about Zimbabwean law..."
                         rows="1"
                         maxlength="1000"
@@ -793,13 +800,15 @@
         const welcomeMessage = document.getElementById('welcomeMessage');
         const queryForm = document.getElementById('queryForm');
         const queryInput = document.getElementById('queryInput');
+        const welcomeQueryForm = document.getElementById('welcomeQueryForm');
+        const welcomeQueryInput = document.getElementById('welcomeQueryInput');
         const charCount = document.getElementById('charCount');
         const sendBtn = document.getElementById('sendBtn');
         const sendText = document.getElementById('sendText');
         const sendIcon = document.getElementById('sendIcon');
         const sendLoading = document.getElementById('sendLoading');
-        const clearBtn = document.getElementById('clearBtn');
-        const suggestionBtns = document.querySelectorAll('.suggestion-btn');
+        const clearBtn = null; // removed in minimal UI
+        const suggestionBtns = []; // no suggestion buttons
         const themeToggle = document.getElementById('themeToggle');
         const sunIcon = document.getElementById('sunIcon');
         const moonIcon = document.getElementById('moonIcon');
@@ -823,6 +832,9 @@
         ];
 
         // Initialize theme
+        // Hide bottom composer until first message, keep welcome center search
+        const composerBar = document.getElementById('composerBar');
+        if (composerBar) composerBar.style.display = 'none';
         function initTheme() {
             const savedTheme = localStorage.getItem('theme');
             const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -890,6 +902,16 @@
             charCount.classList.toggle('text-red-500', count > 950);
         });
 
+        if (welcomeQueryInput) {
+            welcomeQueryInput.addEventListener('input', (e) => autoExpand(e.target));
+            welcomeQueryInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    welcomeQueryForm.dispatchEvent(new Event('submit'));
+                }
+            });
+        }
+
         // Handle Enter vs Shift+Enter
         queryInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -898,16 +920,7 @@
             }
         });
 
-        // Clear conversation
-        clearBtn.addEventListener('click', () => {
-            chatHistory = [];
-            messagesContainer.innerHTML = '';
-            welcomeMessage.style.display = 'block';
-            suggestionsBar.classList.add('hidden');
-            queryInput.value = '';
-            autoExpand(queryInput);
-            charCount.textContent = '0/1000';
-        });
+        // Clear button removed in minimal UI
 
         // Suggestion button clicks
         // Removed suggestion buttons in less‑ink UI
@@ -1021,7 +1034,7 @@
             }, type === 'error' ? 3000 : 2000);
         }
 
-        // Form submission
+        // Form submission (shared)
         queryForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -1029,9 +1042,10 @@
             if (!question) return;
             lastUserQuestion = question;
 
-            // Hide welcome message on first message
+            // Hide welcome search and show composer on first message
             if (chatHistory.length === 0) {
                 welcomeMessage.style.display = 'none';
+                if (composerBar) composerBar.style.display = 'block';
             }
 
             // Add user message to chat
@@ -1132,6 +1146,22 @@
                 queryInput.focus();
             }
         });
+
+        // Welcome form submits into main flow
+        if (welcomeQueryForm) {
+            welcomeQueryForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const q = welcomeQueryInput.value.trim();
+                if (!q) return;
+                // Push into bottom composer then reuse existing submit
+                queryInput.value = q;
+                autoExpand(queryInput);
+                charCount.textContent = `${q.length}/1000`;
+                welcomeQueryInput.value = '';
+                // Trigger primary submit
+                queryForm.dispatchEvent(new Event('submit'));
+            });
+        }
 
         // Add message to chat
         function addMessage(type, content, isError = false) {
