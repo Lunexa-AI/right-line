@@ -138,12 +138,15 @@ def upload_to_milvus(collection: Collection, data: List[Dict[str, Any]], batch_s
         fixed_batch = [fix_chunk_for_milvus(item) for item in batch]
         
         # Prepare batch data in the correct field order according to the schema
-        # Field order: id (auto), doc_id, doc_type, language, court, date_context, chunk_text, embedding, metadata
+        # Field order (excluding auto id): doc_id, doc_type, nature, language, court, date_context, year, chapter, chunk_text, embedding, metadata
         doc_ids = []
         doc_types = []
+        natures = []
         languages = []
         courts = []
         date_contexts = []
+        years = []
+        chapters = []
         chunk_texts = []
         embeddings = []
         metadatas = []
@@ -151,9 +154,12 @@ def upload_to_milvus(collection: Collection, data: List[Dict[str, Any]], batch_s
         for item in fixed_batch:
             doc_ids.append(item.get("doc_id", ""))
             doc_types.append(item.get("doc_type", "unknown"))
+            natures.append(item.get("nature") or item.get("metadata", {}).get("nature") or "Act")
             languages.append(item.get("language", "eng"))
             courts.append(item.get("court", "unknown"))
             date_contexts.append(item.get("date_context", "unknown"))
+            years.append(int(item.get("year", 0)) if str(item.get("year", "")).isdigit() else 0)
+            chapters.append(item.get("chapter") or item.get("metadata", {}).get("chapter") or "")
             chunk_texts.append(item.get("chunk_text", ""))
             embeddings.append(item.get("embedding", []))
             metadatas.append(item.get("metadata", {}))
@@ -163,9 +169,12 @@ def upload_to_milvus(collection: Collection, data: List[Dict[str, Any]], batch_s
             collection.insert([
                 doc_ids,
                 doc_types,
+                natures,
                 languages,
                 courts,
                 date_contexts,
+                years,
+                chapters,
                 chunk_texts,
                 embeddings,
                 metadatas

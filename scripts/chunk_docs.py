@@ -86,6 +86,9 @@ class Chunk(BaseModel):
     entities: Dict[str, List[str]] = Field(default_factory=dict, description="Extracted entities")
     source_url: Optional[str] = Field(None, description="Source URL")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    nature: Optional[str] = Field(default=None, description="Act | Ordinance | Statutory Instrument", max_length=32)
+    year: Optional[int] = Field(default=None, description="Publication/effective year")
+    chapter: Optional[str] = Field(default=None, description="Chapter number like 7:01", max_length=16)
     
     @field_validator("chunk_text")
     def validate_chunk_text(cls, v):
@@ -430,6 +433,10 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     date_context = doc.get("version_effective_date")
     source_url = doc.get("source_url")
     title = doc.get("title", "")
+    extra = doc.get("extra", {})
+    nature = extra.get("nature")
+    year = extra.get("year")
+    chapter = extra.get("chapter")
     
     # Process content tree
     content_tree = doc.get("content_tree", {})
@@ -516,10 +523,16 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                         date_context=date_context,
                         entities=entities,
                         source_url=source_url,
+                        nature=nature,
+                        year=year,
+                        chapter=chapter,
                         metadata={
                             "title": title,
                             "sections": merged_sections,
                             "chunk_index": 0,
+                            "nature": nature,
+                            "year": year,
+                            "chapter": chapter,
                         },
                     )
                     
@@ -567,10 +580,16 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                             date_context=date_context,
                             entities=entities,
                             source_url=source_url,
+                            nature=nature,
+                            year=year,
+                            chapter=chapter,
                             metadata={
                                 "title": title,
                                 "section": section_title,
                                 "chunk_index": i,
+                                "nature": nature,
+                                "year": year,
+                                "chapter": chapter,
                             },
                         )
                         
