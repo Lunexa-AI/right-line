@@ -1,4 +1,4 @@
-### RightLine Ingestion, Normalization, Chunking, and Milvus Insertion Plan
+### RightLine Ingestion, Normalization, Chunking, Retrieval, and Milvus Plan (Legislation‑first)
 
 This document describes a robust, scalable plan to parse ZimLII legislation and judgments HTML, normalize and enrich content, chunk with state-of-the-art strategies, embed with OpenAI, and insert into Milvus for fast retrieval. The plan is designed to support future sources (more Acts/Statutory Instruments, Constitution, more judgments and courts) with stable IDs and idempotent processing.
 
@@ -8,16 +8,16 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 1) Current State and Goals
 
-- Current raw data location: `data/raw/legislation/*.html`, `data/raw/judgments/*.html` (ZimLII pages)
-- API and retrieval stack: FastAPI (serverless-ready), OpenAI `text-embedding-3-small` (1536-dim), Milvus collection (HNSW index), hybrid retrieval planned
-- Missing pieces: systematic parsing, normalization, stable doc/chunk IDs, production-grade chunking, embeddings & Milvus ingestion
+- Current raw data: 405 current‑legislation HTMLs (375 Acts, 14 Ordinances, 16 SIs) in `data/raw/legislation/*.html`.
+- API and retrieval: FastAPI (serverless‑ready), OpenAI `text-embedding-3-small` (1536‑dim), Milvus collection (HNSW index). Hybrid retrieval to be tightened for legislation‑only MVP.
+- Gaps: finalize enriched schema (nature/year/chapter), hierarchy‑aware chunking, embedding regeneration, retrieval tuning.
 
 Goals:
-- Parse legislation and judgments into a normalized internal schema
-- Extract essential metadata (dates, sections, parties, judges, court, citations, jurisdiction, etc.)
-- Create stable, repeatable chunking with sliding window + overlap
-- Generate embeddings (batch) and insert into Milvus with metadata for scalar filtering
-- Idempotent, resumable ingestion that supports re-runs and new data growth
+- Parse legislation (Acts, Ordinances, SIs) into a normalized schema.
+- Extract: nature, year, chapter, FRBR/AKN URIs, effective date, section IDs/paths.
+- Stable, repeatable chunking with adaptive overlap and short‑section merging.
+- Embeddings + upsert to Milvus with scalar filters for nature/year/chapter.
+- Idempotent, resumable ingestion.
 
 ---
 
@@ -33,7 +33,7 @@ Key takeaway: We can rely on consistent landmarks to locate the main content are
 
 ---
 
-## 3) Normalized Internal Schemas
+## 3) Normalized Internal Schemas (updated)
 
 ### 3.1 Document Schema (stored as metadata; referenced by chunks)
 - `doc_id` (string): Stable ID. Recommended: hash of `source_url` + `frbr/expression` or canonical citation (e.g., SHA256-16).
@@ -49,7 +49,7 @@ Key takeaway: We can rely on consistent landmarks to locate the main content are
 - `extra` (json): Flexible bucket for doc-type–specific fields below
 
 Doc-type specific (stored in `extra` json):
-- Legislation: `chapter`, `act_number`, `part_map`, `section_ids`, `expression_uri`, `effective_start`, `effective_end`
+- Legislation: `nature` (Act|Ordinance|Statutory Instrument), `year`, `chapter`, `act_number`, `part_map`, `section_ids`, `work_uri`, `expression_uri`, `akn_uri`, `effective_start`, `effective_end`
 - Judgment: `court`, `case_number`, `neutral_citation`, `date_decided`, `judges`[], `parties`{applicant/respondent or appellant/respondent}, `headnote`, `references`[]
 
 ### 3.2 Chunk Schema (Milvus scalar fields + JSON in `metadata`)
@@ -60,7 +60,8 @@ Doc-type specific (stored in `extra` json):
 - `start_char` / `end_char` (int): Character offsets into doc canonical text
 - `num_tokens` (int): Token estimate used
 - `language` (string): e.g., `eng`
-- `date_context` (date, nullable): For legislation versions or judgment date
+- `date_context` (date, nullable): expression effective date
+- Promoted scalars for filtering: `doc_type`, `nature`, `year`, `chapter`
 - `entities` (json): Optional extracted entities (people, courts, places, statute refs)
 - `source_url` (string): For traceability
 - `embedding` (float_vector[1536]): OpenAI embedding vector
@@ -78,7 +79,7 @@ Note: In Milvus, we’ll store `doc_id` (varchar), `chunk_text` (varchar ~5000),
 
 ### 4.2 Legislation Parsing
 - Extract: Title, Chapter, Act number, FRBR/AKN URIs, language, expression date (effective date)
-- Identify hierarchy by headings and anchors: Parts/Chapters/Sections
+- Identify hierarchy by headings and anchors: Parts/Chapters/Sections (prefer AKN `section` nodes; fallback to heading heuristics)
 - For each section:
   - Capture heading (e.g., “Section 12A — Dismissal”) and anchor id
   - Capture section text paragraphs preserving intra-section order
@@ -106,26 +107,25 @@ Note: In Milvus, we’ll store `doc_id` (varchar), `chunk_text` (varchar ~5000),
 
 ---
 
-## 5) Chunking Strategy (State-of-the-art, Practical)
+## 5) Chunking Strategy (state‑of‑the‑art, tuned for legislation)
 
 We will chunk to balance retrieval quality and latency. Strategy depends on document type but shares common principles.
 
-### 5.1 Common Principles
-- Target ~512 tokens per chunk (approx. 750–1000 chars), hard cap ~5000 chars
-- Sliding window with overlap of 15–20% tokens between consecutive chunks
-- Break on natural boundaries first (section or paragraph); only spill across boundaries if chunk is too short
-- Preserve section path in metadata; include short inline header in `chunk_text` only if helpful (few words)
-- Compute and store `num_tokens` estimates for diagnostics
+### 5.1 Common principles
+- Target 400–600 tokens per chunk; hard cap ~5000 chars.
+- Adaptive overlap 10–20% based on chunk length.
+- Respect boundaries: section is atomic; merge only adjacent short sections within same Part/Regulation.
+- Preserve `section_path` and `section_id`; optionally prefix first chunk with section heading.
+- Store `num_tokens`; deterministic `chunk_id`.
 
-### 5.2 Legislation
-- Primary unit: Section
-- If section text > target size:
-  - Split into paragraphs and recompose into ~512 token bins with 20% overlap
-- If section text < target/2:
-  - Merge with adjacent section content (in same Part) but preserve `section_path` in metadata
-- Include section number and heading in metadata; optionally prefix the first line of the chunk with “Section 12A:” for clarity (not required)
+### 5.2 Legislation (Acts, Ordinances, SIs)
+- Primary unit: Section; for SIs, treat each numbered clause/regulation as a section.
+- Long sections: paragraph‑aware sliding window 450–600 tokens, 15–20% overlap.
+- Short sections: greedy forward merge to ≥250 tokens; record merged `section_ids`.
+- Boilerplate (short title/citation): attach to following section.
+- Include `nature`, `year`, `chapter`, `akn_uri` in metadata.
 
-### 5.3 Judgments
+### 5.3 Judgments (post‑MVP)
 - Primary unit: Paragraphs
 - Headnote becomes its own chunk(s)
 - Compose sequential paragraphs into ~512 token chunks with 15–20% overlap; include paragraph indices (e.g., `para 14–18`) in `section_path`
@@ -133,17 +133,17 @@ We will chunk to balance retrieval quality and latency. Strategy depends on docu
 
 ---
 
-## 6) Embeddings (OpenAI) and Batching
+## 6) Embeddings (OpenAI) and batching
 
 - Model: `text-embedding-3-small` (1536-dim)
 - Clean text input: ensure no HTML, normalized whitespace
-- Batch size: tune to 64–128 depending on rate limits; handle retries/backoff
+- Batch size: 64–128; exponential backoff; write sample preview JSON.
 - Persist chunk+embedding in memory or temp before upsert to Milvus to ensure idempotency and partial-failure recovery
 - Cost observability: log tokens per batch; estimate cost (~$0.02 per 1M tokens for this model per the current pricing)
 
 ---
 
-## 7) Milvus Collections and Indexing
+## 7) Milvus Collections and Indexing (updated)
 
 Primary collection: `legal_chunks`
 - Fields (Milvus):
@@ -152,7 +152,7 @@ Primary collection: `legal_chunks`
   - `chunk_text` (varchar, max_length ~5000)
   - `embedding` (float_vector, dim=1536)
   - `metadata` (json)
-- Recommended scalar fields (optional, for filters): `doc_type` (varchar), `language` (varchar), `date_context` (varchar/date), `court` (varchar)
+- Promoted scalar fields for filters: `doc_type`, `nature`, `language`, `date_context`, `year`, `chapter`
 - Index: HNSW for `embedding` with COSINE metric (e.g., `M=16`, `efConstruction=256`); load collection for search
 
 Why this design:
@@ -164,10 +164,10 @@ Milvus docs useful sections:
 
 ---
 
-## 8) Ingestion Pipeline (End-to-End)
+## 8) Ingestion Pipeline (End‑to‑End)
 
 ### 8.1 Stages
-1) Fetch (already present): crawl ZimLII HTML into `data/raw/...`
+1) Fetch (done): 405 current‑legislation HTMLs under `data/raw/legislation`.
 2) Parse:
    - Detect doc_type via path/doctype hints
    - Extract doc-level metadata and clean main content
@@ -228,7 +228,14 @@ Milvus docs useful sections:
 
 ---
 
-## 12) Milvus and Retrieval Notes
+## 12) Retrieval policy and ranking (updated)
+
+For legislation‑only MVP, retrieval should be extractive and citation‑faithful:
+- Vector search: COSINE, HNSW, query `ef≈64`; `top_k` 6–8.
+- Filters: restrict by `doc_type` in {act, ordinance, si}; optionally filter by `year`/`chapter`.
+- Keyword boosts: exact section numbers and statute titles; combine via simple additive boost or RRF.
+- Low‑confidence guard: if top score < 0.62 or diversity is low, ask a clarifying question before answering.
+- Always include Act/SI + section numbers; prefer AKN URIs.
 
 - Use COSINE metric with HNSW index for semantic search
 - Load collection before search; set `ef` at query time for quality/latency tradeoff

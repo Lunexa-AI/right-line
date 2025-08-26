@@ -1,4 +1,4 @@
-# Ingestion & Chunking Task List (Actionable)
+# Ingestion & Chunking Task List (Legislation‑first, revamped)
 
 This task list operationalizes `docs/project/INGESTION_AND_CHUNKING.md` into concrete, bite-sized tasks you can execute end-to-end to move from raw HTML → normalized docs → chunks → embeddings → Milvus collection ready for search.
 
@@ -55,16 +55,15 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ---
 
-## 2) Create Milvus Collection (One-time)
+## 2) Milvus Collection (updated schema)
 
-- [ ] Initialize Milvus `legal_chunks` collection
+- [ ] Initialize/confirm Milvus `legal_chunks` collection (updated fields)
   - ```bash
     python scripts/init-milvus.py
     ```
   - Expected actions:
-    - Connect to Milvus, create collection `legal_chunks` if missing
-    - Create HNSW index on `embedding` (COSINE)
-    - Load collection
+    - Create/confirm scalar fields: `doc_type`, `nature`, `language`, `court`, `date_context`, `year`, `chapter`
+    - Create HNSW index on `embedding` (COSINE); load collection
   - Acceptance:
     - Script prints ✓ connected, ✓ collection created or exists, ✓ index created, ✓ loaded
 
@@ -72,7 +71,7 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 3) Parsing & Normalization (Documents → docs.jsonl)
 
-- [x] Define normalized document schema (as per INGESTION_AND_CHUNKING.md)
+- [x] Define normalized document schema (updated: add `nature`, `year`, `chapter`, `work_uri`, `akn_uri`)
   - Fields to capture: `doc_id`, `doc_type`, `title`, `source_url`, `language`, `jurisdiction`, `version_effective_date` (acts), `canonical_citation` (judgments), and `extra` JSON (court, judges, parties, etc.)
   - Acceptance: Schema written in code comments or a small README in `scripts/`
 
@@ -81,8 +80,8 @@ References: [Milvus Docs](https://milvus.io/docs)
   - Normalize whitespace, fix Unicode
   - Acceptance: Document the CSS/landmark selectors to target per source type
 
-- [x] Plan section/paragraph extraction per type
-  - Legislation: locate Part/Chapter/Section anchors and headings → capture per section text
+- [x] Plan section extraction for legislation
+  - Prefer AKN `section` nodes; fallback to robust heading heuristics
   - Judgments: extract headnote (if present), then body paragraphs; capture court metadata
   - Acceptance: Document the extraction heuristics (e.g., heading tags/classes, paragraph containers)
 
@@ -103,9 +102,9 @@ References: [Milvus Docs](https://milvus.io/docs)
   - `chunk_id`, `doc_id`, `chunk_text`, `section_path`, `start_char`, `end_char`, `num_tokens`, `language`, `date_context`, `entities`, `source_url`, and `metadata` (json)
   - Acceptance: Clear field list documented and aligned with Milvus scalar/json
 
-- [x] Define chunking strategy per type
-  - Common: target ~512 tokens; max ~5000 chars; sliding window overlap 15–20%
-  - Legislation: primary unit = section; split or merge as needed
+- [x] Define chunking strategy for legislation (adaptive)
+  - Common: target 400–600 tokens; max ~5000 chars; adaptive overlap 10–20%
+  - Legislation: primary unit = section; paragraph‑aware splits; greedy merge for short sections; record merged `section_ids`
   - Judgments: primary unit = paragraphs; headnote as separate chunks; windowed merge
   - Acceptance: Explicit rules table written (e.g., long/short sections handling)
 
@@ -143,7 +142,7 @@ References: [Milvus Docs](https://milvus.io/docs)
   - Estimate token usage & cost; inspect output 
   - Acceptance: Sample output saved (first 3 records) to `data/processed/chunks_with_embeddings.sample.json`
 
-- [x] Full-run embeddings
+- [x] Full‑run embeddings
   - Read `data/processed/chunks.jsonl` in batches; write `data/processed/chunks_with_embeddings.jsonl`
   - Handle retries/backoff; log failures; continue
   - Acceptance: File created; counts match input; error rate < 1%
@@ -157,8 +156,7 @@ References: [Milvus Docs](https://milvus.io/docs)
   - Acceptance: Collection present & loaded
 
 - [ ] Upsert chunks in batches
-  - Insert fields: `doc_id`, `chunk_text`, `embedding`, `metadata`
-  - Promote scalar fields you want to filter on (e.g., `doc_type`, `language`, `date_context`, `court`)
+  - Insert fields: `doc_id`, `doc_type`, `nature`, `language`, `court`, `date_context`, `year`, `chapter`, `chunk_text`, `embedding`, `metadata`
   - Acceptance: Insert completes; row count increases as expected
 
 - [ ] Post-insert verification
@@ -195,15 +193,13 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ---
 
-## 10) Hybrid Retrieval Readiness
-
-- [ ] Ensure metadata covers filters
-  - `doc_type`, `language`, `court`, `date_context` available in metadata/scalars
-  - Acceptance: Milvus can filter by doc type and recency
-
-- [ ] Score fusion (later)
-  - Plan to combine keyword scores with vector scores
-  - Acceptance: Fusion design captured in `INGESTION_AND_CHUNKING.md`
+## 10) Retrieval Readiness & Ranking
+ - [ ] Ensure metadata covers filters
+   - `doc_type in {act, ordinance, si}`, `nature`, `year`, `chapter` present as scalars
+   - Acceptance: queries can filter by nature/year/chapter
+ - [ ] Keyword boosts and score fusion
+   - Boost exact section numbers (e.g., 12A) and statute titles; combine with vector scores (additive or RRF)
+   - Acceptance: low‑risk boosts implemented behind a flag
 
 ---
 
@@ -221,12 +217,13 @@ References: [Milvus Docs](https://milvus.io/docs)
 
 ## 12) Acceptance Criteria Summary (End-to-End)
 
+- [ ] `data/processed/leg_catalog.jsonl` has counts: Acts=375, Ordinances=14, SIs=16 (405 total)
 - [ ] `data/processed/docs.jsonl` created with normalized documents
 - [ ] `data/processed/chunks.jsonl` created with stable IDs and chunking metadata
 - [ ] `data/processed/chunks_with_embeddings.jsonl` created with vectors
 - [ ] Milvus collection `legal_chunks` exists, indexed (HNSW, COSINE), loaded
-- [ ] Test queries return relevant results from Milvus in < 500ms (vector-only)
-- [ ] Idempotent re-run does not create duplicates
+- [ ] Test queries return relevant results in < 500ms vector‑only; end‑to‑end P95 < 2s
+- [ ] Idempotent re‑run does not create duplicates
 
 ---
 
@@ -243,17 +240,17 @@ export MILVUS_COLLECTION_NAME=legal_chunks
 # 1) Create collection
 python scripts/init-milvus.py
 
-# 2) (Planned) Parse docs → docs.jsonl
-# python scripts/parse_docs.py
+# 2) Parse docs → docs.jsonl
+python scripts/parse_docs.py --input-dir data/raw --output data/processed/docs.jsonl
 
-# 3) (Planned) Chunk documents → chunks.jsonl
-# python scripts/chunk_docs.py
+# 3) Chunk documents → chunks.jsonl
+python scripts/chunk_docs.py --input_file data/processed/docs.jsonl --output_file data/processed/chunks.jsonl --fix-for-milvus
 
 # 4) Embeddings → chunks_with_embeddings.jsonl
 python scripts/generate_embeddings.py --input data/processed/chunks.jsonl
 
-# 5) Upsert to Milvus (extend embeddings script or new upsert script)
-# python scripts/upsert_milvus.py --input data/processed/chunks_with_embeddings.jsonl
+# 5) Upsert to Milvus
+python scripts/milvus_upsert.py --input_file data/processed/chunks_with_embeddings.jsonl --batch_size 100
 ```
 
 This checklist ensures we don’t miss any step from the plan and that each unit is small, testable, and has clear acceptance. Once complete, the collection in Milvus will be ready for retrieval and integration with the API.
