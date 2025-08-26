@@ -167,6 +167,44 @@ def clean_html_content(content: Tag) -> Tag:
     return content
 
 
+def infer_nature_from_frbr(work_uri: Optional[str], expression_uri: Optional[str]) -> str:
+    """Infer document nature from FRBR URIs.
+    - /act/si/ -> Statutory Instrument
+    - /act/ord/ -> Ordinance
+    - otherwise -> Act
+    """
+    uri = expression_uri or work_uri or ""
+    if "/act/si/" in uri:
+        return "Statutory Instrument"
+    if "/act/ord/" in uri:
+        return "Ordinance"
+    return "Act"
+
+
+def parse_effective_date(expression_uri: Optional[str], fallback_pub: Optional[str]) -> Optional[str]:
+    if expression_uri:
+        date_match = re.search(r'@(\d{4}-\d{2}-\d{2})', expression_uri)
+        if date_match:
+            return date_match.group(1)
+    return fallback_pub
+
+
+def parse_year_from_uris(number: Optional[str], expression_uri: Optional[str]) -> Optional[int]:
+    if expression_uri:
+        m = re.search(r'/(\d{4})/', expression_uri)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                pass
+    if number and number.isdigit() and len(number) == 4:
+        try:
+            return int(number)
+        except Exception:
+            return None
+    return None
+
+
 def extract_text_with_structure(element: Tag) -> List[Dict[str, Any]]:
     """Extract text while preserving some structure (headings, paragraphs)."""
     result = []
@@ -557,33 +595,32 @@ def parse_legislation(html_content: str, source_url: str) -> Dict[str, Any]:
         extra_data["references"] = references
     
     # Get FRBR data
+    work_uri = metadata.get("work_frbr_uri", "")
     expression_uri = metadata.get("expression_frbr_uri", "")
     
-    # Extract effective date from expression URI
-    effective_date = None
-    date_match = re.search(r'@(\d{4}-\d{2}-\d{2})', expression_uri)
-    if date_match:
-        effective_date = date_match.group(1)
-    elif "publication_date" in metadata:
-        effective_date = metadata["publication_date"]
+    # Effective date and year
+    effective_date = parse_effective_date(expression_uri, metadata.get("publication_date"))
+    year = parse_year_from_uris(metadata.get("frbr_uri_number"), expression_uri)
     
-    # Extract chapter number if available
+    # Infer nature and chapter
+    nature = infer_nature_from_frbr(work_uri, expression_uri)
     chapter = None
+    # Scan title and page text for a Chapter pattern if not already found in structured sections
+    page_text = soup.get_text(" ")
     chapter_pattern = r'Chapter\s+(\d+(?::\d+)?)'
-    for section in content_tree.get("parts", []):
-        for s in section.get("sections", []):
-            chapter_match = re.search(chapter_pattern, s.get("heading", ""))
-            if chapter_match:
-                chapter = chapter_match.group(1)
-                break
-        if chapter:
-            break
+    m_ch = re.search(chapter_pattern, page_text, flags=re.I)
+    if m_ch:
+        chapter = m_ch.group(1)
     
     # Build extra object
     extra = {
         "chapter": chapter,
         "act_number": metadata.get("frbr_uri_number"),
         "expression_uri": expression_uri,
+        "work_uri": work_uri,
+        "akn_uri": work_uri or expression_uri,
+        "nature": nature,
+        "year": year,
         "section_ids": extra_data.get("section_ids", []),
         "part_map": extra_data.get("part_map", {}),
     }
@@ -599,11 +636,19 @@ def parse_legislation(html_content: str, source_url: str) -> Dict[str, Any]:
     id_input = f"{source_url}{expression_uri}{metadata.get('title', '')}"
     doc_id = sha256_16(id_input)
     
+    # Decide document type for downstream filtering
+    if nature == "Statutory Instrument":
+        doc_type = "si"
+    elif nature == "Ordinance":
+        doc_type = "ordinance"
+    else:
+        doc_type = "act"
+
     # Create document object
     now = datetime.datetime.utcnow().isoformat() + "Z"
     document = {
         "doc_id": doc_id,
-        "doc_type": "act",
+        "doc_type": doc_type,
         "title": metadata.get("title", "Untitled Act"),
         "source_url": source_url,
         "language": metadata.get("frbr_uri_language", "eng"),
@@ -730,8 +775,17 @@ def parse_html_file(file_path: Path) -> Dict[str, Any]:
     with open(file_path, "r", encoding="utf-8") as f:
         html_content = f.read()
     
-    # Create source URL (mock if not available)
-    source_url = f"https://zimlii.org/content/{file_path.name}"
+    # Try to reconstruct canonical AKN URL from FRBR data in the HTML
+    try:
+        soup = BeautifulSoup(html_content, "lxml")
+        frbr = extract_json_script(soup, "track-page-properties")
+        src = frbr.get("expression_frbr_uri") or frbr.get("work_frbr_uri")
+        if src and src.startswith("/"):
+            source_url = f"https://zimlii.org{src}"
+        else:
+            source_url = src or f"https://zimlii.org/content/{file_path.name}"
+    except Exception:
+        source_url = f"https://zimlii.org/content/{file_path.name}"
     
     # Parse based on document type
     if doc_type == "act":

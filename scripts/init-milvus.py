@@ -76,6 +76,12 @@ def create_collection_schema() -> CollectionSchema:
             description="Document type: act | judgment | constitution | si | other"
         ),
         FieldSchema(
+            name="nature",
+            dtype=DataType.VARCHAR,
+            max_length=32,
+            description="Nature label aligned to ZimLII index: Act | Ordinance | Statutory Instrument"
+        ),
+        FieldSchema(
             name="language",
             dtype=DataType.VARCHAR,
             max_length=10,
@@ -92,6 +98,17 @@ def create_collection_schema() -> CollectionSchema:
             dtype=DataType.VARCHAR,
             max_length=32,
             description="Date context (ISO), e.g., version_effective_date or judgment date"
+        ),
+        FieldSchema(
+            name="year",
+            dtype=DataType.INT64,
+            description="Publication/effective year for filtering"
+        ),
+        FieldSchema(
+            name="chapter",
+            dtype=DataType.VARCHAR,
+            max_length=16,
+            description="Chapter number like 7:01 when available"
         ),
         FieldSchema(
             name="chunk_text",
@@ -178,8 +195,8 @@ def main():
 
         # Create inverted indexes for scalar filter fields (optional but recommended)
         try:
-            print("🧭 Creating INVERTED indexes for scalar fields (doc_type, language, court, date_context)...")
-            for scalar_field in ["doc_type", "language", "court", "date_context"]:
+            print("🧭 Creating INVERTED indexes for scalar fields (doc_type, nature, language, court, date_context, year, chapter)...")
+            for scalar_field in ["doc_type", "nature", "language", "court", "date_context", "year", "chapter"]:
                 collection.create_index(
                     field_name=scalar_field,
                     index_params={"index_type": "INVERTED", "params": {}}
@@ -198,7 +215,7 @@ def main():
         print(f"   Primary key: id (auto-generated)")
         print(f"   Vector field: embedding (1536 dimensions)")
         print(f"   Index: HNSW with COSINE similarity")
-        print(f"   Scalar filter fields: doc_type, language, court, date_context")
+        print(f"   Scalar filter fields: doc_type, nature, language, court, date_context, year, chapter")
         
         # Display next steps
         print("\n📝 Next steps:")
