@@ -60,12 +60,25 @@ def abs_url(href: str) -> str:
     return f"{BASE}{href}"
 
 
-def filename_from_url(url: str) -> str:
-    name = url.split("/")[-1] or "index.html"
+def unique_filename_from_href(href: str) -> str:
+    """Create a collision-resistant filename from the entire AKN path.
+    Example: /akn/zw/act/1971/6/eng@2024-12-31 -> akn_zw_act_1971_6_eng_2024-12-31.html
+    """
+    path = href
+    if path.startswith("http"):
+        # Convert full URL to path
+        try:
+            path = re.sub(r"^https?://[^/]+", "", path)
+        except Exception:
+            pass
+    if path.startswith("/"):
+        path = path[1:]
+    # Replace separators and reserved characters
+    name = path.replace("/", "_").replace("@", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     if not name.endswith(".html"):
         name += ".html"
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    return safe
+    return name
 
 
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response:
@@ -79,6 +92,22 @@ async def get(client: httpx.AsyncClient, url: str) -> httpx.Response:
             last_exc = e
             await asyncio.sleep(0.7 * attempt)
     raise RuntimeError(f"GET failed for {url}: {last_exc}")
+
+
+def slugify_title(title: str, max_len: int = 80) -> str:
+    """Convert title to a filesystem-friendly slug.
+    - lowercase, replace spaces with underscores
+    - remove characters outside [A-Za-z0-9._-]
+    - collapse multiple underscores
+    - trim length
+    """
+    s = (title or "untitled").strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^a-z0-9._-]", "_", s)
+    s = re.sub(r"_+", "_", s)
+    if len(s) > max_len:
+        s = s[:max_len].rstrip("._-")
+    return s or "untitled"
 
 
 def parse_effective_date(expression_frbr_uri: Optional[str]) -> Optional[str]:
@@ -139,12 +168,9 @@ def extract_chapter_from_row(cell_text: str) -> Optional[str]:
 
 async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path, delay: float) -> Tuple[CatalogRow, str]:
     url = abs_url(href)
-    html_path = out_dir / filename_from_url(url)
 
     # Download page HTML
     r = await get(client, url)
-    html_path.parent.mkdir(parents=True, exist_ok=True)
-    html_path.write_text(r.text)
 
     # Parse metadata
     soup = BeautifulSoup(r.text, "lxml")
@@ -168,6 +194,16 @@ async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path
     except Exception:
         chapter = None
 
+    # Build descriptive filename including title and year
+    base_part = unique_filename_from_href(href).rsplit(".", 1)[0]
+    title_slug = slugify_title(title)
+    year_str = str(year) if year else "unknown"
+    nature_slug = nature.replace(" ", "-").lower()
+    descriptive = f"akn_zw_current-legislation_{title_slug}_{year_str}_{nature_slug}_{base_part}.html"
+    html_path = out_dir / descriptive
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(r.text)
+
     await asyncio.sleep(delay)
     return (
         CatalogRow(
@@ -186,23 +222,40 @@ async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path
 
 
 async def crawl_index_page(client: httpx.AsyncClient, url: str) -> List[Tuple[str, Optional[str]]]:
-    # Return list of (href, chapter_text_if_available)
-    resp = await get(client, url)
+    # Return list of (href, chapter_text_if_available) strictly by table rows.
+    # If page is out of range (404), return [].
+    try:
+        resp = await get(client, url)
+    except Exception:
+        return []
     soup = BeautifulSoup(resp.text, "lxml")
 
-    rows: List[Tuple[str, Optional[str]]] = []
-    # Links follow /akn/zw/act/... pattern; a chapter column may be present
-    anchors = [a for a in soup.find_all("a", href=True) if a["href"].startswith("/akn/zw/act/")]
-
-    # Try to pair with a chapter text in the same row if table layout
-    for a in anchors:
+    results: List[Tuple[str, Optional[str]]] = []
+    table = soup.find("table")
+    if not table:
+        return results
+    tbody = table.find("tbody") or table
+    for tr in tbody.find_all("tr", recursive=False):
+        tds = tr.find_all("td", recursive=False)
+        if not tds:
+            # Some tables may not use td within tbody
+            tds = tr.find_all("td")
+        if not tds:
+            continue
+        title_cell = tds[0]
+        # Choose ONLY the first anchor in the title cell
+        a = title_cell.find("a", href=True)
+        if not a:
+            continue
+        href = a["href"]
+        if not href.startswith("/akn/zw/act/"):
+            continue
+        # Chapter cell is typically the second column
         chapter_text = None
-        tr = a.find_parent("tr")
-        if tr:
-            text = tr.get_text(" ")
-            chapter_text = extract_chapter_from_row(text)
-        rows.append((a["href"], chapter_text))
-    return rows
+        if len(tds) > 1:
+            chapter_text = extract_chapter_from_row(tds[1].get_text(" "))
+        results.append((href, chapter_text))
+    return results
 
 
 async def crawl_current_legislation(
@@ -221,18 +274,55 @@ async def crawl_current_legislation(
     sem = asyncio.Semaphore(concurrency)
 
     async with httpx.AsyncClient(headers=headers) as client:
-        # Build list of index pages to walk: page parameter is zero-based in UI
-        page = 1
+        # Helper to iterate pages for a given nature filter
+        async def collect_hrefs_for_nature(nature_param: Optional[str]) -> List[Tuple[str, Optional[str]]]:
+            page = 1
+            hrefs: List[Tuple[str, Optional[str]]] = []
+            while True:
+                if max_pages > 0 and page > max_pages:
+                    break
+                if nature_param:
+                    base = f"{INDEX_URL}?natures={nature_param}&sort=title"
+                    index_url = base if page == 1 else f"{base}&page={page-1}"
+                else:
+                    index_url = INDEX_URL if page == 1 else f"{INDEX_URL}?page={page-1}"
+                rows = await crawl_index_page(client, index_url)
+                if not rows:
+                    break
+                # Pre-filter hrefs by requested nature to avoid downloading SIs
+                filtered: List[Tuple[str, Optional[str]]] = []
+                for href, chap in rows:
+                    if nature_param == "act":
+                        if "/act/si/" in href or "/act/ord/" in href:
+                            continue
+                    elif nature_param == "si":
+                        if "/act/si/" not in href:
+                            continue
+                    elif nature_param == "ord":
+                        if "/act/ord/" not in href:
+                            continue
+                    else:
+                        # Default (no nature specified): include acts and ordinances only
+                        if "/act/si/" in href:
+                            continue
+                    filtered.append((href, chap))
+                hrefs.extend(filtered)
+                page += 1
+            return hrefs
+
+        # Build list of index pages to walk: run per nature if provided, else default (all)
         all_hrefs: List[Tuple[str, Optional[str]]] = []
-        while True:
-            if max_pages > 0 and page > max_pages:
-                break
-            index_url = INDEX_URL if page == 1 else f"{INDEX_URL}?page={page-1}"
-            rows = await crawl_index_page(client, index_url)
-            if not rows:
-                break
-            all_hrefs.extend(rows)
-            page += 1
+        if natures:
+            for nat in natures:
+                nat_key = nat.strip().lower()
+                if nat_key in {"act", "si", "ord", "ordinance"}:
+                    nat_param = "ord" if nat_key in {"ord", "ordinance"} else nat_key
+                else:
+                    nat_param = nat_key
+                hrefs = await collect_hrefs_for_nature(nat_param)
+                all_hrefs.extend(hrefs)
+        else:
+            all_hrefs.extend(await collect_hrefs_for_nature(None))
 
         # Deduplicate
         seen = set()
@@ -252,6 +342,7 @@ async def crawl_current_legislation(
             nonlocal processed
             async with sem:
                 try:
+                    print(f"Downloading {href} ...")
                     row, _ = await fetch_and_save_doc(client, href, out_dir, delay)
                     # If chapter was detected in index row and missing from page, prefer index hint
                     if chap_hint and not row.chapter:
@@ -259,8 +350,13 @@ async def crawl_current_legislation(
                     # Year/nature filtering if provided
                     if years and row.year and row.year not in years:
                         return
-                    if natures and row.nature.lower() not in {n.lower() for n in natures}:
-                        return
+                    if natures:
+                        # Normalize aliases (ord -> ordinance)
+                        aliases = {"ord": "ordinance", "ordinance": "ordinance", "act": "act"}
+                        allowed = {aliases.get(n.lower(), n.lower()) for n in natures}
+                        nature_val = row.nature.lower()
+                        if nature_val not in allowed:
+                            return
                     catalog_fp.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
                     processed += 1
                 except Exception as e:
