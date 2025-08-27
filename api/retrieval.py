@@ -145,18 +145,35 @@ class QueryProcessor:
                         continue
                     extra = obj.get('extra', {}) or {}
                     chapter = (extra.get('chapter') or '').strip()
-                    # Normalize
-                    canon = QueryProcessor.normalize_query(title)
+                    # Build aliases
                     aliases: Set[str] = set()
+                    canon = QueryProcessor.normalize_query(title)
                     aliases.add(canon)
-                    # Short title heuristic: text before '(' or 'Act'
-                    short = re.split(r"\(| act\b| ordinance\b| statutory instrument\b", title, flags=re.IGNORECASE)[0].strip()
-                    if short and short.lower() != title.lower():
-                        aliases.add(QueryProcessor.normalize_query(short))
-                    # Add chapter alias
+                    # Remove bracketed and parenthesized segments
+                    no_brackets = re.sub(r"\[.*?\]", " ", title)
+                    no_paren = re.sub(r"\(.*?\)", " ", no_brackets)
+                    # Remove trailing years
+                    no_year = re.sub(r"\b(19|20)\d{2}\b", " ", no_paren)
+                    base = QueryProcessor.normalize_query(no_year)
+                    if base:
+                        aliases.add(base)
+                    # Preserve legal type tokens; ensure 'act' kept
+                    m = re.search(r"\b(act|ordinance|statutory instrument|constitution)\b", base, re.IGNORECASE)
+                    if m:
+                        legal_type = m.group(1)
+                        # Keep '[Name] legal_type' form if present
+                        name_part = base.split(legal_type)[0].strip()
+                        if name_part:
+                            aliases.add(f"{name_part} {legal_type}".strip())
+                    # Constitution special aliases
+                    if 'constitution' in base:
+                        aliases.add('constitution')
+                        if 'zimbabwe' in base:
+                            aliases.add('constitution of zimbabwe')
+                    # Chapter alias
                     if chapter:
                         aliases.add(f"chapter {chapter.lower()}")
-                    # Record
+                    # Record under canonical key
                     alias_map[canon] = alias_map.get(canon, set()) | aliases
         except FileNotFoundError:
             logger.warning("docs.jsonl not found for alias map", path=DOCS_JSONL_PATH)
@@ -414,7 +431,7 @@ class EmbeddingClient:
     async def get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding for text using OpenAI API."""
         if not OPENAI_API_KEY:
-            logger.warning("OpenAI API key not configured")
+            logger.error("OpenAI API key not configured!")
             return None
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
@@ -422,6 +439,59 @@ class EmbeddingClient:
         """Batch embeddings for multiple inputs in one request."""
         if not OPENAI_API_KEY:
             logger.warning("OpenAI API key not configured")
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                    json={"input": texts, "model": OPENAI_EMBEDDING_MODEL}
+                )
+                response.raise_for_status()
+                data = response.json()
+                return [item["embedding"] for item in data["data"]]
+        except Exception as e:
+            logger.error(f"OpenAI embedding error: {str(e)}")
+            return None
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENAI_EMBEDDING_MODEL,
+                        "input": text[:8000],  # Truncate to avoid token limits
+                        "encoding_format": "float"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    embedding = data["data"][0]["embedding"]
+                    
+                    logger.info(
+                        "Embedding generated",
+                        model=OPENAI_EMBEDDING_MODEL,
+                        input_length=len(text),
+                        embedding_dim=len(embedding)
+                    )
+                    
+                    return embedding
+                else:
+                    logger.error(
+                        "OpenAI embedding failed",
+                        status=response.status_code,
+                        response=response.text[:200]
+                    )
+                    return None
+                    
+        except Exception as e:
+            logger.error("Embedding generation failed", error=str(e))
             return None
 
 
@@ -611,6 +681,111 @@ class RetrievalEngine:
             logger.info("retrieval preconditions ok")
         # Always mark to avoid repeated checks per request
         self._preconditions_checked = True
+
+    def _shortcut_section_lookup(self, intent: Dict[str, Any]) -> List[RetrievalResult]:
+        """Direct lookup path when query names a statute and a specific section.
+        Scans chunks.jsonl for matching doc aliases and section number, returns pseudo-results.
+        """
+        section = (intent.get("section") or "").upper()
+        statutes = intent.get("statutes") or []
+        if not section or not statutes:
+            return []
+        aliases = set()
+        alias_map = self.query_processor._load_alias_map()
+        for canon in statutes:
+            # Merge all aliases for candidate canon keys
+            aliases |= alias_map.get(canon, set())
+            aliases.add(canon)
+        matches: List[RetrievalResult] = []
+        try:
+            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    md = o.get("metadata") or {}
+                    title = (md.get("title") or "").lower()
+                    # Determine section number: prefer explicit number; else parse from md['section'] prefix like "12C. ..."
+                    sect_num = (md.get("section_number") or "").strip().upper()
+                    if not sect_num:
+                        sec_field = (md.get("section") or md.get("section_title") or "").strip()
+                        m = re.match(r"^(\d+[A-Za-z]?)\.", sec_field)
+                        if not m:
+                            m = re.search(r"\b(\d+[A-Za-z]?)\b", sec_field)
+                        if m:
+                            sect_num = m.group(1).upper()
+                    if sect_num != section:
+                        continue
+                    norm_title = self.query_processor.normalize_query(title)
+                    if not any(a in norm_title for a in aliases):
+                        continue
+                    matches.append(RetrievalResult(
+                        chunk_id=str(o.get("chunk_id")),
+                        chunk_text=o.get("chunk_text") or "",
+                        doc_id=str(o.get("doc_id")),
+                        metadata=md,
+                        score=0.99,
+                        source="shortcut",
+                    ))
+                    if len(matches) >= 6:
+                        break
+        except FileNotFoundError:
+            return []
+        return matches
+
+    def _shortcut_statute_toc(self, intent: Dict[str, Any]) -> List[RetrievalResult]:
+        """If statute-only: return representative sections from the statute to guide narrowing."""
+        statutes = intent.get("statutes") or []
+        if not statutes:
+            return []
+        aliases = set()
+        alias_map = self.query_processor._load_alias_map()
+        for canon in statutes:
+            aliases |= alias_map.get(canon, set())
+            aliases.add(canon)
+        out: List[RetrievalResult] = []
+        seen_sections = set()
+        try:
+            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    md = o.get("metadata") or {}
+                    title = (md.get("title") or "").lower()
+                    norm_title = self.query_processor.normalize_query(title)
+                    if not any(a in norm_title for a in aliases):
+                        continue
+                    # Prefer sections; if missing, take first chunks per doc as overview
+                    sect_title = md.get("section_title") or md.get("section") or ""
+                    sect_num = (md.get("section_number") or "").upper()
+                    if not sect_num and sect_title:
+                        m = re.match(r"^(\d+[A-Za-z]?)\.", sect_title)
+                        if m:
+                            sect_num = m.group(1).upper()
+                    key = (o.get("doc_id"), sect_num or sect_title or md.get("chunk_index", 0))
+                    if key in seen_sections:
+                        continue
+                    seen_sections.add(key)
+                    out.append(RetrievalResult(
+                        chunk_id=str(o.get("chunk_id")),
+                        chunk_text=o.get("chunk_text") or "",
+                        doc_id=str(o.get("doc_id")),
+                        metadata=md,
+                        score=0.7,
+                        source="shortcut",
+                    ))
+                    if len(out) >= 8:
+                        break
+        except FileNotFoundError:
+            return []
+        return out
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -639,6 +814,18 @@ class RetrievalEngine:
         normalized_query = self.query_processor.normalize_query(query)
         clean_query, date_context = self.query_processor.extract_date_context(normalized_query)
         intent = self.query_processor.detect_intent(clean_query)
+
+        # Fast paths
+        if intent.get("section_lookup"):
+            fp = self._shortcut_section_lookup(intent)
+            if fp:
+                logger.info("Using direct section lookup fast-path", count=len(fp))
+                return fp[:config.top_k]
+        if intent.get("statute_lookup"):
+            toc = self._shortcut_statute_toc(intent)
+            if toc:
+                logger.info("Using statute TOC fast-path", count=len(toc))
+                return toc[:config.top_k]
         
         # Use date from config or extracted date
         effective_date = config.date_filter or date_context
@@ -736,24 +923,14 @@ class RetrievalEngine:
         """Calculate confidence score based on retrieval results."""
         if not results:
             return 0.0
-        
-        # Base confidence on top score
+        # Use a blend of top score and average of top 5, with diversity bonus
         top_score = results[0].score
-        
-        # Boost confidence if multiple good results
-        good_results = [r for r in results if r.score > 0.7]
-        score_diversity = len(set(round(r.score, 1) for r in results[:5]))
-        
-        confidence = top_score
-        
-        # Boost for multiple good results
-        if len(good_results) > 1:
-            confidence = min(1.0, confidence + 0.1)
-        
-        # Slight boost for score diversity (indicates robust matching)
-        if score_diversity > 2:
+        top5 = results[:5]
+        avg5 = sum(r.score for r in top5) / max(1, len(top5))
+        confidence = 0.7 * top_score + 0.3 * avg5
+        doc_diversity = len({r.doc_id for r in top5})
+        if doc_diversity >= 3:
             confidence = min(1.0, confidence + 0.05)
-        
         return round(confidence, 3)
 
 
@@ -787,3 +964,15 @@ async def search_legal_documents(
         results = await engine.retrieve(query, config)
         confidence = engine.calculate_confidence(results)
         return results, confidence
+
+
+# Debug/utility endpoints helpers
+async def direct_section_lookup(title_or_alias: str, section: str, top_k: int = 6) -> List[RetrievalResult]:
+    """Convenience wrapper for fast-path direct section lookup."""
+    engine = RetrievalEngine()
+    # Build intent-like payload
+    intent = {
+        "section": section.upper().strip(),
+        "statutes": [QueryProcessor.normalize_query(title_or_alias)],
+    }
+    return engine._shortcut_section_lookup(intent)[:top_k]
