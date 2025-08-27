@@ -119,7 +119,7 @@ def create_collection_schema() -> CollectionSchema:
         FieldSchema(
             name="embedding",
             dtype=DataType.FLOAT_VECTOR,
-            dim=1536,  # OpenAI text-embedding-3-small dimension
+            dim=3072,  # Using OpenAI text-embedding-3-large dimension to match generated embeddings
             description="OpenAI embedding vector"
         ),
         FieldSchema(
