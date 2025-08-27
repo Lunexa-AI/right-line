@@ -27,13 +27,13 @@ logger = structlog.get_logger(__name__)
 
 # OpenAI configuration
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
 OPENAI_MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS", "300"))
 
 # Cost tracking
 OPENAI_COSTS = {
     "gpt-3.5-turbo": {"input": 0.0015, "output": 0.002},  # per 1K tokens
-    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+    "gpt-5-mini": {"input": 0.00015, "output": 0.0006},
 }
 
 
@@ -253,7 +253,7 @@ Return only valid JSON with the required fields."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": OPENAI_MAX_TOKENS,
+            "max_completion_tokens": OPENAI_MAX_TOKENS,
             "temperature": 0.2,
             "response_format": {"type": "json_object"}
         }
