@@ -1,38 +1,21 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "api/main.py",
-      "use": "@vercel/python"
+      "source": "/api/(.*)",
+      "destination": "/api/main.py"
     },
     {
-      "src": "web/**",
-      "use": "@vercel/static"
+      "source": "/webhook",
+      "destination": "/api/main.py"
     }
   ],
-  "routes": [
+  "redirects": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/main.py"
-    },
-    {
-      "src": "/webhook",
-      "dest": "/api/main.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/web/$1"
+      "source": "/",
+      "destination": "/index.html",
+      "permanent": false
     }
   ],
-  "env": {
-    "RIGHTLINE_APP_ENV": "production",
-    "RIGHTLINE_LOG_LEVEL": "INFO"
-  },
-  "build": {
-    "env": {
-      "PYTHON_VERSION": "3.11"
-    }
-  },
   "headers": [
     {
       "source": "/api/(.*)",
@@ -50,13 +33,6 @@
           "value": "Content-Type, Authorization, X-User-ID, X-Session-ID"
         }
       ]
-    }
-  ],
-  "redirects": [
-    {
-      "source": "/",
-      "destination": "/index.html",
-      "permanent": false
     }
   ]
 }
