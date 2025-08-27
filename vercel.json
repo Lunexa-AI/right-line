@@ -24,11 +24,6 @@
       "dest": "/web/$1"
     }
   ],
-  "functions": {
-    "api/main.py": {
-      "maxDuration": 30
-    }
-  },
   "env": {
     "RIGHTLINE_APP_ENV": "production",
     "RIGHTLINE_LOG_LEVEL": "INFO"
