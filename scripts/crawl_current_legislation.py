@@ -173,7 +173,7 @@ async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path
     r = await get(client, url)
 
     # Parse metadata
-    soup = BeautifulSoup(r.text, "lxml")
+    soup = BeautifulSoup(r.text, "html.parser")
     head_meta = extract_head_metadata(soup)
     work = head_meta.get("work_frbr_uri")
     expr = head_meta.get("expression_frbr_uri")
@@ -228,7 +228,7 @@ async def crawl_index_page(client: httpx.AsyncClient, url: str) -> List[Tuple[st
         resp = await get(client, url)
     except Exception:
         return []
-    soup = BeautifulSoup(resp.text, "lxml")
+            soup = BeautifulSoup(resp.text, "html.parser")
 
     results: List[Tuple[str, Optional[str]]] = []
     table = soup.find("table")
