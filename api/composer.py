@@ -254,7 +254,7 @@ Return only valid JSON with the required fields."""
                 {"role": "user", "content": user_prompt}
             ],
             "max_completion_tokens": OPENAI_MAX_TOKENS,
-            "temperature": 0.2,
+            "temperature": 1.0,
             "response_format": {"type": "json_object"}
         }
     
