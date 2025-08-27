@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 import httpx
 import structlog
 from pydantic import BaseModel, Field
-from pymilvus import Collection, connections
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = structlog.get_logger(__name__)
@@ -276,45 +275,52 @@ class MilvusClient:
     """Milvus client for vector operations."""
     
     def __init__(self):
-        self.collection: Optional[Collection] = None
+        self.base_url = None
+        self.headers = {}
         self.connected = False
     
     async def connect(self) -> bool:
-        """Connect to Milvus Cloud."""
+        """Setup HTTP client for Milvus Cloud API."""
         if not MILVUS_ENDPOINT or not MILVUS_TOKEN:
             logger.warning("Milvus credentials not configured")
             return False
         
         try:
-            # Create connection
-            connections.connect(
-                alias="default",
-                uri=MILVUS_ENDPOINT,
-                token=MILVUS_TOKEN,
-                timeout=10,
-            )
+            # Parse endpoint to get base URL for HTTP API
+            if MILVUS_ENDPOINT.startswith("https://"):
+                # Milvus Cloud format: https://in03-xxx.api.gcp-us-west1.zillizcloud.com:443
+                self.base_url = MILVUS_ENDPOINT.replace(":443", "").replace(":19530", "")
+                if not self.base_url.endswith("/v1"):
+                    self.base_url += "/v1"
+            else:
+                logger.error("Unsupported Milvus endpoint format", endpoint=MILVUS_ENDPOINT)
+                return False
             
-            # Get collection
-            self.collection = Collection(MILVUS_COLLECTION_NAME)
-            self.collection.load()  # Load collection into memory
+            self.headers = {
+                "Authorization": f"Bearer {MILVUS_TOKEN}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
             
-            self.connected = True
-            logger.info("Connected to Milvus", collection=MILVUS_COLLECTION_NAME)
-            return True
+            # Test connection with a simple health check
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{self.base_url}/collections", headers=self.headers)
+                if response.status_code == 200:
+                    self.connected = True
+                    logger.info("Connected to Milvus HTTP API", collection=MILVUS_COLLECTION_NAME)
+                    return True
+                else:
+                    logger.error("Milvus HTTP API connection failed", status=response.status_code)
+                    return False
             
         except Exception as e:
-            logger.error("Failed to connect to Milvus", error=str(e))
+            logger.error("Failed to connect to Milvus HTTP API", error=str(e))
             self.connected = False
             return False
     
     async def disconnect(self):
-        """Disconnect from Milvus."""
-        try:
-            if self.connected:
-                connections.disconnect("default")
-                self.connected = False
-        except Exception as e:
-            logger.warning("Error disconnecting from Milvus", error=str(e))
+        """No persistent connection to close in HTTP mode."""
+        self.connected = False
     
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5))
     async def search_similar(
@@ -324,53 +330,62 @@ class MilvusClient:
         date_filter: Optional[str] = None,
         doc_type_filter: Optional[List[str]] = None,
     ) -> List[RetrievalResult]:
-        """Search for similar chunks using vector similarity (single query)."""
-        if not self.connected or not self.collection:
-            logger.warning("Milvus not connected")
+        """Search for similar chunks using HTTP API (single query)."""
+        if not self.connected:
+            logger.warning("Milvus HTTP API not connected")
             return []
         
         try:
-            # Build search parameters
-            search_params = {
-                "metric_type": "COSINE",
-                "params": {"ef": 64}  # HNSW search parameter
+            # Build search request payload
+            search_payload = {
+                "collectionName": MILVUS_COLLECTION_NAME,
+                "vector": query_vector,
+                "limit": top_k,
+                "outputFields": ["doc_id", "chunk_text", "metadata"],
+                "searchParams": {
+                    "metric_type": "COSINE",
+                    "params": {"ef": 64}
+                }
             }
             
-            # Build filter expression (doc_type only; date filter not supported on JSON metadata)
-            filter_expr = None
+            # Add filter expression if specified
             if doc_type_filter:
                 types = ",".join([f'"{t}"' for t in doc_type_filter])
-                filter_expr = f"doc_type in [{types}]"
+                search_payload["filter"] = f"doc_type in [{types}]"
             
-            # Perform search
-            results = self.collection.search(
-                data=[query_vector],
-                anns_field="embedding",
-                param=search_params,
-                limit=top_k,
-                expr=filter_expr,
-                output_fields=["doc_id", "chunk_text", "metadata"]
-            )
-            
-            # Convert to RetrievalResult objects
-            retrieval_results = []
-            for hit in results[0]:  # results[0] because we only sent one query
-                retrieval_results.append(RetrievalResult(
-                    chunk_id=str(hit.id),
-                    chunk_text=hit.entity.get("chunk_text", ""),
-                    doc_id=hit.entity.get("doc_id", ""),
-                    metadata=hit.entity.get("metadata", {}),
-                    score=float(hit.score),
-                    source="vector"
-                ))
-            
-            logger.info(
-                "Vector search completed", 
-                results_count=len(retrieval_results),
-                top_score=retrieval_results[0].score if retrieval_results else 0
-            )
-            
-            return retrieval_results
+            # Perform HTTP search
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/vector/search",
+                    headers=self.headers,
+                    json=search_payload
+                )
+                
+                if response.status_code != 200:
+                    logger.error("Milvus search failed", status=response.status_code, response=response.text)
+                    return []
+                
+                data = response.json()
+                
+                # Convert to RetrievalResult objects
+                retrieval_results = []
+                for hit in data.get("data", []):
+                    retrieval_results.append(RetrievalResult(
+                        chunk_id=str(hit.get("id", "")),
+                        chunk_text=hit.get("chunk_text", ""),
+                        doc_id=hit.get("doc_id", ""),
+                        metadata=hit.get("metadata", {}),
+                        score=float(hit.get("score", 0.0)),
+                        source="vector"
+                    ))
+                
+                logger.info(
+                    "Vector search completed", 
+                    results_count=len(retrieval_results),
+                    top_score=retrieval_results[0].score if retrieval_results else 0
+                )
+                
+                return retrieval_results
             
         except Exception as e:
             logger.error("Vector search failed", error=str(e))
@@ -383,45 +398,23 @@ class MilvusClient:
         top_k: int = 20,
         doc_type_filter: Optional[List[str]] = None,
     ) -> List[List[RetrievalResult]]:
-        """Search Milvus with multiple query vectors in a single call."""
-        if not self.connected or not self.collection:
-            logger.warning("Milvus not connected")
+        """Search with multiple query vectors using HTTP API (sequential calls)."""
+        if not self.connected:
+            logger.warning("Milvus HTTP API not connected")
             return []
-        try:
-            search_params = {
-                "metric_type": "COSINE",
-                "params": {"ef": 64}
-            }
-            filter_expr = None
-            if doc_type_filter:
-                types = ",".join([f'"{t}"' for t in doc_type_filter])
-                filter_expr = f"doc_type in [{types}]"
-
-            results = self.collection.search(
-                data=query_vectors,
-                anns_field="embedding",
-                param=search_params,
-                limit=top_k,
-                expr=filter_expr,
-                output_fields=["doc_id", "chunk_text", "metadata"]
+        
+        # For HTTP API, we'll make sequential calls for each vector
+        # This is less efficient than the SDK's batch mode, but keeps us under size limits
+        results = []
+        for query_vector in query_vectors:
+            single_result = await self.search_similar(
+                query_vector=query_vector,
+                top_k=top_k,
+                doc_type_filter=doc_type_filter
             )
-            out: List[List[RetrievalResult]] = []
-            for hits in results:
-                arr: List[RetrievalResult] = []
-                for hit in hits:
-                    arr.append(RetrievalResult(
-                        chunk_id=str(hit.id),
-                        chunk_text=hit.entity.get("chunk_text", ""),
-                        doc_id=hit.entity.get("doc_id", ""),
-                        metadata=hit.entity.get("metadata", {}),
-                        score=float(hit.score),
-                        source="vector",
-                    ))
-                out.append(arr)
-            return out
-        except Exception as e:
-            logger.error("Vector multi-search failed", error=str(e))
-            return []
+            results.append(single_result)
+        
+        return results
 
 
 class EmbeddingClient:

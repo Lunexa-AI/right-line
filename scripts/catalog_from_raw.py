@@ -96,7 +96,7 @@ def build_catalog_entry(html_path: Path) -> Optional[CatalogRow]:
         html = html_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return None
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     meta = extract_head_metadata(soup)
     work = meta.get("work_frbr_uri")
     expr = meta.get("expression_frbr_uri")

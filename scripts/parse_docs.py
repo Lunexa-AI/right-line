@@ -28,7 +28,7 @@ try:
     from bs4 import BeautifulSoup, Tag
     import orjson
 except ImportError as e:
-    print(f"❌ Error: Missing dependency. Run: pip install beautifulsoup4 lxml orjson")
+    print(f"❌ Error: Missing dependency. Run: pip install beautifulsoup4 orjson")
     print(f"   Specific error: {e}")
     sys.exit(1)
 
@@ -770,7 +770,7 @@ def extract_references(content: Tag) -> List[str]:
 
 def parse_legislation(html_content: str, source_url: str) -> Dict[str, Any]:
     """Parse legislation HTML into a normalized document object."""
-    soup = BeautifulSoup(html_content, "lxml")
+    soup = BeautifulSoup(html_content, "html.parser")
     
     # Extract metadata from head
     metadata = extract_metadata_from_head(soup)
@@ -864,7 +864,7 @@ def parse_legislation(html_content: str, source_url: str) -> Dict[str, Any]:
 
 def parse_judgment(html_content: str, source_url: str) -> Dict[str, Any]:
     """Parse judgment HTML into a normalized document object."""
-    soup = BeautifulSoup(html_content, "lxml")
+    soup = BeautifulSoup(html_content, "html.parser")
     
     # Extract metadata from head
     metadata = extract_metadata_from_head(soup)
@@ -937,7 +937,7 @@ def detect_document_type(file_path: Path) -> str:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read(4096)  # Read just the beginning
-            soup = BeautifulSoup(content, "lxml")
+            soup = BeautifulSoup(content, "html.parser")
             
             # Check for FRBR data
             frbr_data = extract_json_script(soup, "track-page-properties")
@@ -975,7 +975,7 @@ def parse_html_file(file_path: Path) -> Dict[str, Any]:
     
     # Try to reconstruct canonical AKN URL from FRBR data in the HTML
     try:
-        soup = BeautifulSoup(html_content, "lxml")
+        soup = BeautifulSoup(html_content, "html.parser")
         frbr = extract_json_script(soup, "track-page-properties")
         src = frbr.get("expression_frbr_uri") or frbr.get("work_frbr_uri")
         if src and src.startswith("/"):
