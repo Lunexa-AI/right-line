@@ -150,6 +150,71 @@ async def serve_index():
         raise HTTPException(status_code=404, detail="Web interface not found")
 
 
+# Favicon and icon routes
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico():
+    """Serve favicon.ico."""
+    if os.path.exists("web/favicon.ico"):
+        return FileResponse("web/favicon.ico", media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon_svg():
+    """Serve favicon.svg."""
+    if os.path.exists("web/favicon.svg"):
+        return FileResponse("web/favicon.svg", media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Favicon SVG not found")
+
+
+@app.get("/favicon-16x16.png", include_in_schema=False)
+async def favicon_16():
+    """Serve 16x16 favicon."""
+    if os.path.exists("web/favicon-16x16.png"):
+        return FileResponse("web/favicon-16x16.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="Favicon 16x16 not found")
+
+
+@app.get("/favicon-32x32.png", include_in_schema=False)
+async def favicon_32():
+    """Serve 32x32 favicon."""
+    if os.path.exists("web/favicon-32x32.png"):
+        return FileResponse("web/favicon-32x32.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="Favicon 32x32 not found")
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def apple_touch_icon():
+    """Serve Apple touch icon."""
+    if os.path.exists("web/apple-touch-icon.png"):
+        return FileResponse("web/apple-touch-icon.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="Apple touch icon not found")
+
+
+@app.get("/icon-192.png", include_in_schema=False)
+async def icon_192():
+    """Serve 192x192 icon."""
+    if os.path.exists("web/icon-192.png"):
+        return FileResponse("web/icon-192.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="Icon 192 not found")
+
+
+@app.get("/icon-512.png", include_in_schema=False)
+async def icon_512():
+    """Serve 512x512 icon."""
+    if os.path.exists("web/icon-512.png"):
+        return FileResponse("web/icon-512.png", media_type="image/png")
+    raise HTTPException(status_code=404, detail="Icon 512 not found")
+
+
+@app.get("/site.webmanifest", include_in_schema=False)
+async def web_manifest():
+    """Serve web app manifest."""
+    if os.path.exists("web/site.webmanifest"):
+        return FileResponse("web/site.webmanifest", media_type="application/manifest+json")
+    raise HTTPException(status_code=404, detail="Web manifest not found")
+
+
 @app.get("/healthz", response_model=HealthResponse, tags=["Health"])
 async def health_check() -> HealthResponse:
     """Health check endpoint for liveness probes.
