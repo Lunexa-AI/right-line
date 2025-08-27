@@ -280,7 +280,8 @@ def extract_akn_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any
         # Find all sections within this part
         sections = []
         part_section_ids = []
-        akn_sections = part_elem.find_all("section", class_="akn-section", recursive=False)
+        # Some pages nest sections deeper; search recursively
+        akn_sections = part_elem.find_all("section", class_="akn-section", recursive=True)
         
         for section_elem in akn_sections:
             section_id = section_elem.get("id", "")
@@ -292,13 +293,28 @@ def extract_akn_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any
             # Extract all paragraphs within this section
             paragraphs = []
             
-            # Get all akn-p elements within this section (content paragraphs)
-            akn_paragraphs = section_elem.find_all("span", class_="akn-p")
-            
+            # Get all elements marked as akn-p (can be span, p, div, etc.)
+            akn_paragraphs = section_elem.select('.akn-p')
             for para_elem in akn_paragraphs:
                 para_text = normalize_whitespace(para_elem.get_text())
-                if para_text and len(para_text.strip()) > 10:  # Skip very short paragraphs
+                if para_text and len(para_text) > 10:
                     paragraphs.append(para_text)
+            # Fallback: use regular <p> tags if no akn-p found
+            if not paragraphs:
+                for p_elem in section_elem.find_all('p', recursive=True):
+                    para_text = normalize_whitespace(p_elem.get_text())
+                    if para_text and len(para_text) > 10:
+                        paragraphs.append(para_text)
+            # Last resort: grab direct text from the section excluding headings
+            if not paragraphs:
+                texts = []
+                for child in section_elem.children:
+                    if getattr(child, 'name', '').startswith('h'):
+                        continue
+                    txt = normalize_whitespace(getattr(child, 'get_text', lambda: str(child))()) if hasattr(child,'get_text') else normalize_whitespace(str(child))
+                    if txt and len(txt) > 20:
+                        texts.append(txt)
+                paragraphs.extend(texts)
             
             if paragraphs:  # Only add sections that have content
                 section_ids.append(section_id)
@@ -328,11 +344,150 @@ def extract_akn_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any
     return content_tree, extra
 
 
+def extract_sections_from_akn_parts_without_sections(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Handle pages where there are akn-part blocks but no akn-section wrappers.
+
+    Strategy:
+    - For each akn-part:
+      - If it has h3 headings: treat each h3 as a section boundary; collect text until next h3
+      - Else: collect all .akn-p (or <p>) as a single section
+    """
+    parts_out: List[Dict[str, Any]] = []
+    section_ids: List[str] = []
+    part_map: Dict[str, List[str]] = {}
+
+    akn_parts = content.find_all("section", class_="akn-part")
+    for part_idx, part_elem in enumerate(akn_parts, 1):
+        part_id = part_elem.get("id", f"part_{part_idx}")
+        part_title_elem = part_elem.find("h2")
+        part_title = normalize_whitespace(part_title_elem.get_text()) if part_title_elem else f"Part {part_idx}"
+
+        sections: List[Dict[str, Any]] = []
+        part_map[part_title] = []
+
+        h3s = part_elem.find_all("h3", recursive=True)
+        if h3s:
+            for i, h in enumerate(h3s):
+                sec_title = normalize_whitespace(h.get_text()) or f"Section {i+1}"
+                stop = h3s[i+1] if i + 1 < len(h3s) else None
+                paragraphs: List[str] = []
+
+                # Walk forward through the DOM until next h3 or leaving the part
+                for node in h.next_elements:
+                    # Stop when we hit the next heading or exit the part subtree
+                    if stop and node is stop:
+                        break
+                    # If we've climbed out of this part, stop
+                    try:
+                        if hasattr(node, 'name') and node.name and not part_elem in getattr(node, 'parents', []):
+                            break
+                    except Exception:
+                        pass
+                    # Collect content
+                    if getattr(node, 'get', None) and (node.get('class') and 'akn-p' in node.get('class', [])):
+                        txt = normalize_whitespace(node.get_text())
+                        if txt and len(txt) > 10:
+                            paragraphs.append(txt)
+                    elif getattr(node, 'name', None) == 'p':
+                        txt = normalize_whitespace(node.get_text())
+                        if txt and len(txt) > 10:
+                            paragraphs.append(txt)
+
+                if paragraphs:
+                    sec_id = h.get("id") or sha256_16(f"{part_id}:{sec_title}")
+                    section_ids.append(sec_id)
+                    part_map[part_title].append(sec_id)
+                    sections.append({
+                        "id": sec_id,
+                        "title": sec_title,
+                        "anchor": f"#{sec_id}",
+                        "paragraphs": paragraphs,
+                    })
+        else:
+            # No headings; synthesize a single section from all text paragraphs within the part
+            paragraphs: List[str] = []
+            for node in part_elem.select('.akn-p'):
+                txt = normalize_whitespace(node.get_text())
+                if txt and len(txt) > 10:
+                    paragraphs.append(txt)
+            if not paragraphs:
+                for p in part_elem.find_all('p', recursive=True):
+                    txt = normalize_whitespace(p.get_text())
+                    if txt and len(txt) > 10:
+                        paragraphs.append(txt)
+            if paragraphs:
+                sec_id = sha256_16(f"{part_id}:general")
+                section_ids.append(sec_id)
+                part_map[part_title].append(sec_id)
+                sections.append({
+                    "id": sec_id,
+                    "title": f"{part_title} - General",
+                    "anchor": f"#{sec_id}",
+                    "paragraphs": paragraphs,
+                })
+
+        if sections:
+            parts_out.append({
+                "title": part_title,
+                "id": part_id,
+                "sections": sections,
+            })
+
+    return {"parts": parts_out}, {"section_ids": section_ids, "part_map": part_map}
+
+
+def extract_flat_akn_sections(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Extract AKN sections when there are akn-section nodes but no akn-part wrappers.
+
+    Builds a single default part containing all sections in document order.
+    """
+    sections = []
+    section_ids: List[str] = []
+    for section_elem in content.find_all("section", class_="akn-section"):
+        section_id = section_elem.get("id", "")
+        title_elem = section_elem.find("h3")
+        section_title = normalize_whitespace(title_elem.get_text()) if title_elem else (section_id or "Section")
+        paragraphs = []
+        for para_elem in section_elem.find_all("span", class_="akn-p"):
+            para_text = normalize_whitespace(para_elem.get_text())
+            if para_text and len(para_text) > 10:
+                paragraphs.append(para_text)
+        if paragraphs:
+            section_ids.append(section_id)
+            sections.append({
+                "id": section_id or f"s-{len(sections)}",
+                "title": section_title,
+                "anchor": f"#{section_id}" if section_id else "",
+                "paragraphs": paragraphs,
+            })
+    content_tree = {
+        "parts": [
+            {
+                "title": "General Provisions",
+                "id": "part_general",
+                "sections": sections,
+            }
+        ] if sections else []
+    }
+    extra = {
+        "section_ids": section_ids,
+        "part_map": {"General Provisions": section_ids} if section_ids else {}
+    }
+    return content_tree, extra
+
+
 def extract_sections_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Extract sections from legislation content."""
     # First try AKN structure
     if content.find("section", class_="akn-part"):
-        return extract_akn_legislation(content)
+        ct, ex = extract_akn_legislation(content)
+        # If parts were found but empty (no akn-sections had content), apply part-level fallback
+        if not ct.get("parts"):
+            return extract_sections_from_akn_parts_without_sections(content)
+        return ct, ex
+    # Some pages have akn-section nodes without akn-part wrappers
+    if content.find("section", class_="akn-section"):
+        return extract_flat_akn_sections(content)
     
     # Fallback to generic HTML parsing
     sections = []
@@ -343,6 +498,27 @@ def extract_sections_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str
     
     # Extract structured content
     elements = extract_text_with_structure(content)
+    # Some pages render headings and paragraphs but have almost no <p> tags; add h3->paragraph fallback
+    if not any(e["type"] in ("paragraph", "list_item", "text") for e in elements):
+        # Treat h3 headings as section titles and synthesize paragraphs from following text nodes
+        synthesized = []
+        for h in content.find_all(["h2", "h3"]):
+            title = normalize_whitespace(h.get_text())
+            if not title:
+                continue
+            synthesized.append({"type":"heading","level":int(h.name[1]),"text":title,"id":h.get("id","")})
+            # Collect sibling text until next heading
+            sib = h.next_sibling
+            buf = []
+            while sib and (not getattr(sib, 'name', None) or not re.match(r'h[1-6]', getattr(sib,'name',''))):
+                txt = normalize_whitespace(getattr(sib, 'get_text', lambda: str(sib))()) if hasattr(sib,'get_text') else normalize_whitespace(str(sib))
+                if txt and len(txt) > 20:
+                    buf.append(txt)
+                sib = getattr(sib,'next_sibling', None)
+            for t in buf:
+                synthesized.append({"type":"paragraph","text":t})
+        if synthesized:
+            elements = synthesized
     
     # Process elements to identify parts, chapters, sections
     i = 0
@@ -441,6 +617,28 @@ def extract_sections_legislation(content: Tag) -> Tuple[Dict[str, Any], Dict[str
         "part_map": part_map
     }
     
+    # If still no sections found (e.g., some SIs are short notices without AKN structure),
+    # capture main paragraphs into a single default section to avoid empty content.
+    if not content_tree["parts"]:
+        paras = [e["text"] for e in elements if e["type"] in ("paragraph", "text", "list_item")]
+        cleaned = [t for t in paras if len(t) > 20]
+        if cleaned:
+            section = {
+                "id": "section-1",
+                "title": elements[0]["text"] if elements and elements[0]["type"] == "heading" else "General",
+                "anchor": "",
+                "paragraphs": cleaned,
+            }
+            content_tree = {
+                "parts": [
+                    {
+                        "title": "General Provisions",
+                        "id": "part_general",
+                        "sections": [section],
+                    }
+                ]
+            }
+            extra = {"section_ids": ["section-1"], "part_map": {"General Provisions": ["section-1"]}}
     return content_tree, extra
 
 
