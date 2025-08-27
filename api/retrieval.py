@@ -290,9 +290,9 @@ class MilvusClient:
             if MILVUS_ENDPOINT.startswith("https://"):
                 # Milvus Cloud format: https://in03-xxx.api.gcp-us-west1.zillizcloud.com:443
                 self.base_url = MILVUS_ENDPOINT.replace(":443", "").replace(":19530", "")
-                # Milvus Cloud uses /v1/vector for API endpoints
-                if not self.base_url.endswith("/v1"):
-                    self.base_url += "/v1"
+                # Milvus Cloud uses /v2/vectordb for API endpoints
+                if not self.base_url.endswith("/v2/vectordb"):
+                    self.base_url += "/v2/vectordb"
             else:
                 logger.error("Unsupported Milvus endpoint format", endpoint=MILVUS_ENDPOINT)
                 return False
@@ -303,11 +303,16 @@ class MilvusClient:
                 "Accept": "application/json"
             }
             
-            # Test connection with a simple health check (skip for now, just mark as connected)
-            # Milvus Cloud HTTP API doesn't have a simple health endpoint
-            self.connected = True
-            logger.info("Milvus HTTP API configured", endpoint=self.base_url, collection=MILVUS_COLLECTION_NAME)
-            return True
+            # Test connection with collections list endpoint
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(f"{self.base_url}/collections/list", headers=self.headers)
+                if response.status_code == 200:
+                    self.connected = True
+                    logger.info("Milvus HTTP API connected", endpoint=self.base_url, collection=MILVUS_COLLECTION_NAME)
+                    return True
+                else:
+                    logger.error("Milvus HTTP API connection failed", status=response.status_code, response=response.text)
+                    return False
             
         except Exception as e:
             logger.error("Failed to connect to Milvus HTTP API", error=str(e))
@@ -332,16 +337,12 @@ class MilvusClient:
             return []
         
         try:
-            # Build search request payload for Milvus Cloud HTTP API
+            # Build search request payload for Milvus Cloud HTTP API v2
             search_payload = {
-                "collection_name": MILVUS_COLLECTION_NAME,
-                "search_params": {
-                    "metric_type": "COSINE",
-                    "params": {"ef": 64}
-                },
-                "vectors": [query_vector],
-                "top_k": top_k,
-                "output_fields": ["doc_id", "chunk_text", "metadata"]
+                "collectionName": MILVUS_COLLECTION_NAME,
+                "data": [query_vector],
+                "limit": top_k,
+                "outputFields": ["doc_id", "chunk_text", "metadata"]
             }
             
             # Add filter expression if specified
@@ -352,7 +353,7 @@ class MilvusClient:
             # Perform HTTP search
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.base_url}/search",
+                    f"{self.base_url}/entities/search",
                     headers=self.headers,
                     json=search_payload
                 )
@@ -365,15 +366,22 @@ class MilvusClient:
                 
                 # Convert to RetrievalResult objects
                 retrieval_results = []
-                results = data.get("results", [])
+                results = data.get("data", [])
                 if results:
-                    for hit in results[0]:  # First query results
-                        entity = hit.get("entity", {})
+                    for hit in results:
+                        # Parse metadata if it's a JSON string
+                        metadata = hit.get("metadata", {})
+                        if isinstance(metadata, str):
+                            try:
+                                metadata = json.loads(metadata)
+                            except:
+                                metadata = {}
+                        
                         retrieval_results.append(RetrievalResult(
                             chunk_id=str(hit.get("id", "")),
-                            chunk_text=entity.get("chunk_text", ""),
-                            doc_id=entity.get("doc_id", ""),
-                            metadata=entity.get("metadata", {}),
+                            chunk_text=hit.get("chunk_text", ""),
+                            doc_id=hit.get("doc_id", ""),
+                            metadata=metadata,
                             score=float(hit.get("distance", 0.0)),
                             source="vector"
                         ))
