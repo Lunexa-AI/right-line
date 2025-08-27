@@ -95,15 +95,13 @@ class Chunk(BaseModel):
         """Validate chunk text length."""
         if len(v) > MAX_CHARS:
             raise ValueError(f"Chunk text exceeds maximum length of {MAX_CHARS} characters")
-        if len(v) < MIN_TOKENS * CHARS_PER_TOKEN:
-            raise ValueError(f"Chunk text is too short (less than {MIN_TOKENS} tokens)")
         return v
     
     @field_validator("num_tokens")
     def validate_num_tokens(cls, v):
         """Validate token count."""
-        if v < MIN_TOKENS:
-            raise ValueError(f"Number of tokens is less than minimum of {MIN_TOKENS}")
+        if v < 1:
+            raise ValueError("Number of tokens must be >= 1")
         return v
     
     @field_validator("doc_type")
@@ -428,7 +426,6 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     all_chunks = []
     doc_id = doc["doc_id"]
-    doc_type = doc["doc_type"]
     language = doc["language"]
     date_context = doc.get("version_effective_date")
     source_url = doc.get("source_url")
@@ -437,6 +434,22 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     nature = extra.get("nature")
     year = extra.get("year")
     chapter = extra.get("chapter")
+
+    # Normalize doc_type for legislation based on nature and existing value
+    doc_type_raw = (doc.get("doc_type") or "").lower()
+    nature_lower = (nature or "").lower()
+    if doc_type_raw in {"act", "si", "ordinance"}:
+        doc_type = doc_type_raw
+    elif doc_type_raw == "legislation":
+        doc_type = "act"
+    else:
+        # Fallback to nature
+        if nature_lower == "statutory instrument":
+            doc_type = "si"
+        elif "ordinance" in nature_lower:
+            doc_type = "ordinance"
+        else:
+            doc_type = "act"
     
     # Process content tree
     content_tree = doc.get("content_tree", {})
@@ -489,8 +502,45 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                         else:
                             break
                 
-                # If still too short, skip this section (will be picked up by next iteration)
+                # If still too short, keep as a single minimal chunk for legal completeness
                 if estimate_tokens(merged_content) < MIN_TOKENS:
+                    entities = extract_entities(merged_content)
+                    chunk_id = generate_chunk_id(
+                        doc_id=doc_id,
+                        section_path=section_path,
+                        start_char=0,
+                        end_char=len(merged_content),
+                        chunk_text=merged_content,
+                    )
+                    try:
+                        full_chunk = Chunk(
+                            chunk_id=chunk_id,
+                            doc_id=doc_id,
+                            chunk_text=merged_content,
+                            section_path=section_path,
+                            start_char=0,
+                            end_char=len(merged_content),
+                            num_tokens=max(1, estimate_tokens(merged_content)),
+                            language=language,
+                            doc_type=doc_type,
+                            date_context=date_context,
+                            entities=entities,
+                            source_url=source_url,
+                            nature=nature,
+                            year=year,
+                            chapter=chapter,
+                            metadata={
+                                "title": title,
+                                "sections": merged_sections,
+                                "chunk_index": 0,
+                                "nature": nature,
+                                "year": year,
+                                "chapter": chapter,
+                            },
+                        )
+                        all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    except Exception as e:
+                        logger.warning(f"Skipping minimal chunk for document {doc_id}: {e}")
                     continue
                 
                 # Create a single chunk for the merged sections
@@ -644,9 +694,7 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
             
             # Add metadata to chunks
             for i, chunk in enumerate(headnote_chunks):
-                # Skip chunks that are too short
-                if len(chunk["chunk_text"]) < MIN_TOKENS * CHARS_PER_TOKEN:
-                    continue
+                # Allow short chunks for completeness
                     
                 # Extract entities
                 entities = extract_entities(chunk["chunk_text"])
@@ -966,9 +1014,16 @@ def process_documents(input_file: Path, output_file: Path, verbose: bool = False
     for doc in tqdm(documents, desc="Chunking documents"):
         try:
             # Determine document type and apply appropriate chunking strategy
-            if doc.get("doc_type") == "act":
+            doc_type_value = (doc.get("doc_type") or "").lower()
+            nature_value = (doc.get("extra", {}).get("nature") or "").lower()
+            is_legislation = (
+                doc_type_value in {"act", "si", "ordinance", "constitution", "legislation"}
+                or nature_value in {"act", "statutory instrument", "ordinance"}
+            )
+
+            if is_legislation:
                 chunks = chunk_legislation(doc)
-            else:  # judgment or other
+            else:
                 chunks = chunk_judgment(doc)
             
             all_chunks.extend(chunks)
