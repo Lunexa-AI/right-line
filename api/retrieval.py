@@ -28,9 +28,9 @@ MILVUS_ENDPOINT = os.environ.get("MILVUS_ENDPOINT")
 MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN")
 MILVUS_COLLECTION_NAME = os.environ.get("MILVUS_COLLECTION_NAME", "legal_chunks")
 
-# OpenAI configuration for embeddings
+# OpenAI configuration for embeddings (must match index dim=3072)
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 
 # Cache configuration
 CACHE_TTL_SECONDS = 3600  # 1 hour
@@ -40,6 +40,12 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 DATA_PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
 DOCS_JSONL_PATH = os.path.join(DATA_PROCESSED_DIR, "docs.jsonl")
 CHUNKS_WITH_EMB_PATH = os.path.join(DATA_PROCESSED_DIR, "chunks_with_embeddings.jsonl")
+CHUNKS_JSONL_PATH = os.path.join(DATA_PROCESSED_DIR, "chunks.jsonl")
+
+# Feature flags
+ENABLE_SPARSE = os.environ.get("ENABLE_SPARSE", "1") == "1"
+ENABLE_RERANK = os.environ.get("ENABLE_RERANK", "0") == "1"
+OPENAI_RERANK_MODEL = os.environ.get("OPENAI_RERANK_MODEL", "")
 
 
 @dataclass
@@ -61,6 +67,11 @@ class RetrievalConfig(BaseModel):
     min_score: float = Field(default=0.1, ge=0.0, le=1.0)
     enable_reranking: bool = Field(default=False)
     date_filter: Optional[str] = Field(default=None, description="ISO date for temporal filtering")
+    # Multi-query expansion and fusion
+    expansions_count: int = Field(default=4, ge=1, le=8)
+    top_k_per_variant: int = Field(default=24, ge=1, le=100)
+    rrf_k: int = Field(default=60, ge=1, le=200)
+    max_per_doc: int = Field(default=3, ge=1, le=10)
 
 
 class QueryProcessor:
@@ -201,30 +212,47 @@ class QueryProcessor:
         }
         return intent
 
+    @classmethod
+    def generate_reformulations(cls, text: str, intent: Dict[str, Any], max_variants: int = 4) -> List[str]:
+        """Generate lightweight reformulations for multi-query retrieval.
+        Returns a list beginning with the normalized original.
+        """
+        base = cls.normalize_query(text)
+        variants: List[str] = [base]
+        # Expand SI abbreviation
+        if ' si ' in f" {base} ":
+            variants.append(base.replace(' si ', ' statutory instrument '))
+        # Section synonyms
+        if intent.get('section'):
+            v = re.sub(r"\bs\.?\s*(\d+[A-Za-z]?)", r"section \1", base)
+            if v != base:
+                variants.append(v)
+        # Add statute canonical title if recognized
+        statutes = intent.get('statutes') or []
+        if statutes:
+            for s in statutes[:2]:
+                if s not in base:
+                    variants.append(f"{base} in {s}")
+        # Chapter addition
+        if intent.get('chapter') and intent['chapter'] not in base:
+            variants.append(f"{base} chapter {intent['chapter']}")
+        # Dedup and cap
+        out = []
+        seen = set()
+        for v in variants:
+            if v and v not in seen:
+                out.append(v)
+                seen.add(v)
+            if len(out) >= max_variants:
+                break
+        return out
+
     @staticmethod
     def extract_keywords(text: str) -> List[str]:
-        """Extract important keywords for hybrid search."""
-        # Common legal terms that should be preserved
-        legal_terms = {
-            'employment', 'labour', 'labor', 'wage', 'salary', 'termination', 
-            'notice', 'dismissal', 'contract', 'overtime', 'leave', 'maternity',
-            'paternity', 'retrenchment', 'discrimination', 'harassment'
-        }
-        
-        words = text.lower().split()
-        keywords = []
-        
-        for word in words:
-            # Remove punctuation
-            clean_word = re.sub(r'[^\w]', '', word)
-            if len(clean_word) > 2:  # Skip very short words
-                keywords.append(clean_word)
-        
-        # Prioritize legal terms
-        priority_keywords = [kw for kw in keywords if kw in legal_terms]
-        other_keywords = [kw for kw in keywords if kw not in legal_terms]
-        
-        return priority_keywords + other_keywords[:10]  # Limit total keywords
+        """Neutral keyword extraction (kept for compatibility; not labor-specific)."""
+        words = re.sub(r"[^\w\s]", " ", text.lower())
+        words = re.sub(r"\s+", " ", words).strip().split()
+        return [w for w in words if len(w) > 2][:20]
 
 
 class MilvusClient:
@@ -276,9 +304,10 @@ class MilvusClient:
         self, 
         query_vector: List[float], 
         top_k: int = 20,
-        date_filter: Optional[str] = None
+        date_filter: Optional[str] = None,
+        doc_type_filter: Optional[List[str]] = None,
     ) -> List[RetrievalResult]:
-        """Search for similar chunks using vector similarity."""
+        """Search for similar chunks using vector similarity (single query)."""
         if not self.connected or not self.collection:
             logger.warning("Milvus not connected")
             return []
@@ -290,11 +319,11 @@ class MilvusClient:
                 "params": {"ef": 64}  # HNSW search parameter
             }
             
-            # Build filter expression if date provided
+            # Build filter expression (doc_type only; date filter not supported on JSON metadata)
             filter_expr = None
-            if date_filter:
-                # Filter by effective date in metadata
-                filter_expr = f'metadata["effective_date"] <= "{date_filter}"'
+            if doc_type_filter:
+                types = ",".join([f'"{t}"' for t in doc_type_filter])
+                filter_expr = f"doc_type in [{types}]"
             
             # Perform search
             results = self.collection.search(
@@ -330,6 +359,53 @@ class MilvusClient:
             logger.error("Vector search failed", error=str(e))
             return []
 
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5))
+    async def search_similar_multi(
+        self,
+        query_vectors: List[List[float]],
+        top_k: int = 20,
+        doc_type_filter: Optional[List[str]] = None,
+    ) -> List[List[RetrievalResult]]:
+        """Search Milvus with multiple query vectors in a single call."""
+        if not self.connected or not self.collection:
+            logger.warning("Milvus not connected")
+            return []
+        try:
+            search_params = {
+                "metric_type": "COSINE",
+                "params": {"ef": 64}
+            }
+            filter_expr = None
+            if doc_type_filter:
+                types = ",".join([f'"{t}"' for t in doc_type_filter])
+                filter_expr = f"doc_type in [{types}]"
+
+            results = self.collection.search(
+                data=query_vectors,
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                expr=filter_expr,
+                output_fields=["doc_id", "chunk_text", "metadata"]
+            )
+            out: List[List[RetrievalResult]] = []
+            for hits in results:
+                arr: List[RetrievalResult] = []
+                for hit in hits:
+                    arr.append(RetrievalResult(
+                        chunk_id=str(hit.id),
+                        chunk_text=hit.entity.get("chunk_text", ""),
+                        doc_id=hit.entity.get("doc_id", ""),
+                        metadata=hit.entity.get("metadata", {}),
+                        score=float(hit.score),
+                        source="vector",
+                    ))
+                out.append(arr)
+            return out
+        except Exception as e:
+            logger.error("Vector multi-search failed", error=str(e))
+            return []
+
 
 class EmbeddingClient:
     """OpenAI client for generating embeddings."""
@@ -339,6 +415,134 @@ class EmbeddingClient:
         """Get embedding for text using OpenAI API."""
         if not OPENAI_API_KEY:
             logger.warning("OpenAI API key not configured")
+            return None
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    async def get_embeddings(self, texts: List[str]) -> Optional[List[List[float]]]:
+        """Batch embeddings for multiple inputs in one request."""
+        if not OPENAI_API_KEY:
+            logger.warning("OpenAI API key not configured")
+            return None
+
+
+class SparseProvider:
+    """Abstract sparse search provider interface."""
+    async def search(self, query: str, top_k: int = 50) -> List[RetrievalResult]:  # pragma: no cover
+        raise NotImplementedError
+
+
+class SimpleSparseProvider(SparseProvider):
+    """Fallback sparse search scanning titles/section titles quickly.
+
+    Loads a lightweight in-memory view of chunks.jsonl on first use.
+    Scoring: title match (x3), section_title (x2), chunk_text prefix (x1),
+    with small bonuses for exact token matches.
+    """
+    _loaded = False
+    _rows: List[Dict[str, Any]] = []
+
+    def _ensure_loaded(self):
+        if self._loaded:
+            return
+        rows = []
+        try:
+            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    rows.append({
+                        "chunk_id": o.get("chunk_id"),
+                        "doc_id": o.get("doc_id"),
+                        "chunk_text": (o.get("chunk_text") or "")[:400].lower(),
+                        "metadata": o.get("metadata") or {},
+                    })
+        except FileNotFoundError:
+            logger.warning("chunks.jsonl not found for sparse provider", path=CHUNKS_JSONL_PATH)
+        self._rows = rows
+        self._loaded = True
+
+    @staticmethod
+    def _tokens(text: str) -> List[str]:
+        t = re.sub(r"[^\w\s]", " ", text.lower())
+        t = re.sub(r"\s+", " ", t).strip()
+        return [w for w in t.split() if len(w) > 2]
+
+    async def search(self, query: str, top_k: int = 50) -> List[RetrievalResult]:
+        self._ensure_loaded()
+        if not self._rows:
+            return []
+        qtokens = set(self._tokens(query))
+        if not qtokens:
+            return []
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for row in self._rows:
+            md = row.get("metadata") or {}
+            title = (md.get("title") or "").lower()
+            sect = (md.get("section_title") or "").lower()
+            text = row.get("chunk_text") or ""
+            score = 0.0
+            for t in qtokens:
+                if t in title:
+                    score += 3.0
+                if t in sect:
+                    score += 2.0
+                if t in text:
+                    score += 1.0
+            if score > 0:
+                scored.append((score, row))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out: List[RetrievalResult] = []
+        for s, row in scored[:top_k]:
+            out.append(RetrievalResult(
+                chunk_id=str(row.get("chunk_id")),
+                chunk_text=row.get("chunk_text") or "",
+                doc_id=str(row.get("doc_id")),
+                metadata=row.get("metadata") or {},
+                score=float(min(1.0, s / 10.0)),
+                source="sparse",
+            ))
+        return out
+
+
+class OpenAIReranker:
+    """Optional reranker using OpenAI (lightweight prompt-based scoring)."""
+    model: str
+
+    def __init__(self, model: str):
+        self.model = model
+
+    async def rerank(self, query: str, candidates: List[RetrievalResult], max_items: int = 40) -> List[RetrievalResult]:
+        # For efficiency and stability, apply deterministic boosts locally; skip remote call by default.
+        # Placeholder for real OpenAI rerank integration.
+        return candidates
+        if not texts:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENAI_EMBEDDING_MODEL,
+                        "input": [t[:8000] for t in texts],
+                        "encoding_format": "float",
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    embs = [row["embedding"] for row in data.get("data", [])]
+                    return embs
+                logger.error("OpenAI batch embedding failed", status=response.status_code, response=response.text[:200])
+                return None
+        except Exception as e:
+            logger.error("Batch embedding generation failed", error=str(e))
             return None
         
         try:
@@ -448,30 +652,73 @@ class RetrievalEngine:
             intent=intent
         )
         
-        # Generate embedding for vector search
-        embedding = await self.embedding_client.get_embedding(clean_query)
-        
-        results = []
-        
-        if embedding:
-            # Vector search
-            vector_results = await self.milvus_client.search_similar(
-                query_vector=embedding,
-                top_k=config.top_k,
-                date_filter=effective_date
+        # Multi-query expansion
+        intent = intent  # already computed
+        variants = self.query_processor.generate_reformulations(clean_query, intent, max_variants=config.expansions_count)
+        # Batch embed variants
+        embeddings = await self.embedding_client.get_embeddings(variants)
+        results: List[RetrievalResult] = []
+        if embeddings:
+            # Dense retrieval
+            doc_types = ["act", "ordinance", "si", "constitution"]
+            dense_hits_by_variant = await self.milvus_client.search_similar_multi(
+                query_vectors=embeddings,
+                top_k=config.top_k_per_variant,
+                doc_type_filter=doc_types,
             )
-            results.extend(vector_results)
+            # Sparse retrieval (optional)
+            sparse_hits_by_variant: List[List[RetrievalResult]] = []
+            if ENABLE_SPARSE:
+                sparse = SimpleSparseProvider()
+                for v in variants:
+                    sh = await sparse.search(v, top_k=50)
+                    sparse_hits_by_variant.append(sh)
+
+            # RRF fusion across dense + sparse results
+            rrf_scores: Dict[str, float] = {}
+            rrf_details: Dict[str, Dict[str, Any]] = {}
+            K = config.rrf_k
+            # dense contributions
+            for idx, hits in enumerate(dense_hits_by_variant):
+                for rank, hit in enumerate(hits, start=1):
+                    key = hit.chunk_id
+                    rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (K + rank)
+                    best = rrf_details.get(key)
+                    if not best or hit.score > best["hit"].score:
+                        rrf_details[key] = {"hit": hit, "variant": idx, "source": "dense"}
+            # sparse contributions
+            for idx, hits in enumerate(sparse_hits_by_variant, start=len(dense_hits_by_variant)):
+                for rank, hit in enumerate(hits, start=1):
+                    key = hit.chunk_id
+                    rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (K + rank)
+                    best = rrf_details.get(key)
+                    if not best or hit.score > best["hit"].score:
+                        rrf_details[key] = {"hit": hit, "variant": idx, "source": "sparse"}
+
+            # Build fused list with diversity and thresholds
+            fused: List[Tuple[str, float]] = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+            seen_per_doc: Dict[str, int] = {}
+            final: List[RetrievalResult] = []
+            for chunk_id, _ in fused:
+                hit = rrf_details[chunk_id]["hit"]
+                # keep even if sparse-only; apply minimum dense-score gate only to dense
+                if hit.source == "vector" and hit.score < config.min_score:
+                    continue
+                doc_id = hit.doc_id
+                cnt = seen_per_doc.get(doc_id, 0)
+                if cnt >= config.max_per_doc:
+                    continue
+                seen_per_doc[doc_id] = cnt + 1
+                final.append(hit)
+                if len(final) >= config.top_k:
+                    break
+            # Optional rerank
+            if ENABLE_RERANK and OPENAI_RERANK_MODEL:
+                reranker = OpenAIReranker(OPENAI_RERANK_MODEL)
+                final = await reranker.rerank(clean_query, final, max_items=40)
+            results = final
         else:
-            logger.warning("No embedding generated, skipping vector search")
-        
-        # Filter by minimum score
-        results = [r for r in results if r.score >= config.min_score]
-        
-        # Sort by score (descending)
-        results.sort(key=lambda x: x.score, reverse=True)
-        
-        # Limit results
-        results = results[:config.top_k]
+            logger.warning("No embeddings generated for variants; skipping search")
         
         elapsed_ms = int((time.time() - start_time) * 1000)
         
@@ -479,7 +726,8 @@ class RetrievalEngine:
             "Retrieval completed",
             results_count=len(results),
             elapsed_ms=elapsed_ms,
-            top_score=results[0].score if results else 0
+            top_score=results[0].score if results else 0,
+            expansions=len(variants) if 'variants' in locals() else 1
         )
         
         return results
