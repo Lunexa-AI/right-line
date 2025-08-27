@@ -195,7 +195,7 @@ def upload_to_milvus(collection: Collection, data: List[Dict[str, Any]], batch_s
 
 def main():
     parser = argparse.ArgumentParser(description="Upload chunks with embeddings to Milvus Cloud")
-    parser.add_argument("--input_file", type=Path, default="data/processed/chunks_with_embeddings_fixed.jsonl", 
+    parser.add_argument("--input_file", type=Path, default="data/processed/chunks_with_embeddings.jsonl", 
                         help="Path to input JSONL file with embeddings")
     parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE,
                         help=f"Number of chunks to upload in each batch (default: {DEFAULT_BATCH_SIZE})")
