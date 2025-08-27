@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import httpx
 import structlog
@@ -34,6 +34,12 @@ OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embeddin
 
 # Cache configuration
 CACHE_TTL_SECONDS = 3600  # 1 hour
+
+# Data paths (for alias map and preconditions)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+DATA_PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
+DOCS_JSONL_PATH = os.path.join(DATA_PROCESSED_DIR, "docs.jsonl")
+CHUNKS_WITH_EMB_PATH = os.path.join(DATA_PROCESSED_DIR, "chunks_with_embeddings.jsonl")
 
 
 @dataclass
@@ -60,6 +66,18 @@ class RetrievalConfig(BaseModel):
 class QueryProcessor:
     """Process and normalize user queries."""
     
+    _alias_cache: Dict[str, Set[str]] = {}
+    _alias_cache_loaded_at: Optional[float] = None
+
+    STATUTE_SECTION_PATTERNS = [
+        # e.g., "section 12C of the Labour Act"
+        re.compile(r"\bsection\s+([0-9]+[A-Za-z]?)\b", re.IGNORECASE),
+        re.compile(r"\bs\.?\s*([0-9]+[A-Za-z]?)\b", re.IGNORECASE),
+        re.compile(r"\bsec\.?\s*([0-9]+[A-Za-z]?)\b", re.IGNORECASE),
+    ]
+
+    CHAPTER_PATTERN = re.compile(r"\bchapter\s*([0-9]{1,3}:[0-9]{2})\b", re.IGNORECASE)
+
     @staticmethod
     def normalize_query(text: str) -> str:
         """Normalize query text for consistent processing."""
@@ -90,6 +108,99 @@ class QueryProcessor:
         
         return text, None
     
+    @classmethod
+    def _load_alias_map(cls) -> Dict[str, Set[str]]:
+        """Load or rebuild a statute alias map from docs.jsonl.
+
+        Keys are normalized canonical titles; values include short titles, common names,
+        and chapter references (if present).
+        """
+        now = time.time()
+        if cls._alias_cache and cls._alias_cache_loaded_at and (now - cls._alias_cache_loaded_at) < CACHE_TTL_SECONDS:
+            return cls._alias_cache
+
+        alias_map: Dict[str, Set[str]] = {}
+        try:
+            with open(DOCS_JSONL_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    title = (obj.get('title') or '').strip()
+                    if not title:
+                        continue
+                    extra = obj.get('extra', {}) or {}
+                    chapter = (extra.get('chapter') or '').strip()
+                    # Normalize
+                    canon = QueryProcessor.normalize_query(title)
+                    aliases: Set[str] = set()
+                    aliases.add(canon)
+                    # Short title heuristic: text before '(' or 'Act'
+                    short = re.split(r"\(| act\b| ordinance\b| statutory instrument\b", title, flags=re.IGNORECASE)[0].strip()
+                    if short and short.lower() != title.lower():
+                        aliases.add(QueryProcessor.normalize_query(short))
+                    # Add chapter alias
+                    if chapter:
+                        aliases.add(f"chapter {chapter.lower()}")
+                    # Record
+                    alias_map[canon] = alias_map.get(canon, set()) | aliases
+        except FileNotFoundError:
+            logger.warning("docs.jsonl not found for alias map", path=DOCS_JSONL_PATH)
+        except Exception as e:
+            logger.warning("alias map load error", error=str(e))
+
+        cls._alias_cache = alias_map
+        cls._alias_cache_loaded_at = now
+        return alias_map
+
+    @classmethod
+    def find_statute_candidates(cls, text: str) -> List[str]:
+        """Return possible statute titles/aliases matched in the query."""
+        norm = cls.normalize_query(text)
+        alias_map = cls._load_alias_map()
+        hits: Set[str] = set()
+        # Exact alias containment scan (efficient set membership over small map)
+        for canon, aliases in alias_map.items():
+            for a in aliases:
+                if a and a in norm:
+                    hits.add(canon)
+                    break
+        return list(hits)[:5]
+
+    @classmethod
+    def extract_section_and_chapter(cls, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract first section number (e.g., 12C) and chapter (e.g., 28:01) if present."""
+        section = None
+        for pat in cls.STATUTE_SECTION_PATTERNS:
+            m = pat.search(text)
+            if m:
+                section = m.group(1).upper()
+                break
+        chap = None
+        m2 = cls.CHAPTER_PATTERN.search(text)
+        if m2:
+            chap = m2.group(1)
+        return section, chap
+
+    @classmethod
+    def detect_intent(cls, text: str) -> Dict[str, Any]:
+        """Detect intent flags and extracted targets from a user query."""
+        norm = cls.normalize_query(text)
+        section, chapter = cls.extract_section_and_chapter(norm)
+        statutes = cls.find_statute_candidates(norm)
+        intent = {
+            "section_lookup": bool(section and (statutes or chapter)),
+            "statute_lookup": bool(statutes and not section),
+            "general_question": not (statutes or section),
+            "section": section,
+            "chapter": chapter,
+            "statutes": statutes,
+        }
+        return intent
+
     @staticmethod
     def extract_keywords(text: str) -> List[str]:
         """Extract important keywords for hybrid search."""
@@ -277,6 +388,25 @@ class RetrievalEngine:
         self.milvus_client = MilvusClient()
         self.embedding_client = EmbeddingClient()
         self.query_processor = QueryProcessor()
+        self._preconditions_checked = False
+
+    def _check_preconditions(self) -> None:
+        """Validate Milvus and data availability once per engine instance."""
+        if self._preconditions_checked:
+            return
+        problems = []
+        if not MILVUS_ENDPOINT or not MILVUS_TOKEN:
+            problems.append("MILVUS env not configured")
+        if not os.path.exists(DOCS_JSONL_PATH):
+            problems.append(f"missing {DOCS_JSONL_PATH}")
+        if not os.path.exists(CHUNKS_WITH_EMB_PATH):
+            problems.append(f"missing {CHUNKS_WITH_EMB_PATH}")
+        if problems:
+            logger.warning("retrieval preconditions", problems=problems)
+        else:
+            logger.info("retrieval preconditions ok")
+        # Always mark to avoid repeated checks per request
+        self._preconditions_checked = True
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -298,9 +428,13 @@ class RetrievalEngine:
         
         start_time = time.time()
         
-        # Process query
+        # Preconditions (one-time per engine lifetime)
+        self._check_preconditions()
+
+        # Process query: normalize, detect date, intent
         normalized_query = self.query_processor.normalize_query(query)
         clean_query, date_context = self.query_processor.extract_date_context(normalized_query)
+        intent = self.query_processor.detect_intent(clean_query)
         
         # Use date from config or extracted date
         effective_date = config.date_filter or date_context
@@ -310,7 +444,8 @@ class RetrievalEngine:
             original_query=query[:100],
             normalized_query=clean_query[:100],
             date_filter=effective_date,
-            top_k=config.top_k
+            top_k=config.top_k,
+            intent=intent
         )
         
         # Generate embedding for vector search
