@@ -39,7 +39,7 @@ logger = structlog.get_logger()
 
 # Default configuration
 DEFAULT_BATCH_SIZE = 64
-DEFAULT_MODEL = "text-embedding-3-small"
+DEFAULT_MODEL = "text-embedding-3-large"
 DEFAULT_DIMENSIONS = 1536
 
 def get_openai_client() -> OpenAI:
