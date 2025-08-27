@@ -7,13 +7,14 @@
     {
       "source": "/webhook",
       "destination": "/api/main.py"
-    }
-  ],
-  "redirects": [
+    },
     {
       "source": "/",
-      "destination": "/index.html",
-      "permanent": false
+      "destination": "/web/index.html"
+    },
+    {
+      "source": "/((?!api).*)",
+      "destination": "/web/$1"
     }
   ],
   "headers": [
