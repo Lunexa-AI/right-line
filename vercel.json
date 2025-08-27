@@ -9,11 +9,43 @@
       "destination": "/api/main.py"
     },
     {
+      "source": "/favicon.ico",
+      "destination": "/.vercel/public/favicon.ico"
+    },
+    {
+      "source": "/favicon.svg",
+      "destination": "/.vercel/public/favicon.svg"
+    },
+    {
+      "source": "/favicon-16x16.png",
+      "destination": "/.vercel/public/favicon-16x16.png"
+    },
+    {
+      "source": "/favicon-32x32.png",
+      "destination": "/.vercel/public/favicon-32x32.png"
+    },
+    {
+      "source": "/apple-touch-icon.png",
+      "destination": "/.vercel/public/apple-touch-icon.png"
+    },
+    {
+      "source": "/icon-192.png",
+      "destination": "/.vercel/public/icon-192.png"
+    },
+    {
+      "source": "/icon-512.png",
+      "destination": "/.vercel/public/icon-512.png"
+    },
+    {
+      "source": "/site.webmanifest",
+      "destination": "/.vercel/public/site.webmanifest"
+    },
+    {
       "source": "/",
       "destination": "/web/index.html"
     },
     {
-      "source": "/((?!api).*)",
+      "source": "/((?!api|favicon|icon|site\\.webmanifest).*)",
       "destination": "/web/$1"
     }
   ],
