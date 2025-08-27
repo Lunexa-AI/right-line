@@ -6,15 +6,38 @@
     <meta name="description" content="Gweta - Free Zimbabwe legal information service. Get instant answers to your legal questions.">
     <title>Gweta - Zimbabwe Legal Information</title>
     
-    <!-- Favicon and App Icons -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+    <!-- Dynamic Favicon System - Force larger icons and prevent caching -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" id="favicon-192">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" id="favicon-apple">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" id="favicon-32">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" id="favicon-ico">
     <link rel="manifest" href="/site.webmanifest">
+    
+    <script>
+        // Dynamic favicon system to force browser refresh and larger icons
+        function updateFavicons() {
+            const timestamp = Date.now();
+            const favicons = [
+                { id: 'favicon-192', href: '/icon-192.png' },
+                { id: 'favicon-apple', href: '/apple-touch-icon.png' },
+                { id: 'favicon-32', href: '/favicon-32x32.png' },
+                { id: 'favicon-ico', href: '/favicon.ico' }
+            ];
+            
+            favicons.forEach(favicon => {
+                const link = document.getElementById(favicon.id);
+                if (link) {
+                    link.href = `${favicon.href}?t=${timestamp}`;
+                }
+            });
+        }
+        
+        // Force favicon refresh on page load
+        document.addEventListener('DOMContentLoaded', updateFavicons);
+        
+        // Periodically refresh favicons to ensure visibility
+        setInterval(updateFavicons, 30000); // Every 30 seconds
+    </script>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
