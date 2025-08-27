@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="RIGHTLINE_",
-        env_file=None,  # Disable .env file loading temporarily
+        env_file=".env.local",  # Enable .env.local file loading for development
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
