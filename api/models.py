@@ -7,59 +7,32 @@ All models follow the .cursorrules guidelines for validation and structure.
 from __future__ import annotations
 
 import time
-from typing import Literal
+from typing import Literal, Any, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class QueryRequest(BaseModel):
-    """Request model for legal query endpoint.
-    
-    Attributes:
-        text: The legal question or query text (3-1000 characters)
-        lang_hint: Optional language hint for response (en/sn/nd)
-        date_ctx: Optional date context for temporal queries (ISO format)
-        channel: Channel identifier (web/whatsapp/telegram)
-    """
-    
-    text: str = Field(
-        min_length=3,
-        max_length=1000,
-        description="Legal question or query text",
-        example="What is the minimum wage in Zimbabwe?",
-    )
-    lang_hint: Literal["en", "sn", "nd"] | None = Field(
-        default=None,
-        description="Language hint for response (en=English, sn=Shona, nd=Ndebele)",
-        example="en",
-    )
-    date_ctx: str | None = Field(
-        default=None,
-        description="Date context for temporal queries (ISO format)",
-        example="2024-01-01",
-    )
-    channel: str = Field(
-        default="web",
-        max_length=16,
-        description="Channel identifier",
-        example="web",
-    )
-    
-    @validator("text")
-    def validate_text(cls, v: str) -> str:
-        """Validate and clean query text."""
-        # Strip whitespace and control characters
-        cleaned = "".join(char for char in v.strip() if ord(char) >= 32)
-        if len(cleaned) < 3:
-            raise ValueError("Query text must be at least 3 characters long")
-        return cleaned
-    
-    @validator("channel")
-    def validate_channel(cls, v: str) -> str:
-        """Validate channel identifier."""
-        allowed_channels = {"web", "whatsapp", "telegram", "api"}
-        if v not in allowed_channels:
-            raise ValueError(f"Channel must be one of: {', '.join(allowed_channels)}")
+    """Request model for a user query."""
+    text: str = Field(..., max_length=1024, description="User query text", example="What is the minimum wage?")
+    lang_hint: Optional[str] = Field("en", description="Language hint for the query (e.g., 'en', 'sn')", example="en")
+    channel: str = Field("web", description="Channel the query originated from (e.g., 'web', 'whatsapp')", example="web")
+    date_ctx: Optional[str] = Field(None, description="Date context for the query (e.g., '2023-10-26')", example="2023-10-26")
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_empty(cls, v: str) -> str:
+        """Validate that the query text is not empty."""
+        if not v.strip():
+            raise ValueError("Query text must not be empty")
+        return v
+
+    @field_validator("channel")
+    @classmethod
+    def channel_must_be_valid(cls, v: str) -> str:
+        """Validate that the channel is one of the allowed values."""
+        if v not in ["web", "whatsapp", "test"]:
+            raise ValueError("Invalid channel specified")
         return v
 
 
@@ -141,33 +114,10 @@ class QueryResponse(BaseModel):
         description="Brief summary of the legal information",
         example="Minimum wage in Zimbabwe is USD $175 per month. Employers must pay this or higher amount.",
     )
-    key_points: list[str] = Field(
-        max_items=5,
-        description="3-5 key points, each ≤25 words",
-        example=[
-            "Current minimum wage is USD $175 per month for all sectors",
-            "Employers cannot pay below this statutory minimum",
-            "Violations result in fines up to USD $500"
-        ],
-    )
-    citations: list[Citation] = Field(
-        description="List of source citations",
-        example=[],
-    )
-    suggestions: list[str] = Field(
-        max_items=3,
-        description="2-3 follow-up questions",
-        example=[
-            "How are overtime payments calculated?",
-            "What are the penalties for late wage payments?"
-        ],
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score for the response",
-        example=0.85,
-    )
+    key_points: List[str] = Field(..., max_length=10, description="Key points summarizing the answer.", example=["The minimum wage is $1.50 per hour for domestic workers."])
+    citations: List[Citation] = Field(..., description="List of citations used to generate the answer.")
+    suggestions: List[str] = Field(..., max_length=5, description="Suggested follow-up questions.", example=["What are the working hours for domestic workers?"])
+    confidence: float = Field(..., description="Confidence score of the answer (0.0 to 1.0).", example=0.95)
     source: str = Field(
         description="How the answer was composed",
         example="hybrid",
@@ -177,40 +127,23 @@ class QueryResponse(BaseModel):
         description="Request identifier for tracking",
         example="req_1234567890",
     )
-    processing_time_ms: float | None = Field(
-        default=None,
-        description="Processing time in milliseconds",
-        example=150.5,
-    )
+    processing_time_ms: Optional[int] = Field(None, description="Time taken to process the query in milliseconds.", example=543)
     
-    @validator("key_points")
-    def validate_key_points(cls, v: list[str]) -> list[str]:
-        """Validate key points format and length."""
-        if len(v) < 3:
-            # Add default if not enough points
-            defaults = ["Information available in legal documents", "Consult qualified legal counsel for advice"]
-            v.extend(defaults[:3-len(v)])
-        
-        # Truncate points that are too long
-        for i, point in enumerate(v):
-            words = point.split()
-            if len(words) > 25:
-                v[i] = ' '.join(words[:25]) + '...'
-        
-        return v[:5]  # Limit to 5 points
-    
-    @validator("suggestions")
-    def validate_suggestions(cls, v: list[str]) -> list[str]:
-        """Validate suggestions format."""
-        if len(v) < 2:
-            # Add default suggestions if not enough
-            defaults = [
-                "What are the key employment rights in Zimbabwe?",
-                "How do I file a complaint with labour authorities?"
-            ]
-            v.extend(defaults[:2-len(v)])
-        
-        return v[:3]  # Limit to 3 suggestions
+    @field_validator("key_points")
+    @classmethod
+    def key_points_must_not_be_empty(cls, v: List[str]) -> List[str]:
+        """Validate that key points are not empty."""
+        if not v:
+            raise ValueError("Key points must not be empty")
+        return v
+
+    @field_validator("suggestions")
+    @classmethod
+    def suggestions_must_not_be_empty(cls, v: List[str]) -> List[str]:
+        """Validate that suggestions are not empty."""
+        if not v:
+            raise ValueError("Suggestions must not be empty")
+        return v
 
 
 class HealthResponse(BaseModel):
