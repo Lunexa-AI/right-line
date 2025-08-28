@@ -1,6 +1,6 @@
 {
   "builds": [
-    { "src": "public/**/*", "use": "@vercel/static" },
+    { "src": "public", "use": "@vercel/static-build" },
     { "src": "api/main.py", "use": "@vercel/python" }
   ],
   "routes": [
