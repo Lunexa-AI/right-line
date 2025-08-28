@@ -1,18 +1,11 @@
 {
   "builds": [
-    {
-      "src": "api/main.py",
-      "use": "@vercel/python"
-    }
+    { "src": "public/**/*", "use": "@vercel/static" },
+    { "src": "api/main.py", "use": "@vercel/python" }
   ],
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/main.py"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/api/main.py"
-    }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/main.py" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
