@@ -1,4 +1,10 @@
 {
+  "builds": [
+    {
+      "src": "api/main.py",
+      "use": "@vercel/python"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
@@ -41,31 +47,8 @@
       "destination": "/web/site.webmanifest"
     },
     {
-      "source": "/",
+      "source": "/(.*)",
       "destination": "/web/index.html"
-    },
-    {
-      "source": "/((?!api|favicon|icon|site\\.webmanifest).*)",
-      "destination": "/web/$1"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, X-User-ID, X-Session-ID"
-        }
-      ]
     }
   ]
 }
