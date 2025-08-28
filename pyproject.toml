@@ -20,7 +20,7 @@ classifiers = [
     "Framework :: FastAPI",
 ]
 packages = [
-    { include = "services" },
+    { include = "api" },
     { include = "libs" },
 ]
 
@@ -183,21 +183,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = """
-    -ra
-    --strict-markers
-    --strict-config
-    --cov=services
-    --cov=libs
-    --cov-branch
-    --cov-report=term-missing:skip-covered
-    --cov-report=html:reports/coverage
-    --cov-report=xml
-    --cov-fail-under=80
-    --maxfail=1
-    --tb=short
-    --asyncio-mode=auto
-"""
+addopts = "-ra --strict-markers --strict-config --cov=api --cov=libs --cov-branch --cov-report=term-missing:skip-covered --cov-report=html:reports/coverage --cov-report=xml --cov-fail-under=80 --maxfail=1 --tb=short --asyncio-mode=auto"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",

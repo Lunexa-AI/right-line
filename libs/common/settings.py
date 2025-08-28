@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str | None = None
 
     # Monitoring
-    sentry_dsn: str | None = None
+    sentry_dsn: str | None = Field(
+        default=None,
+        description="Sentry DSN for error monitoring. If not set, Sentry will not be initialized.",
+    )
 
     # RAG Configuration
     search_top_k: int = 20
@@ -63,9 +66,10 @@ class Settings(BaseSettings):
 
 
 
-    @validator("secret_key")
-    def validate_secret_key(cls, v):
-        """Ensure secret key is strong enough."""
+    @field_validator("secret_key")
+    @classmethod
+    def secret_key_must_be_long_enough(cls, v: str) -> str:
+        """Validate that the secret key is at least 32 characters long."""
         if len(v) < 32:
             raise ValueError("Secret key must be at least 32 characters long")
         return v
