@@ -11,12 +11,8 @@
       "destination": "/api/main.py"
     },
     {
-      "source": "/webhook",
-      "destination": "/api/main.py"
-    },
-    {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "/api/main.py"
     }
   ]
 }
