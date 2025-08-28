@@ -1,2 +1,30 @@
-TDD Always, write tests before implementing any feature, unit or logic, 
-Write clean, maintainable, scalable, very efficient software always,
+# CORE PRINCIPLES
+
+- **Test-Driven Development (TDD) is mandatory.** Always write failing unit or integration tests before implementing any new feature, logic, or bug fix. Ensure tests are clean, readable, and cover all critical paths.
+- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures.
+- **Asynchronous & Concurrent by Default.** Design all I/O-bound and long-running operations to be asynchronous using `async/await`. Employ concurrency, multithreading, and parallelism to maximize performance and ensure non-blocking execution.
+
+# ARCHITECTURE & TECHNOLOGY STACK
+
+- **API First with FastAPI.** All backend services will be built using FastAPI. Leverage its asynchronous capabilities, dependency injection, and automatic documentation generation.
+- **Pydantic for Data Integrity.** Use Pydantic for all data modeling, validation, and settings management. Ensure strict type enforcement and clear data contracts.
+- **AI-Native & Cloud-Native.** Design applications to be cloud-agnostic and containerized (Docker/Kubernetes). Integrate AI/ML capabilities as core components, not afterthoughts. Focus on low-latency, highly scalable, and resilient microservices.
+- **Infrastructure as Code (IaC).** All cloud infrastructure must be defined and managed as code (e.g., Terraform, Pulumi) and version-controlled in the repository.
+- **Firebase for Authentication.** Use Firebase Authentication for all user management and security. Implement secure, token-based access control for all protected endpoints.
+
+# OPERATIONS & SECURITY
+
+- **Comprehensive Observability.** Implement structured logging, distributed tracing, and metrics for all services. Ensure dashboards are in place to monitor application health, performance, and key business metrics.
+- **Security by Design.** Conduct regular dependency scans and security audits. All secrets and sensitive configurations must be managed via a secure vault (e.g., cloud provider's secret manager). Apply the principle of least privilege throughout the system.
+
+# PERFORMANCE & UI
+
+- **High Efficiency & Low Latency.** Optimize every layer of the application for speed. Profile and benchmark critical code paths. Minimize database queries and network overhead.
+- **Minimal & Modern UI.** User interfaces should be clean, intuitive, and responsive. Focus on core functionality and a seamless user experience. Avoid unnecessary visual clutter.
+
+# DEVELOPMENT WORKFLOW
+
+- **Always work on a separate branch.**
+- **A descriptive pull request must be created for every feature or fix.**
+- **All tests must pass, and code must be linted before merging.**
+- **Maintain up-to-date documentation.** Keep API documentation current (FastAPI helps) and maintain a concise architectural overview.
