@@ -13,42 +13,6 @@
     {
       "source": "/webhook",
       "destination": "/api/main.py"
-    },
-    {
-      "source": "/favicon.ico",
-      "destination": "/web/favicon.ico"
-    },
-    {
-      "source": "/favicon.svg",
-      "destination": "/web/favicon.svg"
-    },
-    {
-      "source": "/favicon-16x16.png",
-      "destination": "/web/favicon-16x16.png"
-    },
-    {
-      "source": "/favicon-32x32.png",
-      "destination": "/web/favicon-32x32.png"
-    },
-    {
-      "source": "/apple-touch-icon.png",
-      "destination": "/web/apple-touch-icon.png"
-    },
-    {
-      "source": "/icon-192.png",
-      "destination": "/web/icon-192.png"
-    },
-    {
-      "source": "/icon-512.png",
-      "destination": "/web/icon-512.png"
-    },
-    {
-      "source": "/site.webmanifest",
-      "destination": "/web/site.webmanifest"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/web/index.html"
     }
   ]
 }
