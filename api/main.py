@@ -138,8 +138,8 @@ def create_app() -> FastAPI:
 app = create_app()
 
 # Mount static files for local development
-if os.path.exists("public"):
-    app.mount("/static", StaticFiles(directory="public"), name="static")
+if os.path.exists("web"):
+    app.mount("/static", StaticFiles(directory="web"), name="static")
 
 @app.get("/", include_in_schema=False)
 async def serve_index():
@@ -155,27 +155,27 @@ async def serve_index():
 async def favicon_ico():
     """Serve favicon.ico - use geometric G design, prioritize larger icons."""
     # Prioritize larger icons for better visibility in browser tabs
-    if os.path.exists("public/icon-192.png"):
-        response = FileResponse("public/icon-192.png", media_type="image/png")
+    if os.path.exists("web/icon-192.png"):
+        response = FileResponse("web/icon-192.png", media_type="image/png")
         # Add cache-busting headers for dynamic favicon updates
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
         return response
-    elif os.path.exists("public/apple-touch-icon.png"):
-        response = FileResponse("public/apple-touch-icon.png", media_type="image/png")
+    elif os.path.exists("web/apple-touch-icon.png"):
+        response = FileResponse("web/apple-touch-icon.png", media_type="image/png")
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
         return response
-    elif os.path.exists("public/favicon-32x32.png"):
-        response = FileResponse("public/favicon-32x32.png", media_type="image/png")
+    elif os.path.exists("web/favicon-32x32.png"):
+        response = FileResponse("web/favicon-32x32.png", media_type="image/png")
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
         return response
-    elif os.path.exists("public/favicon.ico"):
-        response = FileResponse("public/favicon.ico", media_type="image/x-icon")
+    elif os.path.exists("web/favicon.ico"):
+        response = FileResponse("web/favicon.ico", media_type="image/x-icon")
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -186,42 +186,42 @@ async def favicon_ico():
 @app.get("/favicon.svg", include_in_schema=False)
 async def favicon_svg():
     """Serve favicon.svg - fallback to 32x32 PNG if SVG doesn't exist."""
-    if os.path.exists("public/favicon.svg"):
-        return FileResponse("public/favicon.svg", media_type="image/svg+xml")
-    elif os.path.exists("public/favicon-32x32.png"):
-        return FileResponse("public/favicon-32x32.png", media_type="image/png")
+    if os.path.exists("web/favicon.svg"):
+        return FileResponse("web/favicon.svg", media_type="image/svg+xml")
+    elif os.path.exists("web/favicon-32x32.png"):
+        return FileResponse("web/favicon-32x32.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="Favicon SVG not found")
 
 
 @app.get("/favicon-16x16.png", include_in_schema=False)
 async def favicon_16():
     """Serve 16x16 favicon."""
-    if os.path.exists("public/favicon-16x16.png"):
-        return FileResponse("public/favicon-16x16.png", media_type="image/png")
+    if os.path.exists("web/favicon-16x16.png"):
+        return FileResponse("web/favicon-16x16.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="Favicon 16x16 not found")
 
 
 @app.get("/favicon-32x32.png", include_in_schema=False)
 async def favicon_32():
     """Serve 32x32 favicon."""
-    if os.path.exists("public/favicon-32x32.png"):
-        return FileResponse("public/favicon-32x32.png", media_type="image/png")
+    if os.path.exists("web/favicon-32x32.png"):
+        return FileResponse("web/favicon-32x32.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="Favicon 32x32 not found")
 
 
 @app.get("/apple-touch-icon.png", include_in_schema=False)
 async def apple_touch_icon():
     """Serve Apple touch icon."""
-    if os.path.exists("public/apple-touch-icon.png"):
-        return FileResponse("public/apple-touch-icon.png", media_type="image/png")
+    if os.path.exists("web/apple-touch-icon.png"):
+        return FileResponse("web/apple-touch-icon.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="Apple touch icon not found")
 
 
 @app.get("/icon-192.png", include_in_schema=False)
 async def icon_192():
     """Serve 192x192 icon."""
-    if os.path.exists("public/icon-192.png"):
-        response = FileResponse("public/icon-192.png", media_type="image/png")
+    if os.path.exists("web/icon-192.png"):
+        response = FileResponse("web/icon-192.png", media_type="image/png")
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -232,16 +232,16 @@ async def icon_192():
 @app.get("/icon-512.png", include_in_schema=False)
 async def icon_512():
     """Serve 512x512 icon."""
-    if os.path.exists("public/icon-512.png"):
-        return FileResponse("public/icon-512.png", media_type="image/png")
+    if os.path.exists("web/icon-512.png"):
+        return FileResponse("web/icon-512.png", media_type="image/png")
     raise HTTPException(status_code=404, detail="Icon 512x512 not found")
 
 
 @app.get("/site.webmanifest", include_in_schema=False)
 async def web_manifest():
     """Serve web app manifest."""
-    if os.path.exists("public/site.webmanifest"):
-        return FileResponse("public/site.webmanifest", media_type="application/manifest+json")
+    if os.path.exists("web/site.webmanifest"):
+        return FileResponse("web/site.webmanifest", media_type="application/manifest+json")
     raise HTTPException(status_code=404, detail="Web manifest not found")
 
 
