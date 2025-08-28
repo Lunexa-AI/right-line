@@ -1,8 +1,4 @@
 {
-  "builds": [
-    { "src": "public", "use": "@vercel/static-build" },
-    { "src": "api/main.py", "use": "@vercel/python" }
-  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/main.py" },
     { "handle": "filesystem" },
