@@ -16,10 +16,9 @@
 
 Gweta is an AI‑native legal assistant and workbench for Zimbabwe.
 
-- **Gweta Web (Enterprise)**: An enterprise research workbench for law firms, enterprises, and government. It uses an advanced agentic RAG pipeline to deliver evidence-based answers with citations, and is designed to handle complex, multi-step legal queries.
-- **Gweta WhatsApp (Citizens)**: A free chatbot for ordinary citizens (planned continuity), built on the same retrieval foundation.
+- **Gweta Enterprise (Web)**: An enterprise research workbench for law firms, enterprises, and government. It uses an advanced agentic RAG pipeline to deliver evidence-based answers with citations, and is designed to handle complex, multi-step legal queries.
+- **Gweta Friend (Whatsapp)**: A free chatbot for ordinary citizens (planned continuity), built on the same retrieval foundation.
 
-Speak in natural language (English, Shona, or Ndebele) and get cited answers from authoritative sources.
 
 ## ✨ Capabilities
 
@@ -34,11 +33,6 @@ Speak in natural language (English, Shona, or Ndebele) and get cited answers fro
 > For detailed technical documentation, architecture, and contribution guides, please see the [**Gweta Documentation Hub**](docs/README.md).
 
 ---
-
-## 🙏 Acknowledgments
-
-- Zimbabwe Legal Information Institute (ZimLII) for legal content
-- The open-source community for the amazing tools we build upon
 
 ## 📞 Contact
 
