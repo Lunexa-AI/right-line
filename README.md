@@ -1,14 +1,14 @@
 # Gweta — AI Legal Workbench for Zimbabwe
 
 <p align="center">
-  <strong>AI‑first legal research and workflows for Zimbabwe.</strong><br>
-  Enterprise‑grade, evidence‑first, and built to become agentic.
+  <strong>An agentic, AI‑first legal research and workflow assistant for Zimbabwe.</strong><br>
+  Enterprise‑grade, evidence‑first, and built for complex reasoning.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11+-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-MVP-orange">
+  <img alt="Status" src="https://img.shields.io/badge/status-v2.0%20(In%20Dev)-blue">
   <a href="https://github.com/Lunexa-AI/right-line/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Lunexa-AI/right-line"></a>
 </p>
 
@@ -16,28 +16,27 @@
 
 Gweta is an AI‑native legal assistant and workbench for Zimbabwe.
 
-- **Gweta Web (Enterprise)**: an enterprise research workbench for law firms, enterprises, and government. Evidence‑first RAG with citations — designed to evolve into agentic tooling (drafting, tool calling, strategy workflows, document analysis).
-- **Gweta WhatsApp (Citizens)**: a free chatbot for ordinary citizens (planned continuity), built on the same retrieval foundation.
+- **Gweta Web (Enterprise)**: An enterprise research workbench for law firms, enterprises, and government. It uses an advanced agentic RAG pipeline to deliver evidence-based answers with citations, and is designed to handle complex, multi-step legal queries.
+- **Gweta WhatsApp (Citizens)**: A free chatbot for ordinary citizens (planned continuity), built on the same retrieval foundation.
 
 Speak in natural language (English, Shona, or Ndebele) and get cited answers from authoritative sources.
 
-## ✨ MVP Capabilities (Today)
+## ✨ v2.0 Capabilities
 
-- **Research Omnibox**: Ask anything about Zimbabwean law; get a TL;DR, key points, and citations.
-- **High‑quality retrieval**: OpenAI embeddings → Milvus Cloud → lightweight reranking.
-- **Cited answers**: Every response includes sources; copy/share/feedback controls.
-- **Fast**: Target P95 < 2s on typical networks.
-- **Accessible**: Dark/light, keyboard flow, mobile‑friendly.
+- **Agentic Reasoning**: Decomposes complex questions, rewrites queries for clarity, and validates evidence before answering.
+- **Advanced Hybrid Retrieval**: Combines dense vector search (Milvus), keyword search (BM25), and a powerful reranker (`BGE-reranker-v2`) for high-precision results.
+- **Personalized & Stateful**: Remembers conversation history and user context via Firebase to provide more relevant answers over time.
+- **Cited, High-Quality Answers**: Every response includes sources. The system uses a "small-to-big" retrieval strategy, searching small chunks but providing the LLM with full parent documents for better context.
+- **Secure & Scalable**: Serverless architecture on Vercel with JWT-based authentication via Firebase.
 
-## 🌱 Coming in V2 (Agentic Workflows)
+## 🌱 Future Roadmap
 
-- **Document uploads and analysis** (PDF/DOCX): summarize, compare, extract; per‑matter context.
-- **Tool calling / Agents**: drafting assistants, clause finder, citation checker, web search.
-- **Case/matter workspaces**: multi‑doc reasoning, history, notes, and tasks.
-- **Team & client onboarding**: roles/permissions, secure sharing.
+- **Document Uploads and Analysis** (PDF/DOCX): Summarize, compare, extract; per‑matter context.
+- **Tool Calling / Agents**: Drafting assistants, clause finder, citation checker, web search.
+- **Case/Matter Workspaces**: Multi‑doc reasoning, history, notes, and tasks.
 - **Connectors**: Google Drive/OneDrive/SharePoint; email intake.
 
-See the detailed roadmaps in `docs/project/MVP_ARCHITECTURE.md` and `docs/project/V2_ARCHITECTURE.md`.
+See the detailed plan in the [`docs/project/MVP_TASK_LIST.md`](docs/project/MVP_TASK_LIST.md).
 
 ## 🚀 Quick Start
 
@@ -45,8 +44,9 @@ See the detailed roadmaps in `docs/project/MVP_ARCHITECTURE.md` and `docs/projec
 
 - Python 3.11+
 - Node.js 18+ (for Vercel CLI)
+- **Firebase Project** (for authentication and Firestore)
 - OpenAI API account
-- Milvus Cloud account (optional for Phase 1)
+- Milvus Cloud account
 
 ### Installation
 
@@ -60,18 +60,24 @@ make setup
 
 # Copy environment variables
 cp configs/example.env .env.local
-# Edit .env.local with your OpenAI API key and other configuration
-
-# Start Vercel development server
-make dev
+# Edit .env.local with your API keys (OpenAI, Milvus) and Firebase config
 ```
 
-### Basic Usage
+### Running Locally
+1.  **Start the frontend/backend server**:
+    ```bash
+    make dev
+    ```
+2.  **Authenticate**: The web interface (running on `http://localhost:3000`) will now require you to sign up or log in.
+3.  **Get a JWT Token**: Use your browser's developer tools to find the JWT token sent in the `Authorization` header of an API request after you log in.
+4.  **Make an API request**:
 
 ```bash
 # Example API request (local development)
+# Replace YOUR_JWT_TOKEN_HERE with the token from your browser
 curl -X POST http://localhost:3000/api/v1/query \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
   -d '{
     "text": "What is the penalty for theft?",
     "lang_hint": "en"
@@ -79,29 +85,35 @@ curl -X POST http://localhost:3000/api/v1/query \
 
 # Response
 {
-  "summary_3_lines": "Theft carries imprisonment up to 10 years.\nFine may be imposed instead or in addition.\nCourt considers value and circumstances.",
-  "section_ref": {
-    "act": "Criminal Law Act",
-    "chapter": "9:23",
-    "section": "113"
-  },
+  "tldr": "Theft can result in imprisonment for up to 10 years, or a fine, or both, depending on the circumstances of the case.",
+  "key_points": [
+    "The maximum penalty for theft is imprisonment for a period not exceeding ten years.",
+    "A fine may be imposed as an alternative to, or in addition to, imprisonment.",
+    "The court considers the value of the stolen property and other aggravating or mitigating factors."
+  ],
   "citations": [{
     "title": "Criminal Law (Codification and Reform) Act",
     "url": "...",
-    "page": 47
+    "page": null,
+    "sha": null
   }],
-  "confidence": 0.92
+  "suggestions": [
+    "What factors does a court consider when sentencing for theft?",
+    "Tell me more about the Criminal Law (Codification and Reform) Act"
+  ],
+  "confidence": 0.92,
+  "source": "hybrid",
+  "request_id": "req_167...",
+  "processing_time_ms": 2345
 }
 ```
 
 ## 📚 Documentation
 
-- [**MVP Architecture**](docs/project/MVP_ARCHITECTURE.md) — Search/Research MVP on Vercel + Milvus + OpenAI
-- [**V2 Architecture**](docs/project/V2_ARCHITECTURE.md) — Agentic extensions (uploads, drafting, workspaces)
-- [**Quick Start**](docs/QUICKSTART.md) - Get running in 5 minutes
-- [**Deployment Guide**](docs/DEPLOYMENT.md) - Vercel deployment instructions
-- [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to Gweta
-- [**MVP Task List**](docs/project/MVP_TASK_LIST.md) - Development milestones and progress
+- [**v2.0 Architecture**](docs/project/MVP_ARCHITECTURE.md) — The complete design for the agentic RAG system.
+- [**v2.0 Task List**](docs/project/MVP_TASK_LIST.md) — Development milestones for the v2.0 migration.
+- [**Quick Start**](docs/QUICKSTART.md) - Get running in 5 minutes.
+- [**Contributing**](docs/project/CONTRIBUTING.md) - How to contribute to Gweta.
 
 ## 🛠️ Development
 
@@ -119,20 +131,20 @@ make security
 make help
 ```
 
-> **Note**: Pre-commit hooks are currently disabled for rapid MVP development. See [CI Management Guide](docs/development/ci-management.md) for details.
+## 🏗️ Architecture (v2.0)
 
-## 🏗️ Architecture (MVP)
+A modular, agentic system built on a serverless stack:
 
-Serverless and unover‑engineered:
-
-- **Vercel Functions (FastAPI + Mangum)** handle `/api/v1/query` and analytics.
-- **Milvus Cloud** stores chunk embeddings for fast similarity search.
-- **OpenAI** provides embeddings and answer composition.
-- Static **web/** UI delivers an AI‑native chat/research experience.
+- **Vercel Functions (FastAPI + Mangum)**: Handles the API layer, including the core agentic engine.
+- **Firebase**: Provides user authentication (Auth) and state management (Firestore) for conversations and user profiles.
+- **Milvus Cloud**: Stores dense vector embeddings for semantic search.
+- **BM25 Index**: Powers sparse, keyword-based search for hybrid retrieval.
+- **OpenAI**: Used for embeddings, agentic reasoning (planning), and final answer synthesis.
+- **Static Web UI**: Delivers a secure, authenticated AI‑native chat/research experience.
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+We welcome contributions! Please see [CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for:
 - Development setup
 - Code style guidelines
 - Pull request process

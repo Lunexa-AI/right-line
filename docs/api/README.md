@@ -1,22 +1,26 @@
-# API Documentation
+# API Documentation (v2.0)
 
 ## Overview
 
-Gweta provides a RESTful API for legal information queries. The API is designed for low latency and high reliability.
+Gweta provides a RESTful API for advanced legal information queries. The v2.0 API is stateful, personalized, and built around an agentic RAG (Retrieval-Augmented Generation) engine.
 
 ## Base URL
 
-- **Production**: `https://api.gweta.zw/v1`
-- **Staging**: `https://staging-api.gweta.zw/v1`
-- **Local**: `http://localhost:8000/v1`
+- **Production**: `https://gweta.vercel.app/api`
+- **Local**: `http://localhost:3000/api`
 
 ## Authentication
 
-Currently, the API is open for MVP development. Production will require API keys:
+Authentication is mandatory for all core endpoints and is handled via **Firebase Authentication**. Clients must acquire a JWT token from Firebase and include it in the `Authorization` header for every request.
+
+**Flow**:
+1.  Client authenticates with Firebase (e.g., using Firebase SDK for Web).
+2.  Firebase returns a JWT token.
+3.  Client sends this token with every API request.
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-     https://api.gweta.zw/v1/query
+curl -H "Authorization: Bearer <FIREBASE_JWT_TOKEN>" \
+     https://gweta.vercel.app/api/v1/query
 ```
 
 ## Endpoints
@@ -25,170 +29,148 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 **POST** `/v1/query`
 
-Submit a legal question and receive relevant statute sections.
+Submits a legal question to the agentic engine. This is a stateful endpoint that can use a `session_id` to maintain conversational context.
 
-#### Request
+#### Request Body
 
 ```json
 {
   "text": "What is the penalty for theft?",
+  "session_id": "user_session_abc123",
   "lang_hint": "en",
   "date_ctx": "2024-01-01",
-  "channel": "whatsapp"
+  "channel": "web"
 }
 ```
+- `text` (string, required): The user's query.
+- `session_id` (string, optional): An ID to link conversational turns. If omitted, a new conversation context may be created.
 
-#### Response
+#### Response Body (`200 OK`)
 
 ```json
 {
-  "summary_3_lines": "Theft carries imprisonment up to 10 years.\nFine may be imposed instead or in addition.\nCourt considers value and circumstances.",
-  "section_ref": {
-    "act": "Criminal Law Act",
-    "chapter": "9:23", 
-    "section": "113",
-    "version": "2024"
-  },
+  "tldr": "Theft can result in imprisonment for up to 10 years, or a fine, or both, depending on the circumstances.",
+  "key_points": [
+    "The maximum penalty for theft is imprisonment up to 10 years.",
+    "A fine may be imposed as an alternative or in addition.",
+    "The court considers the value of stolen property and other factors."
+  ],
   "citations": [
     {
       "title": "Criminal Law (Codification and Reform) Act",
       "url": "https://...",
-      "page": 47,
-      "sha": "abc123..."
+      "page": null,
+      "sha": null
     }
   ],
+  "suggestions": [
+    "What factors does a court consider when sentencing for theft?",
+    "Tell me more about the Criminal Law (Codification and Reform) Act"
+  ],
   "confidence": 0.92,
-  "related_sections": ["114", "115", "88"]
+  "source": "hybrid",
+  "request_id": "req_167...",
+  "processing_time_ms": 2345
 }
 ```
 
-### Search Sections
+### Session History Endpoints
 
-**GET** `/v1/sections/search`
+#### Get All Sessions
 
-Search for specific law sections.
+**GET** `/v1/sessions`
 
-#### Parameters
+Retrieves a list of past conversation sessions for the authenticated user.
 
-- `q` (string, required): Search query
-- `limit` (integer, optional): Max results (default: 10)
-- `act` (string, optional): Filter by act name
-- `date` (string, optional): As-at date (ISO format)
+#### Get Session Messages
 
-#### Example
+**GET** `/v1/sessions/{session_id}`
 
-```bash
-curl "https://api.rightline.zw/v1/sections/search?q=traffic&limit=5"
+Retrieves all messages (user and assistant) for a specific session.
+
+### Feedback Endpoint
+
+**POST** `/v1/feedback`
+
+Submits user feedback on a specific query response.
+
+#### Request Body
+
+```json
+{
+  "request_id": "req_167...",
+  "rating": 1,
+  "comment": "This was a very helpful and accurate answer."
+}
 ```
+- `rating` (integer): `1` for thumbs up, `-1` for thumbs down.
 
 ### Health Check
 
-**GET** `/health`
+**GET** `/healthz`
 
-Check API service health.
+Checks if the API service is alive. Does not require authentication.
 
 #### Response
 
 ```json
 {
   "status": "healthy",
-  "version": "0.1.0",
-  "environment": "production",
-  "timestamp": "2024-08-13T10:00:00Z"
+  "service": "api",
+  "version": "2.0.0",
+  "timestamp": 1678886400.0
 }
 ```
-
-## Rate Limiting
-
-- **Default**: 60 requests per minute
-- **Authenticated**: 300 requests per minute
-- **Headers**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 ## Error Responses
 
-### 400 Bad Request
+Standard HTTP status codes are used.
+
+### 401 Unauthorized
+
+Returned if the JWT token is missing, invalid, or expired.
 
 ```json
 {
-  "error": "validation_error",
-  "message": "Invalid request format",
-  "details": {
-    "field": "text",
-    "issue": "Required field missing"
-  }
+  "detail": "Not authenticated"
 }
 ```
 
-### 429 Too Many Requests
+### 422 Unprocessable Entity
+
+Returned if the request body fails validation.
 
 ```json
 {
-  "error": "rate_limit_exceeded",
-  "message": "Rate limit exceeded",
-  "retry_after": 30
+  "detail": [
+    {
+      "loc": ["body", "text"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
 }
 ```
 
 ### 500 Internal Server Error
 
-```json
-{
-  "error": "internal_error",
-  "message": "An error occurred processing your request",
-  "request_id": "req_abc123"
-}
-```
-
-## Language Support
-
-Supported language codes:
-- `en` - English
-- `sn` - Shona
-- `nd` - Ndebele
-
-## Pagination
-
-For endpoints returning multiple results:
+Returned for any unexpected server-side errors.
 
 ```json
 {
-  "results": [...],
-  "pagination": {
-    "page": 1,
-    "per_page": 10,
-    "total": 45,
-    "pages": 5
-  }
+  "detail": "Internal server error. Please try again later."
 }
 ```
-
-## Webhooks
-
-For async operations, webhooks can be configured:
-
-```json
-{
-  "webhook_url": "https://your-server.com/webhook",
-  "events": ["query.completed", "document.processed"]
-}
-```
-
-## SDKs
-
-Coming soon:
-- Python SDK
-- JavaScript/TypeScript SDK
-- PHP SDK
 
 ## OpenAPI Specification
 
-Full OpenAPI 3.0 specification available at:
-- JSON: `/openapi.json`
-- Interactive docs: `/docs`
-- ReDoc: `/redoc`
+The full OpenAPI 3.0 specification is automatically generated by FastAPI and available at:
+- **Interactive Docs**: `/docs`
+- **ReDoc**: `/redoc`
+- **JSON Specification**: `/openapi.json`
+
+These are available on the running server (e.g., `http://localhost:3000/docs`).
 
 ## Support
 
-For API support, please contact:
-- GitHub Issues: [Report an issue](https://github.com/Lunexa-AI/right-line/issues)
-- Email: api-support@gweta.zw (coming soon)
+For API support, please use the repository's [GitHub Issues](https://github.com/Lunexa-AI/right-line/issues).
