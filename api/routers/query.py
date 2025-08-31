@@ -3,9 +3,10 @@ from __future__ import annotations
 import time
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.analytics import log_query, save_feedback
+from api.auth import User, get_current_user
 from api.composer import compose_legal_answer
 from api.models import (
     Citation,
@@ -24,6 +25,7 @@ router = APIRouter()
 async def query_legal_information(
     request: Request,
     query_request: QueryRequest,
+    current_user: User = Depends(get_current_user),
 ) -> QueryResponse:
     """Query legal information using RAG (Retrieval-Augmented Generation).
     
@@ -51,7 +53,7 @@ async def query_legal_information(
     start_time = time.time()
     
     # Get user identifier (from header or generate session)
-    user_id = request.headers.get("x-user-id", request.client.host if request.client else "anonymous")
+    user_id = current_user.uid
     session_id = request.headers.get("x-session-id", None)
     
     logger.info(
@@ -229,6 +231,7 @@ async def query_legal_information(
 async def submit_feedback(
     feedback: FeedbackRequest,
     request: Request,
+    current_user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     """Submit feedback for a query response.
     
@@ -249,7 +252,7 @@ async def submit_feedback(
         ```
     """
     # Get user identifier
-    user_id = request.headers.get("x-user-id", request.client.host if request.client else "anonymous")
+    user_id = current_user.uid
     
     success = await save_feedback(
         request_id=feedback.request_id,
