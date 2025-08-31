@@ -21,11 +21,11 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 -   **Task**: [x] Update `api/models.py` to include user identification in requests and responses where necessary.
 
 ### 1.3. Firestore Data Models & State Management
--   **Task**: Define Pydantic models for the Firestore collections (`User`, `Session`, `Message`, `Feedback`).
--   **Task**: Implement helper functions to manage session history:
+-   **Task**: [x] Define Pydantic models for the Firestore collections (`User`, `Session`, `Message`, `Feedback`).
+-   **Task**: [x] Implement helper functions to manage session history:
     -   `get_session_history(user_id, session_id)`: Fetches the last N messages.
     -   `add_message_to_session(user_id, session_id, role, content)`: Adds a new user or assistant message.
--   **Task**: Refactor the feedback endpoint (`/api/v1/feedback`) to store feedback in the `feedback` Firestore collection, linked to a `user_id`.
+-   **Task**: [x] Refactor the feedback endpoint (`/api/v1/feedback`) to store feedback in the `feedback` Firestore collection, linked to a `user_id`.
 
 ## Phase 2: Upgrading the RAG Pipeline
 

@@ -5,7 +5,7 @@ import time
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from api.analytics import log_query, save_feedback
+from api.analytics import log_query
 from api.auth import User, get_current_user
 from api.composer import compose_legal_answer
 from api.models import (
@@ -16,6 +16,8 @@ from api.models import (
     QueryResponse,
 )
 from api.retrieval import search_legal_documents
+from libs.firebase.client import get_firestore_async_client
+from libs.firestore.feedback import save_feedback_to_firestore
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -251,12 +253,12 @@ async def submit_feedback(
           -d '{"request_id": "req_123", "rating": 1, "comment": "Helpful!"}'
         ```
     """
-    # Get user identifier
-    user_id = current_user.uid
+    firestore_client = get_firestore_async_client()
     
-    success = await save_feedback(
+    success = await save_feedback_to_firestore(
+        client=firestore_client,
         request_id=feedback.request_id,
-        user_id=user_id,
+        user_id=current_user.uid,
         rating=feedback.rating,
         comment=feedback.comment,
     )

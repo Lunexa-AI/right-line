@@ -67,13 +67,15 @@ def test_query_legal_information_no_auth_header_fails():
     # Restore the override for other tests
     app.dependency_overrides[get_current_user] = override_get_current_user
 
-@patch('api.routers.query.save_feedback', new_callable=AsyncMock)
-def test_submit_feedback_success(mock_save_feedback):
+@patch('api.routers.query.get_firestore_async_client')
+@patch('api.routers.query.save_feedback_to_firestore', new_callable=AsyncMock)
+def test_submit_feedback_success(mock_save_feedback, mock_get_client):
     """
     Tests the /api/v1/feedback endpoint for a successful submission.
-    The save_feedback dependency is mocked.
+    Dependencies are mocked.
     """
     # Arrange
+    mock_get_client.return_value = MagicMock() # The client itself can be a simple mock
     mock_save_feedback.return_value = True
 
     # Act
@@ -91,6 +93,7 @@ def test_submit_feedback_success(mock_save_feedback):
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
+    mock_get_client.assert_called_once()
     mock_save_feedback.assert_awaited_once()
 
 # --- Teardown ---
