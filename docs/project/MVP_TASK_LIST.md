@@ -27,6 +27,9 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   `add_message_to_session(user_id, session_id, role, content)`: Adds a new user or assistant message.
 -   **Task**: [x] Refactor the feedback endpoint (`/api/v1/feedback`) to store feedback in the `feedback` Firestore collection, linked to a `user_id`.
 
+### 1.4. User Management
+-   **Task**: [x] Implement a `POST /api/v1/users/me` endpoint to create a user profile in Firestore upon initial signup.
+
 ## Phase 2: Upgrading the RAG Pipeline
 
 *Goal: Systematically replace the components of the existing RAG pipeline with the more advanced, multi-strategy components defined in the v2.0 architecture.*
