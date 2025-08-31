@@ -20,7 +20,16 @@ from mangum import Mangum
 
 from libs.common.settings import get_settings
 from api.models import HealthResponse
-from api.routers import analytics, query, whatsapp
+from api.routers import (
+    analytics as analytics_router,
+    query as query_router,
+    users as users_router,
+    whatsapp as whatsapp_router,
+)
+from libs.firebase.client import initialize_firebase_app
+
+# Vercel Serverless environment requires initialization on startup
+initialize_firebase_app()
 
 # Configure structured logging
 structlog.configure(
@@ -120,9 +129,11 @@ app = create_app()
 if os.path.exists("public"):
     app.mount("/static", StaticFiles(directory="public"), name="static")
 
-app.include_router(query.router, prefix="/api")
-app.include_router(analytics.router, prefix="/api")
-app.include_router(whatsapp.router)
+# Include API routers
+app.include_router(query_router.router, prefix="/api", tags=["Legal Query"])
+app.include_router(users_router.router, prefix="/api", tags=["Users"])
+app.include_router(analytics_router.router, prefix="/api", tags=["Analytics"])
+app.include_router(whatsapp_router.router, prefix="/api", tags=["WhatsApp"])
 
 
 @app.get("/", include_in_schema=False)

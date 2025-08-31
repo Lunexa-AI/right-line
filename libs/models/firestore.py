@@ -12,6 +12,7 @@ class FirestoreUser(BaseModel):
     """Represents a user's profile in Firestore."""
     uid: str = Field(..., description="The user's unique Firebase UID.")
     email: str | None = Field(None, description="The user's email address.")
+    name: str | None = Field(None, description="The user's full name.")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of user creation.")
     long_term_summary: str | None = Field(None, description="AI-generated summary of user's long-term interests.")
 
