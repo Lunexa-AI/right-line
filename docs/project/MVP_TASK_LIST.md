@@ -9,10 +9,10 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 *Goal: Introduce user identity, state management, and the necessary data structures before modifying the core RAG pipeline.*
 
 ### 1.1. Firebase Integration & Authentication
--   **Task**: Set up a new Firebase project.
--   **Task**: Configure Firebase Authentication (Email/Password and Google providers).
--   **Task**: Implement Firestore database and define initial security rules to lock down access.
--   **Task**: Create a `libs/firebase` module to encapsulate Firebase Admin SDK initialization and client access.
+-   **Task**: [x] Set up a new Firebase project.
+-   **Task**: [x] Configure Firebase Authentication (Email/Password, Github and Google providers).
+-   **Task**: [x] Implement Firestore database and define initial security rules to lock down access.
+-   **Task**: [x] Create a `libs/firebase` module to encapsulate Firebase Admin SDK initialization and client access.
 
 ### 1.2. API Layer: Authentication Middleware
 -   **Task**: Create a FastAPI dependency (`get_current_user`) that verifies the `Authorization: Bearer <token>` header against Firebase Auth.
