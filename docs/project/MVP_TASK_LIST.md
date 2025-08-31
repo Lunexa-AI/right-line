@@ -15,10 +15,10 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 -   **Task**: [x] Create a `libs/firebase` module to encapsulate Firebase Admin SDK initialization and client access.
 
 ### 1.2. API Layer: Authentication Middleware
--   **Task**: Create a FastAPI dependency (`get_current_user`) that verifies the `Authorization: Bearer <token>` header against Firebase Auth.
--   **Task**: This dependency should decode the JWT and return the user's Firebase UID and profile information.
--   **Task**: Protect all relevant endpoints (`/api/v1/query`, `/api/v1/feedback`, etc.) with this new authentication dependency.
--   **Task**: Update `api/models.py` to include user identification in requests and responses where necessary.
+-   **Task**: [x] Create a FastAPI dependency (`get_current_user`) that verifies the `Authorization: Bearer <token>` header against Firebase Auth.
+-   **Task**: [x] This dependency should decode the JWT and return the user's Firebase UID and profile information.
+-   **Task**: [x] Protect all relevant endpoints (`/api/v1/query`, `/api/v1/feedback`, etc.) with this new authentication dependency.
+-   **Task**: [x] Update `api/models.py` to include user identification in requests and responses where necessary.
 
 ### 1.3. Firestore Data Models & State Management
 -   **Task**: Define Pydantic models for the Firestore collections (`User`, `Session`, `Message`, `Feedback`).
