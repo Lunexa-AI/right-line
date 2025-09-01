@@ -26,7 +26,7 @@ Gweta is an AI‑native legal assistant and workbench for Zimbabwe.
 - **Advanced Hybrid Retrieval**: Combines dense vector search (Milvus), keyword search (BM25), and a powerful reranker (`BGE-reranker-v2`) for high-precision results.
 - **Personalized & Stateful**: Remembers conversation history and user context via Firebase to provide more relevant answers over time.
 - **Cited, High-Quality Answers**: Every response includes sources. The system uses a "small-to-big" retrieval strategy, searching small chunks but providing the LLM with full parent documents for better context.
-- **Secure & Scalable**: Serverless architecture on Vercel with JWT-based authentication via Firebase.
+- **Secure & Scalable**: Production-ready architecture with the backend on Render and frontend on Vercel, using JWT-based authentication via Firebase.
 
 ---
 

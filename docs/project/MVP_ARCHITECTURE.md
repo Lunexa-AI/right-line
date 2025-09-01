@@ -8,7 +8,7 @@
 - **Stateful & Personalized**: Maintain conversational context within and across sessions, leveraging user history to provide more relevant and precise results.
 - **Enterprise-Grade Security**: Ensure robust user authentication and data isolation from the ground up.
 - **High-Performance & Low-Latency**: Target a **< 2.5s P95** response time for typical queries through optimized pipelines and intelligent caching.
-- **Serverless & Scalable**: Built on Vercel and Firebase for a low-ops, pay‑per‑use, and tightly integrated infrastructure.
+- **Serverless & Scalable**: Built on Render (backend) and Vercel (frontend) with Firebase for a low-ops, pay‑per‑use, and tightly integrated infrastructure.
 
 -----
 
@@ -21,9 +21,9 @@ The architecture evolves from a simple pipeline to a lightweight agentic system.
            │              Channels              │
            │ Web (Authenticated) | WhatsApp (Future) │
            └──────────────┬─────────────────────┘
-                          │ (JWT Auth Token)
+                          │ (JWT Auth Token to Vercel Frontend)
                    ┌──────▼───────────────────────────┐
-                   │        API Layer (Vercel)       │
+                   │   API Layer (Render Backend)    │
                    │ (FastAPI, Auth Middleware)      │
                    └──────┬────────────────────┬─────┘
                           │ (User Query)       │ (User Context & State)
@@ -67,9 +67,9 @@ The architecture evolves from a simple pipeline to a lightweight agentic system.
 
 ## 2) Core Components
 
-### 2.1 Channels & API Layer (Unchanged)
-- **Web Interface**: Authenticated frontend managing JWT tokens via Firebase Auth.
-- **Vercel Functions (FastAPI)**: Protected endpoints for querying, feedback, and session history, validating tokens on each request.
+### 2.1 Channels & API Layer
+- **Web Interface (Vercel)**: Authenticated frontend managing JWT tokens via Firebase Auth.
+- **Render Web Service (FastAPI)**: Protected backend endpoints for querying, feedback, and session history, validating tokens on each request.
 
 ### 2.2 Authentication & State (Firebase)
 The two-tier memory system (Short-Term Session, Long-Term Profile) remains a core pillar for personalization and is now a key input into the agentic planner.

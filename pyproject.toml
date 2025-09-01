@@ -28,7 +28,7 @@ packages = [
 python = "^3.11"
 # Core Framework (Serverless)
 fastapi = "^0.111.0"
-mangum = "^0.17.0"  # FastAPI to Vercel adapter
+gunicorn = "^22.0.0"
 pydantic = "^2.8.0"
 pydantic-settings = "^2.4.0"
 
