@@ -1,143 +1,110 @@
-# Gweta MVP Quick Start Guide (Vercel Edition)
+# Gweta Quick Start Guide
 
-> **Get Gweta running in 5 minutes** - This guide gets you from zero to a working serverless legal Q&A system.
+> **Get Gweta running locally in 5 minutes.** This guide gets you from zero to a working local instance of the Gweta legal Q&A system.
 
 ## Prerequisites
 - Python 3.11+
-- Node.js 18+ (for Vercel CLI)
+- Poetry for Python package management
+- Node.js 18+ (for frontend and Vercel CLI)
 - OpenAI API account
-- Milvus Cloud account (optional for Phase 1)
+- Milvus Cloud account (optional, for full RAG capabilities)
+- Firebase project for authentication and database
 
-## Step 1: Clone and Setup (1 minute)
+## Step 1: Clone and Setup (2 minutes)
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/gweta.git
-cd gweta
+git clone https://github.com/Lunexa-AI/right-line.git
+cd right-line
 
-# Install Vercel CLI
-npm install -g vercel
+# Install Python dependencies using Poetry
+poetry install
 
-# Install Python dependencies
-pip install -r requirements.txt
+# Install frontend dependencies (assuming a frontend directory exists)
+# cd frontend && npm install
 ```
 
 ## Step 2: Environment Setup (1 minute)
+Create a `.env` file in the root of the project and add your environment variables.
 ```bash
-# Create local environment file
-cat > .env.local << EOF
-RIGHTLINE_SECRET_KEY=your-secret-key-at-least-32-characters-long
-RIGHTLINE_APP_ENV=development
+# Create root .env file
+cat > .env << EOF
+# FastAPI Settings
+APP_ENV=development
+DEBUG=True
+HOST="0.0.0.0"
+PORT=8000
+WORKERS_COUNT=1
+
+# Firebase (replace with your actual service account JSON)
+GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type": "service_account", ...}'
+
+# AI Services
 OPENAI_API_KEY=sk-proj-your-openai-api-key-here
-# Milvus (optional for Phase 1, needed for Phase 2)
-# MILVUS_ENDPOINT=https://your-cluster.api.gcp-us-west1.zillizcloud.com
-# MILVUS_TOKEN=your-cluster-token
+
+# Vector Database (Milvus)
+MILVUS_URI="your-milvus-uri"
+MILVUS_TOKEN="your-milvus-token"
 EOF
 ```
 
-## Step 2: Start Local Development (1 minute)
-```bash
-# Start Vercel development server
-vercel dev
+## Step 3: Start Local Development (1 minute)
 
-# This will:
-# 1. Start local serverless functions
-# 2. Serve static files
-# 3. Hot reload on changes
-# 4. Available at http://localhost:3000
+### Backend (FastAPI on uvicorn)
+```bash
+# Start the backend server from the root directory
+poetry run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# The backend API will be available at http://localhost:8000
 ```
 
-## Step 3: Test It Works (1 minute)
+### Frontend (Vercel)
+If you have a frontend application, you would typically run it like this:
+```bash
+# Navigate to your frontend directory
+# cd frontend
+
+# Start the frontend development server
+# npm run dev or vercel dev
+
+# The frontend will be available at http://localhost:3000
+```
+
+## Step 4: Test The Backend (1 minute)
 ```bash
 # Test API health
-curl http://localhost:3000/api/healthz
+curl http://localhost:8000/healthz
 
-# Test a query (hardcoded responses work immediately)
-curl -X POST http://localhost:3000/api/v1/query \
+# Test a query
+curl -X POST http://localhost:8000/api/query/stream \
   -H "Content-Type: application/json" \
-  -d '{"text": "What is the minimum wage in Zimbabwe?"}'
+  -d '{"text": "What is the minimum wage in Zimbabwe?", "user_id": "local-test"}'
 
-# Open web UI
-open http://localhost:3000
+# Open the API docs
+open http://localhost:8000/docs
 ```
 
-## Step 4: Deploy to Production (1 minute)
-```bash
-# Login to Vercel (if not already)
-vercel login
+## Step 5: Deploy to Production
+For full deployment instructions, please see the detailed guide:
+- **[Deployment Guide](./project/DEPLOYMENT.md)**
 
-# Deploy to production
-vercel --prod
-
-# Your app will be live at:
-# https://gweta-your-username.vercel.app
-
-# Set production environment variables
-vercel env add OPENAI_API_KEY
-# Enter your OpenAI API key when prompted
-```
+The guide covers:
+- Deploying the **backend** to **Render**.
+- Deploying the **frontend** to **Vercel**.
 
 ## What You Get
-✅ **Working Now (Phase 1 - Complete)**:
-- Serverless web interface for legal queries
-- 36 pre-configured legal topics with hardcoded responses
-- WhatsApp webhook ready
-- Auto-scaling with zero server management
-- Global CDN distribution
+✅ **Working Locally**:
+- A fully functional FastAPI backend.
+- API endpoints for health, queries, and user management.
+- Interactive API documentation via Swagger UI.
 
-🔴 **Coming Next (Phase 2 - In Progress)**:
-- Real document ingestion from ZimLII
-- Milvus Cloud vector search
-- OpenAI embeddings and completion
-- Hybrid retrieval (keyword + semantic)
-
-## Common Issues & Fixes
-
-### Vercel CLI not found
-```bash
-# Install Node.js first, then:
-npm install -g vercel
-```
-
-### Function timeout
-```bash
-# Check logs
-vercel logs --follow
-
-# Common causes:
-# - OpenAI API slow response
-# - Cold start delay (first request)
-```
-
-### Environment variables not working
-```bash
-# Pull production env vars to local
-vercel env pull .env.local
-
-# List all env vars
-vercel env ls
-```
-
-### Local development issues
-```bash
-# Make sure you're in the project directory
-cd gweta
-
-# Try clearing Vercel cache
-vercel dev --debug
-```
-
-## Next Steps
-1. **Add WhatsApp**: Configure Meta Business API webhook to `https://your-app.vercel.app/api/webhook`
-2. **Custom Domain**: Add your domain in Vercel dashboard
-3. **Ingest Documents**: Run `python scripts/crawl_zimlii.py` to fetch legal documents
-4. **Enable RAG**: Follow Phase 2 tasks in `docs/project/MVP_TASK_LIST.md`
-5. **Monitor Costs**: Track OpenAI usage in their dashboard
+🔴 **Next Steps**:
+- Connect a frontend application to the local API.
+- Run the data ingestion scripts (`scripts/`) to populate your database.
+- Deploy the backend and frontend to their respective hosting providers.
 
 ## Need Help?
-- Check logs: `vercel logs --follow`
 - Review architecture: `docs/project/MVP_ARCHITECTURE.md`
-- See full deployment guide: `docs/DEPLOYMENT.md`
+- See full deployment guide: `docs/project/DEPLOYMENT.md`
+- FastAPI docs: https://fastapi.tiangolo.com/
+- Render docs: https://render.com/docs
 - Vercel docs: https://vercel.com/docs
-
----
-**Time to first serverless query: ~5 minutes** 🚀

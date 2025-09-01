@@ -16,7 +16,6 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
-from mangum import Mangum
 
 from libs.common.settings import get_settings
 from api.models import HealthResponse
@@ -283,8 +282,8 @@ async def readiness_check() -> HealthResponse:
     )
 
 
-# Vercel serverless handler
-handler = Mangum(app, lifespan="off")
+# Vercel serverless handler is no longer needed
+# handler = Mangum(app, lifespan="off")
 
 if __name__ == "__main__":
     import uvicorn
