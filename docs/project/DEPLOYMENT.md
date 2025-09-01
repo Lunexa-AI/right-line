@@ -20,7 +20,7 @@ The backend is a FastAPI application packaged with Poetry. We recommend deployin
 - **Root Directory:** Leave this blank (as `pyproject.toml` is in the root).
 - **Runtime:** `Python 3`.
 - **Build Command:** `poetry install --no-dev --no-interaction --no-ansi`.
-- **Start Command:** `gunicorn -w 4 -k uvicorn.workers.UvicornWorker api.main:app --bind 0.0.0.0:$PORT`.
+- **Start Command:** `gunicorn -w 4 -k uvicorn.workers.UvicornWorker api.main:app`.
 - **Instance Type:** `Starter` is sufficient for development and testing. Choose a larger instance for production based on traffic.
 
 ### 3. Set Python Version

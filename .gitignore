@@ -30,6 +30,7 @@ MANIFEST
 *.manifest
 *.spec
 data/
+configs/
 .env.local.api_key
 
 # Installer logs
