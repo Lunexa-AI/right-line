@@ -12,23 +12,33 @@ def initialize_firebase_app():
     if firebase_admin._apps:
         return
 
-    sdk_json = os.environ.get('FIREBASE_ADMIN_SDK_JSON')
-    if not sdk_json:
-        # In a test or local environment, we might not have this set.
-        # The emulators or mocks will handle functionality.
-        print("Warning: FIREBASE_ADMIN_SDK_JSON not set. Assuming emulator or mock environment.")
-        # Attempt to initialize without explicit credentials, relying on ADC.
+    sdk_json_content = os.environ.get('FIREBASE_ADMIN_SDK_JSON')
+    sdk_json_path = os.environ.get('FIREBASE_ADMIN_SDK_PATH')
+
+    cred = None
+    if sdk_json_content:
+        try:
+            cred_json = json.loads(sdk_json_content)
+            cred = credentials.Certificate(cred_json)
+        except json.JSONDecodeError:
+            print("Error: FIREBASE_ADMIN_SDK_JSON is not valid JSON.")
+            return
+    elif sdk_json_path:
+        try:
+            cred = credentials.Certificate(sdk_json_path)
+        except FileNotFoundError:
+            print(f"Error: Firebase credentials file not found at {sdk_json_path}")
+            return
+    
+    if cred:
+        firebase_admin.initialize_app(cred)
+    else:
+        print("Warning: Neither FIREBASE_ADMIN_SDK_JSON nor FIREBASE_ADMIN_SDK_PATH are set. Assuming emulator or mock environment.")
         try:
             firebase_admin.initialize_app()
         except ValueError:
-            # This will happen if no app is initialized and no credentials can be found.
-            # It's okay in a testing context where services are mocked.
             pass
         return
-
-    cred_json = json.loads(sdk_json)
-    cred = credentials.Certificate(cred_json)
-    firebase_admin.initialize_app(cred)
 
 def get_firestore_async_client() -> AsyncClient:
     """
