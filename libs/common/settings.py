@@ -27,13 +27,13 @@ class Settings(BaseSettings):
     secret_key: str = Field(..., min_length=32)
 
     # CORS - use string to avoid JSON parsing issues
-    cors_origins_str: str = Field(default="http://localhost:3000,https://localhost:3000", alias="cors_origins")
+    cors_origins_str: str = Field(default="http://localhost:3000,https://v0-gweta.vercel.app", alias="cors_origins")
     
     @property
     def cors_origins(self) -> list[str]:
         """Parse CORS origins from string."""
         if not self.cors_origins_str.strip():
-            return ["http://localhost:3000", "https://localhost:3000"]
+            return ["http://localhost:3000", "https://v0-gweta.vercel.app"]
         return [origin.strip() for origin in self.cors_origins_str.split(",") if origin.strip()]
 
     # Channel integrations
