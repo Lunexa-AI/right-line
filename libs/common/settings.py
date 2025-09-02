@@ -7,6 +7,11 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+# Load environment variables from .env.local file BEFORE Pydantic settings are initialized.
+# This ensures that all variables are available for Pydantic to read.
+load_dotenv(".env.local")
 
 
 class Settings(BaseSettings):
