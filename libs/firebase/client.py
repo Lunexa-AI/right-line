@@ -48,4 +48,5 @@ def get_firestore_async_client() -> AsyncClient:
     the necessary authentication context.
     """
     initialize_firebase_app()
-    return AsyncClient()
+    # Use the correct database name from Firebase Console
+    return AsyncClient(database="gweta-context")

@@ -7,9 +7,9 @@ All models follow the .cursorrules guidelines for validation and structure.
 from __future__ import annotations
 
 import time
-from typing import Literal, Any, List, Optional
+from typing import Literal, Any, List, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, EmailStr
 
 
 class QueryRequest(BaseModel):
@@ -261,3 +261,45 @@ class CommonQueriesResponse(BaseModel):
         example=[("pension calculation", 5), ("overtime rules", 3)],
     )
     total: int = Field(description="Total number of unmatched queries")
+
+
+class SignupRequest(BaseModel):
+    """Request model for user signup supporting both email/password and Google methods."""
+    name: str = Field(..., min_length=1, max_length=100, description="User's full name")
+    method: Literal["email", "google"] = Field(..., description="Signup method: 'email' for email/password, 'google' for Google OAuth")
+    
+    # Email/password signup fields
+    email: Optional[EmailStr] = Field(None, description="User's email address (required for email signup)")
+    password: Optional[str] = Field(None, min_length=6, description="User's password (required for email signup, minimum 6 characters)")
+    
+    # Google signup fields  
+    firebase_token: Optional[str] = Field(None, description="Firebase ID token from Google signup (required for Google signup)")
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_empty(cls, v: str) -> str:
+        """Validate that the name is not empty or just whitespace."""
+        if not v.strip():
+            raise ValueError("Name must not be empty")
+        return v.strip()
+    
+    @model_validator(mode='after')
+    def validate_method_requirements(self):
+        """Validate that required fields are provided for each signup method."""
+        if self.method == "email":
+            if not self.email:
+                raise ValueError("Email is required for email signup method")
+            if not self.password:
+                raise ValueError("Password is required for email signup method")
+        elif self.method == "google":
+            if not self.firebase_token:
+                raise ValueError("Firebase token is required for Google signup method")
+        return self
+
+
+class SignupResponse(BaseModel):
+    """Response model for successful user signup."""
+    success: bool = Field(True, description="Whether the signup was successful")
+    message: str = Field(description="Success message")
+    user_id: str = Field(description="The Firebase UID of the created user")
+    email: str = Field(description="The email address of the created user")
