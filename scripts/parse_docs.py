@@ -94,10 +94,48 @@ def sha256_16(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def clean_pdf_artifacts(text: str) -> str:
+    """Clean PDF formatting artifacts and noise from extracted text."""
+    if not text:
+        return ""
+    
+    # Remove dot leaders from table of contents (common in legal PDFs)
+    # Pattern: "text .......... page_number" or just "............"
+    text = re.sub(r'\.{3,}(\s*\d+)?', '', text)
+    
+    # Remove excessive dashes used as separators
+    text = re.sub(r'-{4,}', '', text)
+    
+    # Remove page number markers at the start of lines
+    text = re.sub(r'^\s*---\s*Page\s+\d+\s*---\s*', '', text, flags=re.MULTILINE)
+    
+    # Remove Roman numerals at the end of lines (common in TOCs)
+    text = re.sub(r'\s+[ivxlcdm]+\s*$', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    
+    # Remove standalone numbers at the end of lines (page numbers)
+    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)
+    
+    # Clean up excessive spacing around punctuation
+    text = re.sub(r'\s*,\s*', ', ', text)
+    text = re.sub(r'\s*;\s*', '; ', text)
+    text = re.sub(r'\s*:\s*', ': ', text)
+    
+    # Remove multiple consecutive spaces/tabs/newlines
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Clean up line breaks and spacing
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Max 2 consecutive newlines
+    
+    return text.strip()
+
+
 def normalize_whitespace(text: str) -> str:
     """Normalize whitespace, quotes, dashes, etc."""
     if not text:
         return ""
+    
+    # Apply PDF artifact cleaning first
+    text = clean_pdf_artifacts(text)
     
     # Replace multiple spaces, tabs, newlines with a single space
     text = re.sub(r'\s+', ' ', text)
