@@ -57,6 +57,7 @@ sentry-sdk = {extras = ["fastapi"], version = "^2.12.0"}
 
 # Google & Firebase
 firebase-admin = "^6.5.0"
+boto3 = "^1.40.23"
 
 [tool.poetry.group.dev.dependencies]
 # Testing

@@ -55,12 +55,13 @@ The architecture evolves from a simple pipeline to a lightweight agentic system.
       │                   │ (Final Answer)
       └───────────────────│──────────────────┘
                           │
-                   ┌──────▼───────────────────────────┐
-                   │             Data Stores           │
-                   ├───────────────────┬───────────────┤
-                   │ Milvus Cloud      │ Sparse Index  │
-                   │ (Dense Vectors)   │ (e.g., BM25)  │
-                   └───────────────────┴───────────────┘
+                   ┌──────▼───────────────────────────────────┐
+                   │                 Data Plane                │
+                   ├───────────────────┬───────────────────────┤
+                   │ Milvus Cloud      │ Cloudflare R2         │
+                   │ (Dense Vectors &  │ (Source PDFs &        │
+                   │ Metadata)         │ Processed Text Chunks)│
+                   └───────────────────┴───────────────────────┘
 ```
 
 -----
@@ -123,12 +124,55 @@ The final, high-quality evidence is used to generate the user-facing answer.
     3.  **Retrieval**: The retrieval process (hybrid search + reranking) operates on these small chunks to find the most precise matches.
     4.  **Expansion**: Before passing the context to the synthesis LLM, the system fetches the full parent documents corresponding to the top-ranked small chunks.
 
-### 2.5 Data Stores
+### 2.5 Data Plane: The Source of Truth
 
-- **Vector Store**: Milvus Cloud (Dense Embeddings).
-- **Sparse Index**: A simple in-memory or file-based BM25 index (e.g., using the `rank-bm25` library) can be used for the MVP. For scaling, this could be moved to a dedicated search service like OpenSearch.
+The architecture explicitly decouples the application from the local filesystem, ensuring it is stateless and scalable.
+
+- **Vector & Metadata Store**: Milvus Cloud stores the dense embeddings and, critically, the metadata which acts as a pointer to the full data. This metadata includes:
+    - `chunk_object_key`: The unique identifier for the processed text chunk stored in R2.
+    - `source_document_key`: The unique identifier for the original source PDF stored in R2.
+    - `page_number`: The page within the PDF where the chunk originated.
+
+- **Object Storage**: Cloudflare R2 serves as the primary data store for all large objects.
+    - **Source Documents**: Original PDFs are stored here for citation and viewing.
+    - **Processed Chunks**: The text content of each chunk is stored as a separate object, retrievable via the key from Milvus.
+    - **Benefits**: This approach is highly scalable, cost-effective (zero egress fees), and essential for a serverless environment like Render where the filesystem is ephemeral.
+
+#### R2 Bucket Structure
+
+To ensure scalability and security, the R2 bucket follows a prefix-based structure:
+
+```
+gweta-prod-data/
+│
+├── corpus/
+│   ├── sources/
+│   │   ├── legislation/
+│   │   └── case_law/
+│   └── chunks/
+│       ├── legislation/
+│       └── case_law/
+│
+└── users/
+    └── {user_id}/
+        ├── uploads/
+        └── generated_docs/
+```
+
+- **`corpus/`**: Contains the shared, public knowledge base.
+  - `sources/`: Original, raw PDF documents, categorized by type.
+  - `chunks/`: Processed text chunks for embedding, mirroring the source structure.
+- **`users/{user_id}/`**: All data firewalled to a specific user, identified by their Firebase UID.
+  - `uploads/`: Raw documents uploaded by the user for analysis.
+  - `generated_docs/`: Documents created by the application for the user.
+
 - **State & User Data**: Firestore (unchanged).
+
 - **(Future) Graph Database**: For GraphRAG capabilities, a graph database like Neo4j would be introduced to store entities and relationships extracted from the corpus.
+
+### 2.6 Secure Document Serving
+
+To provide users access to source documents without exposing storage credentials, a dedicated, authenticated API endpoint (`GET /api/v1/documents/{document_key}`) is used. This endpoint acts as a secure proxy, fetching the document from R2 and streaming it to the authenticated user, enabling seamless in-app viewing.
 
 -----
 
@@ -138,13 +182,13 @@ The existing feedback mechanism using Firestore is robust and provides a high-qu
 -----
 
 ## 4) Security & Privacy (Unchanged)
-JWT validation and Firestore Security Rules remain the cornerstone of the security model, ensuring users can only access their own data.
+JWT validation, Firestore Security Rules, and the new proxied document endpoint remain the cornerstone of the security model, ensuring users can only access their own data.
 
 -----
 
 ## 5) Non-Functional Requirements
 
-- **Latency**: The P95 target of <2.5s is more aggressive given the multi-step agentic process. Each LLM call in the planner and validation step adds latency. Caching strategies and optimizing the retrieval stack will be critical.
+- **Latency**: The P95 target of <2.5s is more aggressive given the multi-step agentic process. Each LLM call in the planner and validation step adds latency. Fetching chunks from R2 introduces network latency that must be minimized (e.g., via parallel requests). Caching strategies will be critical.
 - **Cost**: The agentic loop introduces additional LLM calls, increasing operational costs. The trade-off is a significant increase in accuracy and reasoning capability. Start with a simple rewrite and add more complex decomposition as needed.
 - **Modularity**: The pipeline should be designed in a modular way, allowing different strategies (e.g., HyDE vs. multi-query, different rerankers) to be swapped in and out for evaluation.
 
