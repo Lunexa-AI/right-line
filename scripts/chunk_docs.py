@@ -1055,7 +1055,14 @@ def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[D
     return enriched_chunks
 
 
-def process_documents_from_r2(r2_client, bucket: str, max_docs: Optional[int] = None, verbose: bool = False, enrich: bool = True) -> None:
+def process_documents_from_r2(
+    r2_client,
+    bucket: str,
+    max_docs: Optional[int] = None,
+    verbose: bool = False,
+    enrich: bool = True,
+    doc_ids: Optional[Set[str]] = None,
+) -> None:
     """
     Process documents from R2, chunk them, and upload chunks back to R2.
     
@@ -1068,6 +1075,12 @@ def process_documents_from_r2(r2_client, bucket: str, max_docs: Optional[int] = 
     """
     # Load documents from R2
     documents = load_documents_from_r2(r2_client, bucket)
+
+    # If specific doc_ids provided, filter
+    if doc_ids:
+        before = len(documents)
+        documents = [doc for doc in documents if doc.get("doc_id") in doc_ids]
+        logger.info(f"Filtered documents list from {before} to {len(documents)} based on --doc-ids filter")
     
     if max_docs:
         documents = documents[:max_docs]
@@ -1182,8 +1195,18 @@ def fix_chunks_for_milvus(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def main():
     parser = argparse.ArgumentParser(description="Chunk documents from R2 and upload chunks back to R2")
-    parser.add_argument("--max-docs", type=int, default=None,
-                        help="Maximum number of documents to process (for testing)")
+    parser.add_argument(
+        "--max-docs",
+        type=int,
+        default=None,
+        help="Maximum number of documents to process (for testing)"
+    )
+    parser.add_argument(
+        "--doc-ids",
+        type=str,
+        default=None,
+        help="Comma-separated list of doc_id values to process only those documents"
+    )
     parser.add_argument("--no-enrich", action="store_true", 
                         help="Skip advanced entity enrichment")
     parser.add_argument("--verbose", action="store_true", help="Print verbose output")
@@ -1204,8 +1227,9 @@ def main():
             r2_client, 
             bucket, 
             max_docs=args.max_docs,
-            verbose=args.verbose, 
-            enrich=not args.no_enrich
+            verbose=args.verbose,
+            enrich=not args.no_enrich,
+            doc_ids=set(args.doc_ids.split(",")) if args.doc_ids else None
         )
             
     except Exception as e:
