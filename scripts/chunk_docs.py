@@ -2,35 +2,57 @@
 """
 chunk_docs.py - Chunk normalized documents into optimal segments for embedding
 
-This script implements the chunking strategy defined in CHUNKING_STRATEGY.md.
-It transforms normalized document objects from docs.jsonl into optimally-sized,
-overlapping chunks ready for embedding, and writes them to chunks.jsonl.
+This script reads parsed documents from Cloudflare R2, chunks them into 
+optimally-sized overlapping segments, and uploads individual chunk files
+back to R2 for retrieval by the API.
 
 Usage:
-    python scripts/chunk_docs.py [--input_file PATH] [--output_file PATH] [--verbose]
+    python scripts/chunk_docs.py [--max-docs N] [--verbose]
 
-Author: RightLine Team
+Environment Variables:
+    CLOUDFLARE_R2_S3_ENDPOINT, CLOUDFLARE_R2_ACCESS_KEY_ID, 
+    CLOUDFLARE_R2_SECRET_ACCESS_KEY, CLOUDFLARE_R2_BUCKET_NAME
 """
 
 import argparse
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-import structlog
-from pydantic import BaseModel, Field, field_validator
-from tqdm import tqdm
+try:
+    import boto3
+    from botocore.client import Config
+    from pydantic import BaseModel, Field, field_validator
+    from tqdm import tqdm
+except ImportError as e:
+    print(f"❌ Error: Missing dependency. Run: poetry add boto3 pydantic tqdm")
+    print(f"   Specific error: {e}")
+    sys.exit(1)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = structlog.get_logger()
+logger = logging.getLogger(__name__)
+
+
+def get_r2_client():
+    """Initialize and return a boto3 client for Cloudflare R2."""
+    try:
+        return boto3.client(
+            service_name="s3",
+            endpoint_url=os.environ["CLOUDFLARE_R2_S3_ENDPOINT"],
+            aws_access_key_id=os.environ["CLOUDFLARE_R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["CLOUDFLARE_R2_SECRET_ACCESS_KEY"],
+            config=Config(signature_version="s3v4"),
+        )
+    except KeyError as e:
+        raise RuntimeError(f"Missing required environment variable for R2: {e}")
 
 # Constants for chunking
 TARGET_TOKENS = 512  # Target number of tokens per chunk
@@ -132,32 +154,69 @@ class Chunk(BaseModel):
         return v
 
 
-def load_jsonl(file_path: Path) -> List[Dict[str, Any]]:
-    """Load documents from a JSONL file."""
-    documents = []
+def load_documents_from_r2(r2_client, bucket: str) -> List[Dict[str, Any]]:
+    """Load parsed documents from R2."""
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    documents.append(json.loads(line))
-        logger.info(f"Loaded {len(documents)} documents from {file_path}")
+        # Download the parsed documents catalog from R2
+        response = r2_client.get_object(Bucket=bucket, Key="corpus/processed/legislation_docs.jsonl")
+        content = response['Body'].read().decode('utf-8')
+        
+        # Parse JSONL content
+        documents = []
+        for line in content.strip().split('\n'):
+            if line.strip():
+                documents.append(json.loads(line))
+        
+        logger.info(f"Loaded {len(documents)} documents from R2")
         return documents
+        
     except Exception as e:
-        logger.error(f"Error loading documents from {file_path}: {e}")
+        logger.error(f"Error loading documents from R2: {e}")
         raise
 
 
-def write_jsonl(file_path: Path, chunks: List[Dict[str, Any]]) -> None:
-    """Write chunks to a JSONL file."""
+def upload_chunk_to_r2(r2_client, bucket: str, chunk: Dict[str, Any]) -> None:
+    """Upload a single chunk to R2 as an individual object."""
     try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            for chunk in chunks:
-                f.write(json.dumps(chunk, default=str) + "\n")
-        logger.info(f"Wrote {len(chunks)} chunks to {file_path}")
+        chunk_id = chunk.get("chunk_id")
+        doc_type = chunk.get("doc_type", "unknown")
+        
+        # Create R2 key for this chunk
+        r2_key = f"corpus/chunks/{doc_type}/{chunk_id}.json"
+        
+        # Prepare chunk metadata for R2
+        chunk_metadata = {
+            "doc_id": str(chunk.get("doc_id", "")),
+            "doc_type": str(chunk.get("doc_type", "")),
+            "section_path": str(chunk.get("section_path", "")),
+            "num_tokens": str(chunk.get("num_tokens", 0)),
+            "nature": str(chunk.get("nature", "")),
+            "year": str(chunk.get("year", "")),
+            "chapter": str(chunk.get("chapter", ""))
+        }
+        
+        # Sanitize metadata values for ASCII compatibility
+        sanitized_metadata = {}
+        for k, v in chunk_metadata.items():
+            if v and isinstance(v, str):
+                # Replace non-ASCII characters
+                sanitized_v = v.replace("'", "'").replace(""", '"').replace(""", '"')
+                sanitized_v = "".join(char for char in sanitized_v if ord(char) < 128)
+                sanitized_metadata[k] = sanitized_v
+            else:
+                sanitized_metadata[k] = str(v) if v else ""
+        
+        # Upload chunk to R2
+        r2_client.put_object(
+            Bucket=bucket,
+            Key=r2_key,
+            Body=json.dumps(chunk, default=str).encode('utf-8'),
+            ContentType="application/json",
+            Metadata=sanitized_metadata
+        )
+        
     except Exception as e:
-        logger.error(f"Error writing chunks to {file_path}: {e}")
-        raise
+        logger.error(f"Error uploading chunk {chunk.get('chunk_id')} to R2: {e}")
 
 
 def estimate_tokens(text: str) -> int:
@@ -996,18 +1055,24 @@ def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[D
     return enriched_chunks
 
 
-def process_documents(input_file: Path, output_file: Path, verbose: bool = False, enrich: bool = True) -> None:
+def process_documents_from_r2(r2_client, bucket: str, max_docs: Optional[int] = None, verbose: bool = False, enrich: bool = True) -> None:
     """
-    Process documents from input file and write chunks to output file.
+    Process documents from R2, chunk them, and upload chunks back to R2.
     
     Args:
-        input_file: Path to input JSONL file
-        output_file: Path to output JSONL file
+        r2_client: boto3 client for R2
+        bucket: R2 bucket name
+        max_docs: Maximum number of documents to process (for testing)
         verbose: Whether to print verbose output
         enrich: Whether to apply advanced entity enrichment
     """
-    # Load documents
-    documents = load_jsonl(input_file)
+    # Load documents from R2
+    documents = load_documents_from_r2(r2_client, bucket)
+    
+    if max_docs:
+        documents = documents[:max_docs]
+        logger.info(f"Limited processing to {max_docs} documents for testing")
+    
     all_chunks = []
     
     # Process each document
@@ -1042,14 +1107,25 @@ def process_documents(input_file: Path, output_file: Path, verbose: bool = False
         logger.info("Applying advanced entity enrichment...")
         all_chunks = enrich_chunks(all_chunks, verbose)
     
-    # Write chunks to output file
-    write_jsonl(output_file, all_chunks)
+    # Upload individual chunks to R2
+    logger.info(f"Uploading {len(all_chunks)} chunks to R2...")
+    successful_uploads = 0
+    failed_uploads = 0
+    
+    for chunk in tqdm(all_chunks, desc="Uploading chunks"):
+        try:
+            upload_chunk_to_r2(r2_client, bucket, chunk)
+            successful_uploads += 1
+        except Exception as e:
+            logger.error(f"Failed to upload chunk {chunk.get('chunk_id')}: {e}")
+            failed_uploads += 1
     
     # Log statistics
     avg_tokens = sum(chunk["num_tokens"] for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
     avg_chars = sum(len(chunk["chunk_text"]) for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
     
     logger.info(f"Generated {len(all_chunks)} chunks from {len(documents)} documents")
+    logger.info(f"Successfully uploaded: {successful_uploads}, Failed: {failed_uploads}")
     logger.info(f"Average chunk size: {avg_tokens:.1f} tokens, {avg_chars:.1f} characters")
 
 
@@ -1105,35 +1181,32 @@ def fix_chunks_for_milvus(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Chunk normalized documents into optimal segments for embedding")
-    parser.add_argument("--input_file", type=Path, default="data/processed/docs.jsonl", 
-                        help="Path to input JSONL file")
-    parser.add_argument("--output_file", type=Path, default="data/processed/chunks.jsonl", 
-                        help="Path to output JSONL file")
-    parser.add_argument("--fix-for-milvus", action="store_true", 
-                        help="Apply Milvus schema compatibility fixes")
+    parser = argparse.ArgumentParser(description="Chunk documents from R2 and upload chunks back to R2")
+    parser.add_argument("--max-docs", type=int, default=None,
+                        help="Maximum number of documents to process (for testing)")
     parser.add_argument("--no-enrich", action="store_true", 
                         help="Skip advanced entity enrichment")
     parser.add_argument("--verbose", action="store_true", help="Print verbose output")
     
     args = parser.parse_args()
     
+    # Set log level
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
     try:
-        # Process documents into chunks
-        process_documents(args.input_file, args.output_file, args.verbose, enrich=not args.no_enrich)
+        # Get R2 client and bucket
+        r2_client = get_r2_client()
+        bucket = os.environ["CLOUDFLARE_R2_BUCKET_NAME"]
         
-        # Optionally apply Milvus schema compatibility fixes
-        if args.fix_for_milvus:
-            logger.info("Applying Milvus schema compatibility fixes...")
-            # Load chunks
-            chunks = load_jsonl(args.output_file)
-            
-            # Fix chunks
-            fixed_chunks = fix_chunks_for_milvus(chunks)
-            
-            # Write fixed chunks back to the same file
-            write_jsonl(args.output_file, fixed_chunks)
-            logger.info(f"Applied Milvus schema fixes to {len(fixed_chunks)} chunks")
+        # Process documents from R2 into chunks and upload back to R2
+        process_documents_from_r2(
+            r2_client, 
+            bucket, 
+            max_docs=args.max_docs,
+            verbose=args.verbose, 
+            enrich=not args.no_enrich
+        )
             
     except Exception as e:
         logger.error(f"Error: {e}")
