@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
 """
-crawl_current_legislation.py - Crawl ZimLII "Current legislation" with rich metadata
+crawl_current_legislation.py - Crawl ZimLII "Current legislation" with rich metadata, uploading PDFs and a metadata catalog directly to Cloudflare R2.
 
 Goals
-- Enumerate the current-legislation index (405+ docs) with optional filters
-- Extract per-item metadata directly from the index and the document page:
-  - nature (Act | Ordinance | Statutory Instrument)
-  - title, chapter (if shown), work/expression FRBR URIs
-  - effective date (from expression URI @YYYY-MM-DD)
-  - year (from FRBR number or expression date)
-  - akn_uri (canonical /akn path)
-  - version status (implicitly current)
-- Persist raw HTML in data/raw/legislation/ and a catalog JSONL in data/processed/leg_catalog.jsonl
+- Enumerate the current-legislation index.
+- For each document page, find the canonical PDF link.
+- Upload the PDF to R2 under `corpus/sources/legislation/`.
+- Extract rich metadata (title, year, chapter, etc.).
+- Persist a consolidated metadata catalog to R2 as `corpus/metadata/legislation_catalog.jsonl`.
 
 Usage
-  python scripts/crawl_current_legislation.py --out data/raw --max-pages 0 --delay 0.8 --concurrency 8 --catalog data/processed/leg_catalog.jsonl
-
-Notes
-- Polite crawling: configurable delay and limited concurrency.
-- Only targets /legislation/ index tabs and underlying /akn/zw/act/... pages.
+  # Ensure R2 env vars are set before running: CLOUDFLARE_R2_S3_ENDPOINT, CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY, CLOUDFLARE_R2_BUCKET_NAME
+  python scripts/crawl_current_legislation.py --max-pages 0 --delay 0.8 --concurrency 8
 """
 from __future__ import annotations
 
@@ -28,10 +21,11 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
 import httpx
+from botocore.client import Config
 from bs4 import BeautifulSoup
 
 BASE = "https://zimlii.org"
@@ -52,6 +46,21 @@ class CatalogRow:
     effective_date: Optional[str]
     year: Optional[int]
     source_url: str
+    r2_pdf_key: str
+
+
+def get_r2_client():
+    """Initializes and returns a boto3 client for Cloudflare R2."""
+    try:
+        return boto3.client(
+            service_name="s3",
+            endpoint_url=os.environ["CLOUDFLARE_R2_S3_ENDPOINT"],
+            aws_access_key_id=os.environ["CLOUDFLARE_R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["CLOUDFLARE_R2_SECRET_ACCESS_KEY"],
+            config=Config(signature_version="s3v4"),
+        )
+    except KeyError as e:
+        raise RuntimeError(f"Missing required environment variable for R2: {e}")
 
 
 def abs_url(href: str) -> str:
@@ -60,24 +69,20 @@ def abs_url(href: str) -> str:
     return f"{BASE}{href}"
 
 
-def unique_filename_from_href(href: str) -> str:
-    """Create a collision-resistant filename from the entire AKN path.
-    Example: /akn/zw/act/1971/6/eng@2024-12-31 -> akn_zw_act_1971_6_eng_2024-12-31.html
-    """
+def unique_pdf_filename_from_href(href: str) -> str:
+    """Create a unique and safe PDF filename from the AKN path."""
     path = href
     if path.startswith("http"):
-        # Convert full URL to path
         try:
             path = re.sub(r"^https?://[^/]+", "", path)
         except Exception:
             pass
     if path.startswith("/"):
         path = path[1:]
-    # Replace separators and reserved characters
     name = path.replace("/", "_").replace("@", "_")
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    if not name.endswith(".html"):
-        name += ".html"
+    if not name.endswith(".pdf"):
+        name += ".pdf"
     return name
 
 
@@ -94,20 +99,27 @@ async def get(client: httpx.AsyncClient, url: str) -> httpx.Response:
     raise RuntimeError(f"GET failed for {url}: {last_exc}")
 
 
-def slugify_title(title: str, max_len: int = 80) -> str:
-    """Convert title to a filesystem-friendly slug.
-    - lowercase, replace spaces with underscores
-    - remove characters outside [A-Za-z0-9._-]
-    - collapse multiple underscores
-    - trim length
-    """
-    s = (title or "untitled").strip().lower()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^a-z0-9._-]", "_", s)
-    s = re.sub(r"_+", "_", s)
-    if len(s) > max_len:
-        s = s[:max_len].rstrip("._-")
-    return s or "untitled"
+async def upload_to_r2(r2_client, bucket: str, key: str, content: bytes | str, metadata: Optional[Dict[str, str]] = None):
+    """Uploads binary or text content to an R2 bucket with optional metadata."""
+    print(f"  -> Uploading to R2: s3://{bucket}/{key}")
+    body = content.encode("utf-8") if isinstance(content, str) else content
+    
+    # Prepare the put_object parameters
+    put_params = {
+        "Bucket": bucket,
+        "Key": key,
+        "Body": body
+    }
+    
+    # Add metadata if provided
+    if metadata:
+        put_params["Metadata"] = metadata
+        print(f"     with metadata: {metadata}")
+    
+    try:
+        r2_client.put_object(**put_params)
+    except Exception as e:
+        print(f"  !! R2 upload failed for key {key}: {e}")
 
 
 def parse_effective_date(expression_frbr_uri: Optional[str]) -> Optional[str]:
@@ -117,8 +129,9 @@ def parse_effective_date(expression_frbr_uri: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def parse_year_from_frbr(number: Optional[str], expression_frbr_uri: Optional[str]) -> Optional[int]:
-    # number is the frbr_uri_number when available; often a year appears in expression
+def parse_year_from_frbr(
+    number: Optional[str], expression_frbr_uri: Optional[str]
+) -> Optional[int]:
     if expression_frbr_uri:
         m = re.search(r"/(\d{4})/", expression_frbr_uri)
         if m:
@@ -136,14 +149,12 @@ def parse_year_from_frbr(number: Optional[str], expression_frbr_uri: Optional[st
 
 def extract_head_metadata(soup: BeautifulSoup) -> Dict[str, Any]:
     meta: Dict[str, Any] = {}
-    # Laws.Africa embed typically placed in a script#track-page-properties
     script = soup.find("script", id="track-page-properties")
     if script and script.string:
         try:
             meta.update(json.loads(script.string))
         except Exception:
             pass
-    # Fallback title
     t = soup.find("title")
     if t and t.string:
         title = t.string.replace("- ZimLII", "").strip()
@@ -152,7 +163,6 @@ def extract_head_metadata(soup: BeautifulSoup) -> Dict[str, Any]:
 
 
 def infer_nature_from_path(path: str) -> str:
-    # /akn/zw/act/..., /akn/zw/act/si/..., /akn/zw/act/ord/...
     if "/act/si/" in path:
         return "Statutory Instrument"
     if "/act/ord/" in path:
@@ -160,25 +170,62 @@ def infer_nature_from_path(path: str) -> str:
     return "Act"
 
 
+def get_document_type_folder(nature: str) -> str:
+    """Convert document nature to R2 folder name."""
+    if nature == "Statutory Instrument":
+        return "statutory_instruments"
+    elif nature == "Ordinance":
+        return "ordinances"
+    else:  # Act
+        return "acts"
+
+
+def sanitize_metadata_for_r2(metadata: Dict[str, str]) -> Dict[str, str]:
+    """Sanitize metadata values to contain only ASCII characters for R2 compatibility."""
+    sanitized = {}
+    for key, value in metadata.items():
+        if isinstance(value, str):
+            # Replace common non-ASCII characters with ASCII equivalents
+            sanitized_value = (
+                value.replace("'", "'")
+                .replace(""", '"')
+                .replace(""", '"')
+                .replace("–", "-")
+                .replace("—", "-")
+            )
+            # Keep only ASCII characters
+            sanitized_value = "".join(char for char in sanitized_value if ord(char) < 128)
+            sanitized[key] = sanitized_value
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
 def extract_chapter_from_row(cell_text: str) -> Optional[str]:
-    # The index often shows "Chapter 7:01"
     m = re.search(r"Chapter\s+([0-9]+:[0-9]+)", cell_text, flags=re.I)
     return m.group(1) if m else None
 
 
-async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path, delay: float) -> Tuple[CatalogRow, str]:
+async def fetch_and_process_doc(
+    http_client: httpx.AsyncClient,
+    r2_client,
+    bucket: str,
+    href: str,
+    delay: float,
+) -> Optional[CatalogRow]:
+    """
+    Fetches a document page, extracts metadata, finds the PDF,
+    uploads the PDF to R2, and returns the metadata row.
+    """
     url = abs_url(href)
-
-    # Download page HTML
-    r = await get(client, url)
-
-    # Parse metadata
+    r = await get(http_client, url)
     soup = BeautifulSoup(r.text, "html.parser")
+
+    # 1. Extract metadata from the HTML page
     head_meta = extract_head_metadata(soup)
     work = head_meta.get("work_frbr_uri")
     expr = head_meta.get("expression_frbr_uri")
     number = head_meta.get("frbr_uri_number")
-    language = head_meta.get("frbr_uri_language")
 
     akn_uri = work or expr or href
     title = head_meta.get("title") or "Untitled"
@@ -186,96 +233,144 @@ async def fetch_and_save_doc(client: httpx.AsyncClient, href: str, out_dir: Path
     year = parse_year_from_frbr(number, expr)
     nature = infer_nature_from_path(akn_uri)
 
-    # Try to find chapter from page breadcrumbs/table if available
-    chapter = None
     try:
-        text = soup.get_text(" ")
-        chapter = extract_chapter_from_row(text)
+        chapter = extract_chapter_from_row(soup.get_text(" "))
     except Exception:
         chapter = None
 
-    # Build descriptive filename including title and year
-    base_part = unique_filename_from_href(href).rsplit(".", 1)[0]
-    title_slug = slugify_title(title)
-    year_str = str(year) if year else "unknown"
-    nature_slug = nature.replace(" ", "-").lower()
-    descriptive = f"akn_zw_current-legislation_{title_slug}_{year_str}_{nature_slug}_{base_part}.html"
-    html_path = out_dir / descriptive
-    html_path.parent.mkdir(parents=True, exist_ok=True)
-    html_path.write_text(r.text)
+    # 2. Find and upload the PDF
+    # Look for links containing "Download PDF" text
+    pdf_anchor = None
+    for a in soup.find_all("a", href=True):
+        if "Download PDF" in a.get_text():
+            pdf_anchor = a
+            break
+    
+    if not pdf_anchor:
+        print(f"  -- No PDF download link found for {url}")
+        return None
 
+    pdf_url = abs_url(pdf_anchor["href"])
+    pdf_filename = unique_pdf_filename_from_href(href)
+    
+    # Organize by document type folder
+    doc_type_folder = get_document_type_folder(nature)
+    r2_key = f"corpus/sources/legislation/{doc_type_folder}/{pdf_filename}"
+    
+    # Create rich metadata for R2
+    pdf_metadata = {
+        "document_type": doc_type_folder,
+        "nature": nature,
+        "title": title,
+        "akn_uri": akn_uri,
+        "source_url": url,
+    }
+    
+    # Add optional metadata fields if available
+    if year:
+        pdf_metadata["year"] = str(year)
+    if chapter:
+        pdf_metadata["chapter"] = chapter
+    if effective_date:
+        pdf_metadata["effective_date"] = effective_date
+    if work:
+        pdf_metadata["work_frbr_uri"] = work
+    if expr:
+        pdf_metadata["expression_frbr_uri"] = expr
+
+    print(f"  - Found PDF: {pdf_url}")
+    pdf_response = await get(http_client, pdf_url)
+    
+    # Sanitize metadata for R2 ASCII compatibility
+    sanitized_metadata = sanitize_metadata_for_r2(pdf_metadata)
+    await upload_to_r2(r2_client, bucket, r2_key, pdf_response.content, sanitized_metadata)
     await asyncio.sleep(delay)
-    return (
-        CatalogRow(
-            akn_uri=akn_uri,
-            nature=nature,
-            title=title,
-            chapter=chapter,
-            work_frbr_uri=work,
-            expression_frbr_uri=expr,
-            effective_date=effective_date,
-            year=year,
-            source_url=url,
-        ),
-        r.text,
+
+    # 3. Return CatalogRow
+    return CatalogRow(
+        akn_uri=akn_uri,
+        nature=nature,
+        title=title,
+        chapter=chapter,
+        work_frbr_uri=work,
+        expression_frbr_uri=expr,
+        effective_date=effective_date,
+        year=year,
+        source_url=url,
+        r2_pdf_key=r2_key,
     )
 
 
-async def crawl_index_page(client: httpx.AsyncClient, url: str) -> List[Tuple[str, Optional[str]]]:
-    # Return list of (href, chapter_text_if_available) strictly by table rows.
-    # If page is out of range (404), return [].
+async def crawl_index_page(
+    client: httpx.AsyncClient, url: str
+) -> List[Tuple[str, Optional[str]]]:
     try:
         resp = await get(client, url)
     except Exception:
         return []
-            soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
 
     results: List[Tuple[str, Optional[str]]] = []
-    table = soup.find("table")
+    
+    # Look for the specific table structure used by ZimLII
+    table_div = soup.find("div", class_="table-responsive")
+    if not table_div:
+        return results
+        
+    table = table_div.find("table", class_="doc-table")
     if not table:
         return results
-    tbody = table.find("tbody") or table
-    for tr in tbody.find_all("tr", recursive=False):
-        tds = tr.find_all("td", recursive=False)
-        if not tds:
-            # Some tables may not use td within tbody
-            tds = tr.find_all("td")
-        if not tds:
-            continue
-        title_cell = tds[0]
-        # Choose ONLY the first anchor in the title cell
-        a = title_cell.find("a", href=True)
-        if not a:
-            continue
-        href = a["href"]
-        if not href.startswith("/akn/zw/act/"):
-            continue
-        # Chapter cell is typically the second column
+        
+    # Look at ALL rows in the table, not just tbody
+    # The documents are stored directly in table rows
+    all_rows = table.find_all("tr")
+    for tr in all_rows:
+        # Look for ANY cell that might contain a document link
+        found_link = False
         chapter_text = None
-        if len(tds) > 1:
-            chapter_text = extract_chapter_from_row(tds[1].get_text(" "))
-        results.append((href, chapter_text))
+        
+        for cell in tr.find_all(["td", "th"]):
+            a = cell.find("a", href=True)
+            if a and a.get("href", "").startswith("/akn/zw/act/"):
+                href = a["href"]
+                
+                # Try to find chapter information in other cells in this row
+                other_cells = tr.find_all("td")
+                for other_cell in other_cells:
+                    if other_cell != cell:  # Skip the cell with the link
+                        cell_text = other_cell.get_text(" ").strip()
+                        if cell_text:
+                            chapter_text = extract_chapter_from_row(cell_text)
+                            if chapter_text:
+                                break
+                
+                results.append((href, chapter_text))
+                found_link = True
+                break
+        
+        if found_link:
+            continue
     return results
 
 
 async def crawl_current_legislation(
-    out_root: Path,
+    bucket: str,
     max_pages: int,
     delay: float,
     concurrency: int,
-    catalog_path: Path,
     years: Optional[List[int]] = None,
     natures: Optional[List[str]] = None,
 ) -> int:
+    r2_client = get_r2_client()
     headers = {"User-Agent": UA}
-    out_dir = out_root / "legislation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     sem = asyncio.Semaphore(concurrency)
+    catalog_rows: List[CatalogRow] = []
 
     async with httpx.AsyncClient(headers=headers) as client:
-        # Helper to iterate pages for a given nature filter
-        async def collect_hrefs_for_nature(nature_param: Optional[str]) -> List[Tuple[str, Optional[str]]]:
+
+        async def collect_hrefs_for_nature(
+            nature_param: Optional[str],
+        ) -> List[Tuple[str, Optional[str]]]:
             page = 1
             hrefs: List[Tuple[str, Optional[str]]] = []
             while True:
@@ -283,123 +378,115 @@ async def crawl_current_legislation(
                     break
                 if nature_param:
                     base = f"{INDEX_URL}?natures={nature_param}&sort=title"
-                    index_url = base if page == 1 else f"{base}&page={page-1}"
+                    index_url = base if page == 1 else f"{base}&page={page}"
                 else:
-                    index_url = INDEX_URL if page == 1 else f"{INDEX_URL}?page={page-1}"
+                    index_url = INDEX_URL if page == 1 else f"{INDEX_URL}?page={page}"
                 rows = await crawl_index_page(client, index_url)
                 if not rows:
                     break
-                # Pre-filter hrefs by requested nature to avoid downloading SIs
-                filtered: List[Tuple[str, Optional[str]]] = []
+
+                filtered_rows = []
                 for href, chap in rows:
-                    if nature_param == "act":
-                        if "/act/si/" in href or "/act/ord/" in href:
-                            continue
-                    elif nature_param == "si":
-                        if "/act/si/" not in href:
-                            continue
-                    elif nature_param == "ord":
-                        if "/act/ord/" not in href:
-                            continue
-                    else:
-                        # Default (no nature specified): include acts and ordinances only
-                        if "/act/si/" in href:
-                            continue
-                    filtered.append((href, chap))
-                hrefs.extend(filtered)
+                    # Include all document types for now (Acts, SIs, Ordinances)
+                    filtered_rows.append((href, chap))
+                hrefs.extend(filtered_rows)
                 page += 1
             return hrefs
 
-        # Build list of index pages to walk: run per nature if provided, else default (all)
-        all_hrefs: List[Tuple[str, Optional[str]]] = []
-        if natures:
-            for nat in natures:
-                nat_key = nat.strip().lower()
-                if nat_key in {"act", "si", "ord", "ordinance"}:
-                    nat_param = "ord" if nat_key in {"ord", "ordinance"} else nat_key
-                else:
-                    nat_param = nat_key
-                hrefs = await collect_hrefs_for_nature(nat_param)
-                all_hrefs.extend(hrefs)
-        else:
-            all_hrefs.extend(await collect_hrefs_for_nature(None))
-
-        # Deduplicate
-        seen = set()
-        unique_rows: List[Tuple[str, Optional[str]]] = []
-        for href, chap in all_hrefs:
-            if href not in seen:
-                seen.add(href)
-                unique_rows.append((href, chap))
-
-        # Prepare catalog writer
-        catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        catalog_fp = catalog_path.open("w", encoding="utf-8")
-
-        processed = 0
+        all_hrefs: List[Tuple[str, Optional[str]]] = await collect_hrefs_for_nature(None)
+        seen = {href for href, _ in all_hrefs}
+        unique_rows = list(dict.fromkeys(all_hrefs))
+        print(f"Found {len(unique_rows)} unique document pages to crawl.")
 
         async def worker(href: str, chap_hint: Optional[str]):
-            nonlocal processed
             async with sem:
                 try:
-                    print(f"Downloading {href} ...")
-                    row, _ = await fetch_and_save_doc(client, href, out_dir, delay)
-                    # If chapter was detected in index row and missing from page, prefer index hint
+                    print(f"Processing {href} ...")
+                    row = await fetch_and_process_doc(client, r2_client, bucket, href, delay)
+                    if not row:
+                        return
                     if chap_hint and not row.chapter:
                         row.chapter = chap_hint
-                    # Year/nature filtering if provided
                     if years and row.year and row.year not in years:
                         return
-                    if natures:
-                        # Normalize aliases (ord -> ordinance)
-                        aliases = {"ord": "ordinance", "ordinance": "ordinance", "act": "act"}
-                        allowed = {aliases.get(n.lower(), n.lower()) for n in natures}
-                        nature_val = row.nature.lower()
-                        if nature_val not in allowed:
-                            return
-                    catalog_fp.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
-                    processed += 1
+                    catalog_rows.append(row)
                 except Exception as e:
-                    # Keep going on individual failures
                     print(f"⚠️  Failed {href}: {e}")
 
         await asyncio.gather(*(worker(h, c) for h, c in unique_rows))
-        catalog_fp.close()
-        return processed
+
+    if catalog_rows:
+        print(f"\n--- Uploading metadata catalog for {len(catalog_rows)} documents ---")
+        catalog_content = "\n".join(
+            [json.dumps(asdict(row), ensure_ascii=False) for row in catalog_rows]
+        )
+        catalog_metadata = sanitize_metadata_for_r2({
+            "content_type": "application/jsonl", 
+            "description": "Legislation metadata catalog"
+        })
+        await upload_to_r2(
+            r2_client,
+            bucket,
+            "corpus/metadata/legislation_catalog.jsonl",
+            catalog_content,
+            catalog_metadata
+        )
+
+    return len(catalog_rows)
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Crawl ZimLII current legislation with metadata")
-    p.add_argument("--out", default="data/raw", type=str, help="Output root directory for raw HTML")
-    p.add_argument("--catalog", default="data/processed/leg_catalog.jsonl", type=str, help="Output catalog JSONL path")
-    p.add_argument("--max-pages", type=int, default=0, help="Max index pages to crawl (0=all)")
-    p.add_argument("--delay", type=float, default=0.8, help="Delay between requests per worker")
-    p.add_argument("--concurrency", type=int, default=8, help="Max concurrent downloads")
-    p.add_argument("--years", type=str, default="", help="Comma-separated list of years to include")
-    p.add_argument("--natures", type=str, default="", help="Comma-separated natures: act, ordinance, statutory instrument")
+    p = argparse.ArgumentParser(
+        description="Crawl ZimLII current legislation, uploading PDFs and metadata to R2."
+    )
+    p.add_argument(
+        "--max-pages",
+        type=int,
+        default=9,
+        help="Max index pages to crawl (0=all, default=9 for full current legislation).",
+    )
+    p.add_argument(
+        "--delay", type=float, default=0.8, help="Delay between requests per worker."
+    )
+    p.add_argument("--concurrency", type=int, default=8, help="Max concurrent downloads.")
+    p.add_argument(
+        "--years",
+        type=str,
+        default="",
+        help="Comma-separated list of years to filter by.",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    years = [int(y) for y in args.years.split(",") if y.strip().isdigit()] if args.years else None
-    natures = [n.strip() for n in args.natures.split(",") if n.strip()] if args.natures else None
+    try:
+        bucket_name = os.environ["CLOUDFLARE_R2_BUCKET_NAME"]
+    except KeyError:
+        raise RuntimeError("CLOUDFLARE_R2_BUCKET_NAME environment variable not set.")
+
+    years = (
+        [int(y) for y in args.years.split(",") if y.strip().isdigit()]
+        if args.years
+        else None
+    )
 
     count = asyncio.run(
         crawl_current_legislation(
-            out_root=Path(args.out),
+            bucket=bucket_name,
             max_pages=args.max_pages,
             delay=args.delay,
             concurrency=args.concurrency,
-            catalog_path=Path(args.catalog),
             years=years,
-            natures=natures,
         )
     )
-    print(f"Downloaded and cataloged {count} current-legislation documents")
+    print(
+        f"\nSuccessfully processed and uploaded {count} legislation documents and their metadata catalog to R2."
+    )
 
 
 if __name__ == "__main__":
     main()
+
 
 
