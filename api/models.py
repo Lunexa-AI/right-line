@@ -320,23 +320,54 @@ class WaitlistRequest(BaseModel):
         description="Source channel where signup originated (e.g., 'web', 'referral', 'social')",
         example="web"
     )
+    # Honeypot field for bot detection - should always be empty
+    website: str | None = Field(
+        None,
+        max_length=0,
+        description="Leave this field empty. Used for bot detection.",
+        example="",
+        exclude=True  # Don't include in OpenAPI docs
+    )
     
     @field_validator("email")
     @classmethod
-    def normalize_email(cls, v: EmailStr) -> EmailStr:
-        """Normalize email to lowercase for consistent storage."""
-        return v.lower()
+    def normalize_email(cls, v: EmailStr) -> str:
+        """Normalize email to lowercase and strip whitespace."""
+        # Additional sanitization beyond Pydantic EmailStr
+        email_str = str(v).strip().lower()
+        # Remove any potentially dangerous characters (though EmailStr should handle this)
+        if len(email_str) > 254:  # RFC 5321 limit
+            raise ValueError("Email address too long (max 254 characters)")
+        return email_str
     
     @field_validator("source")
     @classmethod
     def validate_source(cls, v: str) -> str:
-        """Validate and normalize the source field."""
+        """Validate and normalize the source field with enhanced sanitization."""
+        # Strip and normalize
         normalized = v.strip().lower()
         if not normalized:
             return "web"  # Default fallback
+            
+        # Length validation
         if len(normalized) > 50:
             raise ValueError("Source must be 50 characters or less")
+            
+        # Character whitelist for source field (alphanumeric, dash, underscore)
+        import re
+        if not re.match(r'^[a-z0-9_-]+$', normalized):
+            # If invalid characters, sanitize to web default
+            return "web"
+            
         return normalized
+    
+    @field_validator("website")
+    @classmethod
+    def validate_honeypot(cls, v: str | None) -> str | None:
+        """Validate honeypot field - must be empty or None."""
+        if v is not None and v.strip():
+            raise ValueError("Bot detected: honeypot field should be empty")
+        return None
 
 
 class WaitlistResponse(BaseModel):
