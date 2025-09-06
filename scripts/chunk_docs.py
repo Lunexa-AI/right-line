@@ -54,11 +54,23 @@ def get_r2_client():
     except KeyError as e:
         raise RuntimeError(f"Missing required environment variable for R2: {e}")
 
-# Constants for chunking
-TARGET_TOKENS = 512  # Target number of tokens per chunk
+# ---------------------------------------------------------------------------
+# Chunking constants
+# ---------------------------------------------------------------------------
+
+# "Big" parent doc granularity – we use sections/pages which can be >512 tokens
+PARENT_MAX_TOKENS = 2048  # upper bound for big chunk sanity check
+
+# "Small" chunk target size (for embeddings)
+SMALL_TARGET_TOKENS = 256
+
+# Old constant kept for legacy functions that still use it (judgments path)
+TARGET_TOKENS = 512  # will be phased out for legislation path
 MAX_CHARS = 5000  # Maximum characters per chunk (Milvus varchar limit)
 MIN_TOKENS = 100  # Minimum tokens per chunk
-OVERLAP_RATIO = 0.15  # Overlap between chunks (15%)
+
+# We keep a slight overlap so embeddings capture context
+OVERLAP_RATIO = 0.15  # 15 %
 CHARS_PER_TOKEN = 4  # Approximate characters per token for English text
 
 # Entity extraction patterns (enhanced from enrich_chunks.py)
@@ -217,6 +229,36 @@ def upload_chunk_to_r2(r2_client, bucket: str, chunk: Dict[str, Any]) -> None:
         
     except Exception as e:
         logger.error(f"Error uploading chunk {chunk.get('chunk_id')} to R2: {e}")
+
+
+def upload_parent_doc_to_r2(r2_client, bucket: str, parent_doc: Dict[str, Any]) -> str:
+    """Upload a *big* parent document JSON object and return its R2 key."""
+
+    parent_id = parent_doc["parent_doc_id"]
+    doc_type = parent_doc.get("doc_type", "unknown")
+
+    r2_key = f"corpus/docs/{doc_type}/{parent_id}.json"
+
+    # Minimal metadata for discoverability
+    meta = {
+        "doc_id": str(parent_doc.get("doc_id", "")),
+        "doc_type": doc_type,
+        "section_path": parent_doc.get("section_path", ""),
+        "num_tokens": str(parent_doc.get("num_tokens", 0)),
+    }
+
+    # Sanitize values
+    meta = {k: ("".join(c for c in v if ord(c) < 128) if isinstance(v, str) else str(v)) for k, v in meta.items()}
+
+    r2_client.put_object(
+        Bucket=bucket,
+        Key=r2_key,
+        Body=json.dumps(parent_doc, default=str).encode("utf-8"),
+        ContentType="application/json",
+        Metadata=meta,
+    )
+
+    return r2_key
 
 
 def estimate_tokens(text: str) -> int:
@@ -386,7 +428,13 @@ def generate_chunk_id(doc_id: str, section_path: str, start_char: int, end_char:
     return hashlib.sha256(components.encode("utf-8")).hexdigest()[:16]
 
 
-def chunk_text(text: str, section_path: str, doc_id: str, start_offset: int = 0) -> List[Dict[str, Any]]:
+def chunk_text(
+    text: str,
+    section_path: str,
+    doc_id: str,
+    start_offset: int = 0,
+    target_tokens: int = SMALL_TARGET_TOKENS,
+) -> List[Dict[str, Any]]:
     """
     Chunk text into overlapping segments using sliding window.
     
@@ -407,7 +455,7 @@ def chunk_text(text: str, section_path: str, doc_id: str, start_offset: int = 0)
     text_length = len(text)
     
     # If text is shorter than target, return as single chunk
-    if estimate_tokens(text) <= TARGET_TOKENS:
+    if estimate_tokens(text) <= target_tokens:
         start_char = start_offset
         end_char = start_offset + text_length
         num_tokens = estimate_tokens(text)
@@ -422,8 +470,8 @@ def chunk_text(text: str, section_path: str, doc_id: str, start_offset: int = 0)
         return [chunk]
     
     # Calculate sliding window parameters
-    overlap_tokens = int(TARGET_TOKENS * OVERLAP_RATIO)
-    stride_tokens = TARGET_TOKENS - overlap_tokens
+    overlap_tokens = int(target_tokens * OVERLAP_RATIO)
+    stride_tokens = target_tokens - overlap_tokens
     stride_chars = stride_tokens * CHARS_PER_TOKEN
     
     # Initialize window
@@ -432,7 +480,7 @@ def chunk_text(text: str, section_path: str, doc_id: str, start_offset: int = 0)
     
     while pos < text_length:
         # Calculate end position for current chunk
-        target_chars = TARGET_TOKENS * CHARS_PER_TOKEN
+        target_chars = target_tokens * CHARS_PER_TOKEN
         end_pos = min(pos + target_chars, text_length)
         
         # Adjust to sentence boundary if not at end of text
@@ -519,6 +567,8 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         logger.warning(f"Document {doc_id} has no content to chunk")
         return []
     
+    parent_docs: List[Dict[str, Any]] = []
+
     # Process each part
     for part_idx, part in enumerate(parts):
         part_title = part.get("title", f"Part {part_idx + 1}")
@@ -541,9 +591,36 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
             if not section_content.strip():
                 continue
             
-            # Create section path
+            # Create section path (parent doc path)
             section_path = f"{part_title} > {section_title}"
-            
+
+            # ------------------------------------------------------------------
+            # Build BIG parent document record for this section
+            # ------------------------------------------------------------------
+
+            parent_doc_id = generate_chunk_id(doc_id, section_path, 0, len(section_content), section_content)
+
+            parent_doc = {
+                "parent_doc_id": parent_doc_id,
+                "doc_id": doc_id,
+                "doc_type": doc_type,
+                "section_path": section_path,
+                "text": section_content,
+                "num_tokens": estimate_tokens(section_content),
+                "language": language,
+                "nature": nature,
+                "year": year,
+                "chapter": chapter,
+            }
+
+            parent_docs.append(parent_doc)
+
+            parent_object_key = f"corpus/docs/{doc_type}/{parent_doc_id}.json"
+
+            # ------------------------------------------------------------------
+            # SMALL chunk generation
+            # ------------------------------------------------------------------
+
             # For legislation, if section is too short, merge with adjacent sections
             if estimate_tokens(section_content) < MIN_TOKENS:
                 # Try to merge with next sections in the same part
@@ -555,7 +632,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     next_paragraphs = next_section.get("paragraphs", [])
                     if next_paragraphs:
                         next_content = " ".join(next_paragraphs)
-                        if estimate_tokens(merged_content + " " + next_content) <= TARGET_TOKENS * 2:
+                        if estimate_tokens(merged_content + " " + next_content) <= SMALL_TARGET_TOKENS * 2:
                             merged_content += " " + next_content
                             merged_sections.append(next_section.get("title", f"Section {next_idx + 1}"))
                         else:
@@ -650,10 +727,12 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     logger.warning(f"Skipping invalid merged chunk for document {doc_id}: {e}")
             else:
                 # Section is long enough, chunk normally
+                # Generate *small* chunks with new target size
                 section_chunks = chunk_text(
                     text=section_content,
                     section_path=section_path,
                     doc_id=doc_id,
+                    target_tokens=SMALL_TARGET_TOKENS,
                 )
                 
                 # Add metadata to chunks
@@ -706,7 +785,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     except Exception as e:
                         logger.warning(f"Skipping invalid chunk for document {doc_id}: {e}")
     
-    return all_chunks
+    return all_chunks, parent_docs
 
 
 def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1087,6 +1166,7 @@ def process_documents_from_r2(
         logger.info(f"Limited processing to {max_docs} documents for testing")
     
     all_chunks = []
+    all_parent_docs = []
     
     # Process each document
     for doc in tqdm(documents, desc="Chunking documents"):
@@ -1100,11 +1180,12 @@ def process_documents_from_r2(
             )
 
             if is_legislation:
-                chunks = chunk_legislation(doc)
+                chunks, parent_docs = chunk_legislation(doc)
+                all_chunks.extend(chunks)
+                all_parent_docs.extend(parent_docs)
             else:
                 chunks = chunk_judgment(doc)
-            
-            all_chunks.extend(chunks)
+                all_chunks.extend(chunks)
             
             if verbose:
                 logger.info(f"Generated {len(chunks)} chunks for document {doc.get('doc_id')}")
@@ -1120,7 +1201,29 @@ def process_documents_from_r2(
         logger.info("Applying advanced entity enrichment...")
         all_chunks = enrich_chunks(all_chunks, verbose)
     
-    # Upload individual chunks to R2
+    # ------------------------------------------------------------------
+    # Upload parent docs first (big chunks)
+    # ------------------------------------------------------------------
+    logger.info(f"Uploading {len(all_parent_docs)} parent docs to R2 ...")
+    for pd in tqdm(all_parent_docs, desc="Uploading parents"):
+        try:
+            upload_parent_doc_to_r2(r2_client, bucket, pd)
+        except Exception as e:
+            logger.error(f"Failed to upload parent doc {pd.get('parent_doc_id')}: {e}")
+
+    # Also upload docs.jsonl manifest
+    if all_parent_docs:
+        manifest_content = "\n".join([json.dumps(p, default=str) for p in all_parent_docs])
+        r2_client.put_object(
+            Bucket=bucket,
+            Key="corpus/docs/docs.jsonl",
+            Body=manifest_content.encode("utf-8"),
+            ContentType="application/json",
+        )
+
+    # ------------------------------------------------------------------
+    # Upload individual *small* chunks
+    # ------------------------------------------------------------------
     logger.info(f"Uploading {len(all_chunks)} chunks to R2...")
     successful_uploads = 0
     failed_uploads = 0

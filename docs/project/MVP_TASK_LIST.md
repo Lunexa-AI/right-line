@@ -30,28 +30,51 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 ### 1.4. User Management
 -   **Task**: [x] Implement a `POST /api/v1/users/me` endpoint to create a user profile in Firestore upon initial signup.
 
-## Phase 2: Decoupling from Filesystem: Cloudflare R2 Integration
-
-*Goal: Make the application stateless and production-ready by migrating all file-based data storage (processed chunks, source documents) to a scalable, cloud-native object store.*
+# -----------------------------------------------------------------------------
+#  Phase 2: Cloud-Native Data Plane (R2 + Milvus)
+# -----------------------------------------------------------------------------
 
 ### 2.1. Cloudflare R2 Setup
--   **Task**: Create a Cloudflare account and set up a new R2 bucket (e.g., `gweta-prod-documents`).
--   **Task**: Generate R2 API credentials (Access Key ID & Secret Access Key).
--   **Task**: Securely configure these credentials as environment variables for both local development (`.env`) and the production environment (Render secrets).
+-   **Task**: [x] Create a Cloudflare account and set up a new R2 bucket (e.g., `gweta-prod-documents`).
+-   **Task**: [x] Generate R2 API credentials (Access Key ID & Secret Access Key).
+-   **Task**: [x] Securely configure these credentials as environment variables for both local development (`.env`) and the production environment (Render secrets).
 
-### 2.2. Refactor Data Ingestion & Processing Scripts
+### 2.2. Refactor Data Ingestion & Basic Processing Scripts (COMPLETED)
 -   **Task**: **Crawlers (`scripts/crawl_*.py`)**:
-    -   Modify the crawlers to download source documents as PDFs (not HTML).
-    -   Integrate the `boto3` library to upload each downloaded PDF directly to a `sources/` prefix in the R2 bucket.
+    -   [x] Modify the crawlers to download source documents as PDFs (not HTML).
+    -   [x] Integrate the `boto3` library to upload each downloaded PDF directly to a `sources/` prefix in the R2 bucket.
 -   **Task**: **Parsing & Chunking (`scripts/parse_docs.py`, `scripts/chunk_docs.py`)**:
-    -   Update the scripts to read source PDFs from the R2 bucket instead of the local `data/raw/` directory.
-    -   After chunking, upload each individual text chunk as a separate object to a `chunks/` prefix in the R2 bucket. This replaces writing to `data/processed/`.
--   **Task**: **Embedding & Upsert (`scripts/milvus_upsert.py`)**:
-    -   **Crucially, update the Milvus metadata schema.** Each vector's metadata must now store pointers to the objects in R2, not local file paths.
-    -   The schema must include: `chunk_object_key` (e.g., `chunks/some_doc_id_chunk_5.txt`), `source_document_key` (e.g., `sources/some_doc.pdf`), and `page_number`.
--   **Task**: Rerun the entire ingestion pipeline to populate R2 and Milvus with the new, production-ready data and metadata.
+    -   [x] Update the scripts to read source PDFs from the R2 bucket instead of the local `data/raw/` directory.
+    -   [x] After chunking, upload each individual text chunk as a separate object to a `chunks/` prefix in the R2 bucket. This replaces writing to `data/processed/`.
+    -   (All subtasks above are **done** and validated.)
 
-### 2.3. Refactor API Backend for R2
+### 2.3. Advanced Chunking Strategy – "Small-to-Big"
+-   **Task**: Update `scripts/chunk_docs.py` to implement the small-to-big strategy:
+    1.  Produce *small* chunks (~256 tokens) with an added `parent_doc_id` field.
+    2.  Generate *big* parent-document records (full sections / pages) and store them in a new `docs.jsonl` catalog on R2.
+-   **Task**: Ensure every small chunk carries a `parent_chunk_object_key` so it can be expanded to its parent later.
+-   **Task**: Upload both the new `chunks` and `docs` artifacts to R2.
+-   **Task**: Run the fast-progress check to verify 100 % coverage.
+
+### 2.4. Embedding Generation & Milvus Upsert
+-   **Task**: Design the *new* Milvus collection schema (v2):
+    -   `chunk_id` (PK, string)
+    -   `embedding` (vector-float32[dim])
+    -   `num_tokens` (int)
+    -   `doc_type` (string<20)
+    -   `language` (string<10)
+    -   `parent_doc_id` (string<16)
+    -   `chunk_object_key` (string)
+    -   `source_document_key` (string)
+    -   Additional lightweight meta fields (`nature`, `year`, `chapter`, `date_context`)
+-   **Task**: Re-initialize Milvus (drop old collection, create new one).
+-   **Task**: Update `scripts/milvus_upsert.py`:
+    -   Read the *small* chunks from R2.
+    -   Generate embeddings (OpenAI Ada-002 or equivalent) in batches.
+    -   Upsert into Milvus using the new schema.
+-   **Task**: Run the full embedding→upsert pipeline and verify collection counts == chunk counts.
+
+### 2.5. Refactor API Backend for R2 (Retrieval Layer)
 -   **Task**: **Retrieval Logic (`api/retrieval.py`)**:
     -   Modify the `RetrievalEngine` to fetch chunk *content* from R2.
     -   After getting search results from Milvus, extract the `chunk_object_key` from the metadata.
@@ -61,21 +84,15 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   Define a `GET /api/v1/documents/{document_key}` endpoint, protected by the existing user authentication dependency.
     -   The endpoint will use `boto3` to fetch the requested PDF from R2 and return it to the client using a `StreamingResponse`.
 
-### 2.4. Frontend Integration for Document Viewing
+### 2.6. Frontend Integration for Document Viewing
 -   **Task**: The frontend must be updated to change how it links to source documents.
 -   **Task**: Source links in the UI should now point to the new `/api/v1/documents/{document_key}` endpoint.
 -   **Task**: Implement an in-app PDF viewer (using an `<iframe>` or a library like `react-pdf`) that uses this API endpoint as its source, allowing users to view citations without leaving the application. Add support for jumping to a specific page using URL fragments (`#page=...`).
 
-## Phase 3: Upgrading the RAG Pipeline
+## Phase 3: Retrieval Quality – Hybrid, Reranking & Context Assembly
 
-*Goal: Systematically replace the components of the existing RAG pipeline with the more advanced, multi-strategy components defined in the v2.0 architecture.*
 
-### 3.1. Chunking Strategy: Small-to-Big
--   **Task**: Modify the data ingestion scripts (`scripts/chunk_docs.py`) to implement the "small-to-big" strategy.
--   **Task**: Each small chunk (e.g., 256 tokens) must contain a reference (`parent_doc_id`) to its larger parent document. The full documents must be stored in a way they can be easily retrieved by this ID (e.g., in a JSONL file or a simple key-value store).
--   **Task**: Rerun the ingestion pipeline to generate the new `chunks.jsonl` and `docs.jsonl` artifacts.
-
-### 3.2. Retrieval Strategy: Implement Robust Hybrid Search
+### 3.1. Retrieval Strategy: Implement Robust Hybrid Search
 -   **Task**: Replace the `SimpleSparseProvider` in `api/retrieval.py` with a proper BM25 implementation.
     -   The `rank-bm25` library is a good candidate.
     -   Create a pre-processing script to build and save the BM25 index from the corpus to a file.
@@ -85,7 +102,7 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   Continue using RRF (Reciprocal Rank Fusion) to combine the results.
     -   **Crucially**, after identifying the top-k small chunks, it must then fetch their corresponding **parent documents**. These full-text parent documents will be the context passed to the synthesis stage.
 
-### 3.3. Reranking Implementation
+### 3.2. Reranking Implementation
 -   **Task**: Implement a real reranker. The `BGE-reranker-v2` (cross-encoder) is a strong choice. This can be run locally using a library like `sentence-transformers`.
 -   **Task**: Replace the placeholder `OpenAIReranker` in `api/retrieval.py` with this new implementation.
 -   **Task**: The reranker should take the combined candidate chunks from the hybrid search step (before parent document retrieval) and re-score them against the query to find the most relevant ones.
