@@ -22,6 +22,7 @@ from api.routers import (
     analytics as analytics_router,
     query as query_router,
     users as users_router,
+    waitlist as waitlist_router,
     whatsapp as whatsapp_router,
 )
 from libs.firebase.client import initialize_firebase_app
@@ -126,6 +127,7 @@ app = create_app()
 # Include API routers
 app.include_router(query_router.router, prefix="/api", tags=["Legal Query"])
 app.include_router(users_router.router, prefix="/api", tags=["Users"])
+app.include_router(waitlist_router.router, prefix="/api", tags=["Waitlist"])
 app.include_router(analytics_router.router, prefix="/api", tags=["Analytics"])
 app.include_router(whatsapp_router.router, prefix="/api", tags=["WhatsApp"])
 

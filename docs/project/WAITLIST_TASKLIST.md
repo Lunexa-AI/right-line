@@ -35,7 +35,7 @@ This document outlines the detailed tasks required to implement a waitlist syste
   - `WaitlistResponse`: Success status, message, duplicate flag
 - **Validation**: Pydantic email validation, input sanitization
 
-#### 1.3. Implement Firestore Operations
+#### 1.3. Implement Firestore Operations ✅
 - **Task**: Create `libs/firestore/waitlist.py`
 - **Functions to implement**:
   - `add_to_waitlist(client, email, source, metadata)` → Returns (created: bool, entry: WaitlistEntry)
@@ -45,7 +45,7 @@ This document outlines the detailed tasks required to implement a waitlist syste
 
 ### Phase 2: API Endpoint Implementation
 
-#### 2.1. Create Waitlist Router
+#### 2.1. Create Waitlist Router ✅
 - **Task**: Create `api/routers/waitlist.py`
 - **Endpoint**: `POST /api/v1/waitlist`
 - **Features**:
