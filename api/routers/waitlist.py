@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from api.models import WaitlistRequest, WaitlistResponse
 from libs.firebase.client import get_firestore_async_client
-from libs.firestore.waitlist import add_to_waitlist
+from libs.firestore.waitlist import add_to_waitlist, get_waitlist_stats
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -126,13 +126,17 @@ async def join_waitlist(
         )
         
         if created:
-            # New signup
+            # New signup - KEY ANALYTICS EVENT
             logger.info(
-                "Successfully added new email to waitlist",
+                "🎯 WAITLIST_SIGNUP_SUCCESS",
+                event_type="waitlist_signup",
                 email=waitlist_request.email,
                 source=waitlist_request.source,
                 waitlist_id=waitlist_entry.waitlist_id,
                 ip_address=client_ip,
+                user_agent=user_agent[:50] if user_agent else "unknown",
+                timestamp=metadata.get("timestamp"),
+                analytics_priority="HIGH"  # For easy filtering
             )
             
             return WaitlistResponse(
@@ -142,13 +146,16 @@ async def join_waitlist(
                 waitlist_id=waitlist_entry.waitlist_id,
             )
         else:
-            # Duplicate email (idempotent behavior)
+            # Duplicate email - IMPORTANT FOR CONVERSION METRICS
             logger.info(
-                "Attempted to add existing email to waitlist",
+                "🔄 WAITLIST_DUPLICATE_ATTEMPT",
+                event_type="waitlist_duplicate",
                 email=waitlist_request.email,
                 source=waitlist_request.source,
                 existing_waitlist_id=waitlist_entry.waitlist_id,
                 ip_address=client_ip,
+                user_agent=user_agent[:50] if user_agent else "unknown",
+                analytics_priority="MEDIUM"  # Track interest level
             )
             
             return WaitlistResponse(
@@ -162,14 +169,27 @@ async def join_waitlist(
         # Check if this is a honeypot violation
         if "Bot detected" in str(e):
             await _handle_bot_detection(client_ip, waitlist_request.email or "unknown")
-            
-        logger.warning(
-            "Waitlist signup validation error",
-            email=getattr(waitlist_request, 'email', 'unknown'),
-            error=str(e),
-            ip_address=client_ip,
-            is_bot_detection="Bot detected" in str(e),
-        )
+            # CRITICAL: Bot detection for security metrics
+            logger.warning(
+                "🤖 WAITLIST_BOT_DETECTED",
+                event_type="security_bot_detected",
+                email=getattr(waitlist_request, 'email', 'unknown'),
+                ip_address=client_ip,
+                user_agent=user_agent[:50] if user_agent else "unknown",
+                error_detail=str(e),
+                security_priority="HIGH"
+            )
+        else:
+            # Regular validation errors - track for UX improvements
+            logger.warning(
+                "⚠️ WAITLIST_VALIDATION_ERROR",
+                event_type="validation_error",
+                email=getattr(waitlist_request, 'email', 'unknown'),
+                error=str(e),
+                ip_address=client_ip,
+                user_agent=user_agent[:50] if user_agent else "unknown",
+                analytics_priority="LOW"
+            )
         
         # Don't expose specific validation details to potential bots
         if "Bot detected" in str(e):
@@ -184,30 +204,37 @@ async def join_waitlist(
         )
         
     except RuntimeError as e:
-        # Firestore operation failed
+        # Firestore operation failed - CRITICAL ERROR for monitoring
         logger.error(
-            "Failed to process waitlist signup",
+            "🚨 WAITLIST_DATABASE_ERROR",
+            event_type="database_error",
             email=waitlist_request.email,
             source=waitlist_request.source,
             error=str(e),
             ip_address=client_ip,
+            user_agent=user_agent[:50] if user_agent else "unknown",
+            error_priority="CRITICAL",  # Requires immediate attention
             exc_info=True,
         )
         
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unable to process waitlist signup. Please try again later.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,  # More appropriate for DB issues
+            detail="Service temporarily unavailable. Please try again in a moment.",
         )
         
     except Exception as e:
-        # Unexpected error
+        # Unexpected error - CRITICAL for debugging
         logger.error(
-            "Unexpected error during waitlist signup",
+            "💥 WAITLIST_UNEXPECTED_ERROR",
+            event_type="unexpected_error",
             email=waitlist_request.email,
             source=waitlist_request.source,
             error=str(e),
             error_type=type(e).__name__,
             ip_address=client_ip,
+            user_agent=user_agent[:50] if user_agent else "unknown",
+            error_priority="CRITICAL",
+            request_metadata=metadata,
             exc_info=True,
         )
         
@@ -308,22 +335,30 @@ async def _check_rate_limits(client_ip: str) -> None:
     
     # Check minute limit
     if len(ip_data["minute_requests"]) >= RATE_LIMIT_CONFIG["max_requests_per_minute"]:
+        # RATE LIMITING - Important for abuse monitoring
         logger.warning(
-            "Rate limit exceeded (minute)",
+            "🚦 RATE_LIMIT_EXCEEDED_MINUTE",
+            event_type="rate_limit_minute",
             ip_address=client_ip,
             requests_in_minute=len(ip_data["minute_requests"]),
+            limit=RATE_LIMIT_CONFIG["max_requests_per_minute"],
+            security_priority="MEDIUM"
         )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests. Please wait a moment before trying again.",
         )
     
-    # Check hour limit
+    # Check hour limit  
     if len(ip_data["hour_requests"]) >= RATE_LIMIT_CONFIG["max_requests_per_hour"]:
+        # HOURLY RATE LIMITING - Track persistent abuse
         logger.warning(
-            "Rate limit exceeded (hour)",
+            "🚦 RATE_LIMIT_EXCEEDED_HOUR", 
+            event_type="rate_limit_hour",
             ip_address=client_ip,
             requests_in_hour=len(ip_data["hour_requests"]),
+            limit=RATE_LIMIT_CONFIG["max_requests_per_hour"],
+            security_priority="HIGH"  # Persistent abuse
         )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -346,12 +381,16 @@ async def _handle_bot_detection(client_ip: str, email: str) -> None:
     ban_until = time.time() + RATE_LIMIT_CONFIG["honeypot_ban_duration"]
     _honeypot_bans[client_ip] = ban_until
     
+    # SECURITY LOG - High priority for monitoring
     logger.warning(
-        "Bot detected via honeypot field",
+        "🔒 SECURITY_BOT_BANNED",
+        event_type="security_ban",
         ip_address=client_ip,
         email=email,
         ban_duration_seconds=RATE_LIMIT_CONFIG["honeypot_ban_duration"],
         ban_until=ban_until,
+        security_action="IP_BANNED",
+        security_priority="HIGH"
     )
 
 
@@ -387,3 +426,61 @@ def _get_client_ip(request: Request) -> str:
         return request.client.host
     
     return "unknown"
+
+
+@router.get(
+    "/v1/admin/waitlist/stats",
+    tags=["Admin", "Waitlist"],
+    summary="Get waitlist statistics (Admin only)",
+    description="Retrieve waitlist analytics and statistics. Future: Requires admin authentication.",
+)
+async def get_waitlist_statistics():
+    """Get basic waitlist statistics for admin monitoring.
+    
+    This is a simple endpoint for tracking waitlist metrics during the pre-launch phase.
+    In the future, this should be protected with admin authentication.
+    
+    Returns:
+        Dict with waitlist statistics including total count and recent entries
+        
+    Example Response:
+        {
+            "total_count": 1247,
+            "recent_entries": [...],
+            "sources_breakdown": {"web": 980, "social": 267},
+            "latest_signup": "2024-01-15T10:30:00Z"
+        }
+    """
+    try:
+        # Get Firestore client
+        firestore_client = get_firestore_async_client()
+        
+        # Get waitlist statistics
+        stats = await get_waitlist_stats(firestore_client, limit=5)
+        
+        # Log admin access for security
+        logger.info(
+            "📊 ADMIN_WAITLIST_STATS_ACCESSED",
+            event_type="admin_stats_access",
+            total_count=stats.get("total_count", 0),
+            sources_count=len(stats.get("sources_breakdown", {})),
+            security_priority="MEDIUM"
+        )
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(
+            "🚨 ADMIN_STATS_ERROR",
+            event_type="admin_error",
+            error=str(e),
+            error_type=type(e).__name__,
+            error_priority="HIGH",
+            exc_info=True
+        )
+        
+        # Return basic error response for admin endpoint
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to retrieve waitlist statistics"
+        )
