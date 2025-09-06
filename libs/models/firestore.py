@@ -6,7 +6,7 @@ and are used for data validation and serialization.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 
 class FirestoreUser(BaseModel):
     """Represents a user's profile in Firestore."""
@@ -40,3 +40,11 @@ class FirestoreFeedback(BaseModel):
     rating: int = Field(..., ge=-1, le=1, description="Rating: -1 (bad), 0 (neutral), 1 (good).")
     comment: str | None = Field(None, max_length=500, description="Optional user comment.")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of the feedback submission.")
+
+class WaitlistEntry(BaseModel):
+    """Represents a waitlist signup entry in Firestore."""
+    waitlist_id: str = Field(..., description="Unique identifier for the waitlist entry.")
+    email: EmailStr = Field(..., description="The user's email address (validated).")
+    joined_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when user joined the waitlist.")
+    source: str = Field("web", description="Source channel where signup originated (e.g., 'web', 'referral').")
+    metadata: dict[str, str] | None = Field(None, description="Optional metadata for analytics (IP, user agent, etc.).")
