@@ -18,7 +18,7 @@ This document outlines the detailed tasks required to implement a waitlist syste
 
 ### Phase 1: Data Models & Firestore Setup
 
-#### 1.1. Create Firestore Data Model
+#### 1.1. Create Firestore Data Model ✅
 - **Task**: Add `WaitlistEntry` model to `libs/models/firestore.py`
 - **Requirements**:
   - `waitlist_id: str` (UUID primary key)
@@ -28,7 +28,7 @@ This document outlines the detailed tasks required to implement a waitlist syste
   - `metadata: dict[str, str] | None` (optional: IP, user agent for analytics)
 - **Validation**: Email format, required fields, timestamp auto-generation
 
-#### 1.2. Create API Request/Response Models
+#### 1.2. Create API Request/Response Models ✅
 - **Task**: Add waitlist models to `api/models.py`
 - **Models to create**:
   - `WaitlistRequest`: Email validation, optional source field

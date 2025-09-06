@@ -303,3 +303,59 @@ class SignupResponse(BaseModel):
     message: str = Field(description="Success message")
     user_id: str = Field(description="The Firebase UID of the created user")
     email: str = Field(description="The email address of the created user")
+
+
+# Waitlist Models
+class WaitlistRequest(BaseModel):
+    """Request model for waitlist signup."""
+    
+    email: EmailStr = Field(
+        ...,
+        description="User's email address for waitlist signup",
+        example="user@example.com"
+    )
+    source: str = Field(
+        "web",
+        max_length=50,
+        description="Source channel where signup originated (e.g., 'web', 'referral', 'social')",
+        example="web"
+    )
+    
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> EmailStr:
+        """Normalize email to lowercase for consistent storage."""
+        return v.lower()
+    
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        """Validate and normalize the source field."""
+        normalized = v.strip().lower()
+        if not normalized:
+            return "web"  # Default fallback
+        if len(normalized) > 50:
+            raise ValueError("Source must be 50 characters or less")
+        return normalized
+
+
+class WaitlistResponse(BaseModel):
+    """Response model for waitlist signup."""
+    
+    success: bool = Field(
+        description="Whether the waitlist signup was successful",
+        example=True
+    )
+    message: str = Field(
+        description="Status message for the signup attempt",
+        example="Successfully added to waitlist!"
+    )
+    already_subscribed: bool = Field(
+        description="Whether the email was already in the waitlist (idempotent behavior)",
+        example=False
+    )
+    waitlist_id: str | None = Field(
+        None,
+        description="Unique identifier for the waitlist entry (only for new signups)",
+        example="550e8400-e29b-41d4-a716-446655440000"
+    )
