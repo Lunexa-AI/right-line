@@ -52,6 +52,16 @@ class Settings(BaseSettings):
         description="Sentry DSN for error monitoring. If not set, Sentry will not be initialized.",
     )
 
+    # Firebase Configuration
+    firebase_admin_sdk_path: str | None = Field(
+        default=None,
+        description="Path to the Firebase Admin SDK JSON file.",
+    )
+    firebase_admin_sdk_json: str | None = Field(
+        default=None,
+        description="JSON content of the Firebase Admin SDK file.",
+    )
+
     # RAG Configuration
     search_top_k: int = 20
     rerank_top_k: int = 10
