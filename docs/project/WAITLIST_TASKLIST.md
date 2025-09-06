@@ -55,7 +55,7 @@ This document outlines the detailed tasks required to implement a waitlist syste
   - Structured logging
   - Rate limiting preparation (headers/metadata collection)
 
-#### 2.2. Rate Limiting & Security
+#### 2.2. Rate Limiting & Security ✅
 - **Task**: Implement basic security measures
 - **Requirements**:
   - Collect IP address and User-Agent for rate limiting
@@ -64,13 +64,13 @@ This document outlines the detailed tasks required to implement a waitlist syste
   - Request size limits (already handled by FastAPI)
 - **Future**: Integration point for Redis-based rate limiting
 
-#### 2.3. Update Main Router
+#### 2.3. Update Main Router ✅
 - **Task**: Add waitlist router to `api/main.py`
 - **Requirements**: Include router with proper tags and prefix
 
 ### Phase 3: Comprehensive Testing
 
-#### 3.1. Unit Tests for Firestore Operations
+#### 3.1. Unit Tests for Firestore Operations ✅
 - **Task**: Create `tests/libs/test_waitlist_firestore.py`
 - **Test Cases**:
   - Add new email to waitlist (success)

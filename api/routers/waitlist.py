@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from typing import Dict, Any
+
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import ValidationError
@@ -12,6 +15,17 @@ from libs.firestore.waitlist import add_to_waitlist
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+# Rate limiting configuration (for future Redis implementation)
+RATE_LIMIT_CONFIG = {
+    "max_requests_per_hour": 5,
+    "max_requests_per_minute": 2,
+    "honeypot_ban_duration": 3600,  # 1 hour ban for honeypot violations
+}
+
+# In-memory rate limiting (temporary - replace with Redis in production)
+_rate_limit_store: Dict[str, Dict[str, Any]] = {}
+_honeypot_bans: Dict[str, float] = {}
 
 
 @router.post(
@@ -77,11 +91,17 @@ async def join_waitlist(
     # Extract metadata for analytics and rate limiting
     client_ip = _get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
+    request_size = int(request.headers.get("content-length", 0))
+    
+    # Security validations
+    await _validate_request_security(client_ip, request_size, user_agent)
     
     # Prepare metadata for storage
     metadata = {
         "ip_address": client_ip,
         "user_agent": user_agent[:200] if user_agent else "",  # Limit length
+        "request_size": str(request_size),
+        "timestamp": str(int(time.time())),
     }
     
     logger.info(
@@ -90,6 +110,7 @@ async def join_waitlist(
         source=waitlist_request.source,
         ip_address=client_ip,
         user_agent_length=len(user_agent),
+        request_size=request_size,
     )
     
     try:
@@ -138,17 +159,28 @@ async def join_waitlist(
             )
             
     except ValidationError as e:
-        # This shouldn't happen due to Pydantic validation, but just in case
+        # Check if this is a honeypot violation
+        if "Bot detected" in str(e):
+            await _handle_bot_detection(client_ip, waitlist_request.email or "unknown")
+            
         logger.warning(
             "Waitlist signup validation error",
-            email=waitlist_request.email,
+            email=getattr(waitlist_request, 'email', 'unknown'),
             error=str(e),
             ip_address=client_ip,
+            is_bot_detection="Bot detected" in str(e),
         )
+        
+        # Don't expose specific validation details to potential bots
+        if "Bot detected" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid request",
+            )
         
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Validation error: {str(e)}",
+            detail="Invalid input provided",
         )
         
     except RuntimeError as e:
@@ -183,6 +215,144 @@ async def join_waitlist(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred. Please try again later.",
         )
+
+
+async def _validate_request_security(
+    client_ip: str, request_size: int, user_agent: str
+) -> None:
+    """Validate request for security concerns and apply rate limiting.
+    
+    Args:
+        client_ip: Client IP address
+        request_size: Size of request in bytes
+        user_agent: User agent string
+        
+    Raises:
+        HTTPException: If request violates security policies
+    """
+    # Check if IP is banned for honeypot violations
+    if client_ip in _honeypot_bans:
+        ban_time = _honeypot_bans[client_ip]
+        if time.time() < ban_time:
+            logger.warning(
+                "Blocked request from banned IP",
+                ip_address=client_ip,
+                ban_expires_at=ban_time,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+            )
+        else:
+            # Ban expired, remove from store
+            del _honeypot_bans[client_ip]
+    
+    # Request size validation (FastAPI handles most of this, but add explicit check)
+    MAX_REQUEST_SIZE = 1024  # 1KB should be more than enough for email + source
+    if request_size > MAX_REQUEST_SIZE:
+        logger.warning(
+            "Request too large",
+            ip_address=client_ip,
+            request_size=request_size,
+            max_size=MAX_REQUEST_SIZE,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Request too large",
+        )
+    
+    # Basic rate limiting (in-memory for now - replace with Redis)
+    await _check_rate_limits(client_ip)
+    
+    # User agent validation (basic bot detection)
+    if not user_agent or len(user_agent) < 10:
+        logger.info(
+            "Suspicious user agent",
+            ip_address=client_ip,
+            user_agent=user_agent,
+        )
+        # Don't block entirely, but log for monitoring
+
+
+async def _check_rate_limits(client_ip: str) -> None:
+    """Check rate limits for the given IP address.
+    
+    Simple in-memory implementation - replace with Redis for production.
+    
+    Args:
+        client_ip: Client IP address
+        
+    Raises:
+        HTTPException: If rate limit exceeded
+    """
+    current_time = time.time()
+    
+    # Initialize tracking for new IPs
+    if client_ip not in _rate_limit_store:
+        _rate_limit_store[client_ip] = {
+            "minute_requests": [],
+            "hour_requests": [],
+        }
+    
+    ip_data = _rate_limit_store[client_ip]
+    
+    # Clean old entries (older than 1 hour)
+    ip_data["minute_requests"] = [
+        req_time for req_time in ip_data["minute_requests"] 
+        if current_time - req_time < 60
+    ]
+    ip_data["hour_requests"] = [
+        req_time for req_time in ip_data["hour_requests"] 
+        if current_time - req_time < 3600
+    ]
+    
+    # Check minute limit
+    if len(ip_data["minute_requests"]) >= RATE_LIMIT_CONFIG["max_requests_per_minute"]:
+        logger.warning(
+            "Rate limit exceeded (minute)",
+            ip_address=client_ip,
+            requests_in_minute=len(ip_data["minute_requests"]),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please wait a moment before trying again.",
+        )
+    
+    # Check hour limit
+    if len(ip_data["hour_requests"]) >= RATE_LIMIT_CONFIG["max_requests_per_hour"]:
+        logger.warning(
+            "Rate limit exceeded (hour)",
+            ip_address=client_ip,
+            requests_in_hour=len(ip_data["hour_requests"]),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+        )
+    
+    # Record current request
+    ip_data["minute_requests"].append(current_time)
+    ip_data["hour_requests"].append(current_time)
+
+
+async def _handle_bot_detection(client_ip: str, email: str) -> None:
+    """Handle detected bot activity (honeypot violation).
+    
+    Args:
+        client_ip: IP address of the potential bot
+        email: Email address used in the request
+    """
+    # Add IP to temporary ban list
+    ban_until = time.time() + RATE_LIMIT_CONFIG["honeypot_ban_duration"]
+    _honeypot_bans[client_ip] = ban_until
+    
+    logger.warning(
+        "Bot detected via honeypot field",
+        ip_address=client_ip,
+        email=email,
+        ban_duration_seconds=RATE_LIMIT_CONFIG["honeypot_ban_duration"],
+        ban_until=ban_until,
+    )
 
 
 def _get_client_ip(request: Request) -> str:

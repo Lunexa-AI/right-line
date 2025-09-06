@@ -1,7 +1,7 @@
 """Functions for managing waitlist entries in Firestore."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict, Any, Tuple
 
 from google.cloud.firestore_v1.async_client import AsyncClient
@@ -40,7 +40,7 @@ async def add_to_waitlist(
         entry = WaitlistEntry(
             waitlist_id=waitlist_id,
             email=email,
-            joined_at=datetime.utcnow(),
+            joined_at=datetime.now(UTC),
             source=source,
             metadata=metadata
         )
