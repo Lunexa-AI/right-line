@@ -48,13 +48,13 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   [x] After chunking, upload each individual text chunk as a separate object to a `chunks/` prefix in the R2 bucket. This replaces writing to `data/processed/`.
     -   (All subtasks above are **done** and validated.)
 
-### 2.3. Advanced Chunking Strategy – "Small-to-Big"
--   **Task**: Update `scripts/chunk_docs.py` to implement the small-to-big strategy:
+### 2.3. Advanced Chunking Strategy – "Small-to-Big" (COMPLETED)
+-   **Task**: [x] Update `scripts/chunk_docs.py` to implement the small-to-big strategy:
     1.  Produce *small* chunks (~256 tokens) with an added `parent_doc_id` field.
     2.  Generate *big* parent-document records (full sections / pages) and store them in a new `docs.jsonl` catalog on R2.
--   **Task**: Ensure every small chunk carries a `parent_chunk_object_key` so it can be expanded to its parent later.
--   **Task**: Upload both the new `chunks` and `docs` artifacts to R2.
--   **Task**: Run the fast-progress check to verify 100 % coverage.
+-   **Task**: [x] Ensure every small chunk carries a `parent_chunk_object_key` so it can be expanded to its parent later.
+-   **Task**: [x] Upload both the new `chunks` and `docs` artifacts to R2.
+-   **Task**: [x] Run the fast-progress check to verify 100 % coverage.
 
 ### 2.4. Embedding Generation & Milvus Upsert
 -   **Task**: Design the *new* Milvus collection schema (v2):
