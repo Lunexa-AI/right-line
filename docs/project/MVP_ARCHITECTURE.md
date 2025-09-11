@@ -95,6 +95,7 @@ Instead of directly embedding a user's raw query, a lightweight "planner" LLM ca
 #### b. Multi-Strategy Retrieval
 The system retrieves evidence using multiple techniques in parallel to improve recall.
 
+**(NEW — Hierarchical Chunks)**  Because our chunks are aligned with PageIndex tree nodes, the hybrid search over Milvus/BM25 already operates on semantically coherent sections. No additional PageIndex retrieval call is needed; the existing pipeline traverses hierarchy via `section_path` metadata to surface precise sections.
 - **Hybrid Search**: Combine the strengths of two search types:
     - **Dense Retrieval (Vector Search)**: Use Milvus with OpenAI embeddings (`text-embedding-3-small`) to find semantically similar documents. Excellent for concepts and meaning.
     - **Sparse Retrieval (Keyword Search)**: Use a lightweight BM25 index to find documents with exact keyword matches. Critical for acronyms, specific names, and legal jargon.
@@ -118,8 +119,9 @@ The final, high-quality evidence is used to generate the user-facing answer.
 
 ### 2.4 Chunking & Embedding Strategy
 
+- **(NEW — PageIndex-Centric)**  The pipeline **always** calls **PageIndex OCR + Tree** during parsing. The returned markdown and hierarchical tree are stored in each parent document’s `extra.pageindex_*` fields.  Chunking walks the PageIndex tree and creates chunks that align with node boundaries (never naïve sliding windows).
 - **Strategy**: Implement "Small-to-Big" retrieval.
-    1.  **Chunking**: Documents are split into small, semantically coherent chunks (e.g., 256 tokens). Each chunk stores a reference to its parent document ID.
+    1.  **Chunking**: Documents are split into small, semantically coherent chunks (e.g., 256 tokens). Each chunk stores a reference to its parent document ID. If PageIndex data is present, node boundaries define the chunk breaks; otherwise we fall back to token-based windows.
     2.  **Embedding**: Only the small chunks are embedded and stored in Milvus.
     3.  **Retrieval**: The retrieval process (hybrid search + reranking) operates on these small chunks to find the most precise matches.
     4.  **Expansion**: Before passing the context to the synthesis LLM, the system fetches the full parent documents corresponding to the top-ranked small chunks.

@@ -74,6 +74,17 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   Upsert into Milvus using the new schema with deduplication logic.
 -   **Task**: [x] Run the full embedding→upsert pipeline and verify collection counts (56,051 entities loaded successfully).
 
+### 2.7. PageIndex OCR & Tree Integration (MANDATORY)
+-   **Task**: [ ] Configure `PAGEINDEX_API_KEY` in all environments (local, Render, CI).  Pipeline fails fast if key missing.*
+-   **Task**: [ ] Create a PoC script (`scripts/pageindex_ingest_poc.py`) to upload 5 PDFs from R2, fetch markdown + tree, and log stats.*
+-   **Task**: [ ] Refactor `scripts/parse_docs.py` → `parse_docs_v3.py`:
+    1.  When API key is present, call PageIndex OCR & Tree.
+    2.  Persist `pageindex_doc_id`, `pageindex_markdown`, and `pageindex_tree` in parent doc `extra`.
+    3.  Fallback to PyMuPDF extraction if key absent.
+-   **Task**: [ ] Refactor `scripts/chunk_docs.py` to **always** walk PageIndex tree for chunk boundaries.  Each chunk’s `section_path` becomes the node path. Parsing must abort if tree absent.*
+-   **Task**: [ ] Update `Chunk` Pydantic model to include optional `tree_node_id`.
+-   **Task**: [ ] Update end-to-end tests to mock PageIndexClient and verify new fields.*
+
 ### 2.5. Refactor API Backend for R2 (Retrieval Layer) (COMPLETED)
 -   **Task**: [x] **Retrieval Logic (`api/retrieval.py`)**:
     -   Modify the `RetrievalEngine` to fetch chunk *content* from R2.
@@ -102,6 +113,7 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   ✅ Uses optimized RRF (Reciprocal Rank Fusion) to combine results with performance monitoring.
     -   ✅ **Crucially**, after identifying top-k small chunks, fetches corresponding **parent documents** for rich synthesis context.
     -   ✅ Added comprehensive observability, performance monitoring, and alerting.
+    -   **NEW**: [ ] After top-K parent docs are identified, call PageIndex Retrieval API (`submit_query`) in parallel and merge returned tree nodes via RRF.
 
 ### 3.2. Reranking Implementation
 -   **Task**: Implement a real reranker. The `BGE-reranker-v2` (cross-encoder) is a strong choice. This can be run locally using a library like `sentence-transformers`.
