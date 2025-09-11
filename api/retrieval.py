@@ -841,7 +841,7 @@ class RetrievalEngine:
         except ImportError:
             logger.warning("Parent doc mapping not available, using original ID")
         
-        # Construct parent document object key
+        # Construct parent document object key using doc_id (simplified after reorganization)
         if doc_type:
             parent_object_key = f"corpus/docs/{doc_type}/{parent_doc_id}.json"
         else:
@@ -853,7 +853,7 @@ class RetrievalEngine:
                 f"corpus/docs/si/{parent_doc_id}.json"
             ]
             
-            # Try each possible key
+            # Try each possible key with direct doc_id lookup
             for key in possible_keys:
                 result = await self._fetch_parent_document_from_r2_key(key)
                 if result:
@@ -967,7 +967,8 @@ class RetrievalEngine:
         chunk_to_parent_map = {}  # Map chunk index to parent doc index
         
         for i, result in enumerate(chunk_results):
-            parent_doc_id = result.metadata.get("parent_doc_id") or result.doc_id
+            # FIX: Use doc_id as the parent document identifier (it's the same thing!)
+            parent_doc_id = result.doc_id  # This is the original document ID
             doc_type = result.metadata.get("doc_type", "")
             
             # Check if we already requested this parent doc
@@ -1015,7 +1016,7 @@ class RetrievalEngine:
                 logger.warning(
                     "Parent document not found, keeping original chunk",
                     chunk_id=chunk_result.chunk_id,
-                    parent_doc_id=chunk_result.metadata.get("parent_doc_id")
+                    doc_id=chunk_result.doc_id
                 )
                 expanded_results.append(chunk_result)
         
