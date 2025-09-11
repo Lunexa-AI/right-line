@@ -7,6 +7,7 @@ deployment with per-request connections.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Set
 
+import boto3
 import httpx
 import structlog
 from pydantic import BaseModel, Field
@@ -25,7 +27,17 @@ logger = structlog.get_logger(__name__)
 # Milvus configuration from environment
 MILVUS_ENDPOINT = os.environ.get("MILVUS_ENDPOINT")
 MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN")
-MILVUS_COLLECTION_NAME = os.environ.get("MILVUS_COLLECTION_NAME", "legal_chunks")
+MILVUS_COLLECTION_NAME = os.environ.get("MILVUS_COLLECTION_NAME", "legal_chunks_v2")  # Updated for v2.0
+
+# R2 configuration from environment
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT") or os.environ.get("CLOUDFLARE_R2_S3_ENDPOINT")
+R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY_ID") or os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID")  
+R2_SECRET_KEY = os.environ.get("R2_SECRET_ACCESS_KEY") or os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY")
+R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME") or os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "gweta-prod-documents")
+
+# R2 performance configuration
+R2_CONCURRENT_REQUESTS = int(os.environ.get("R2_CONCURRENT_REQUESTS", "20"))  # Max concurrent R2 requests
+R2_REQUEST_TIMEOUT = int(os.environ.get("R2_REQUEST_TIMEOUT", "30"))  # R2 request timeout in seconds
 
 # OpenAI configuration for embeddings (must match index dim=3072)
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -377,11 +389,18 @@ class MilvusClient:
                             except:
                                 metadata = {}
                         
+                        # For v2.0 schema, we'll fetch chunk_text from R2 later
                         retrieval_results.append(RetrievalResult(
-                            chunk_id=str(hit.get("id", "")),
-                            chunk_text=hit.get("chunk_text", ""),
-                            doc_id=hit.get("doc_id", ""),
-                            metadata=metadata,
+                            chunk_id=str(hit.get("chunk_id", "")),  # v2.0 uses chunk_id field
+                            chunk_text="",  # Will be populated from R2
+                            doc_id=hit.get("parent_doc_id", ""),   # v2.0 uses parent_doc_id
+                            metadata={
+                                **metadata,
+                                "chunk_object_key": hit.get("chunk_object_key", ""),  # Store R2 key
+                                "source_document_key": hit.get("source_document_key", ""),
+                                "doc_type": hit.get("doc_type", ""),
+                                "num_tokens": hit.get("num_tokens", 0)
+                            },
                             score=float(hit.get("distance", 0.0)),
                             source="vector"
                         ))
@@ -656,13 +675,325 @@ class OpenAIReranker:
 
 
 class RetrievalEngine:
-    """Main retrieval engine combining vector and keyword search."""
+    """Main retrieval engine combining vector and keyword search with R2 content fetching."""
     
     def __init__(self):
         self.milvus_client = MilvusClient()
         self.embedding_client = EmbeddingClient()
         self.query_processor = QueryProcessor()
         self._preconditions_checked = False
+        self._r2_client = None
+        self._r2_semaphore = asyncio.Semaphore(R2_CONCURRENT_REQUESTS)
+    
+    def _get_r2_client(self):
+        """Get or create R2 client for content fetching."""
+        if self._r2_client is None:
+            if not all([R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY]):
+                logger.warning("R2 configuration incomplete, content fetching will be disabled")
+                return None
+            
+            self._r2_client = boto3.client(
+                's3',
+                endpoint_url=R2_ENDPOINT,
+                aws_access_key_id=R2_ACCESS_KEY,
+                aws_secret_access_key=R2_SECRET_KEY,
+                region_name='auto'  # R2 uses 'auto' region
+            )
+        return self._r2_client
+    
+    async def _fetch_chunk_content_from_r2(self, chunk_object_key: str) -> Optional[Dict[str, Any]]:
+        """Fetch single chunk content from R2.
+        
+        Args:
+            chunk_object_key: R2 object key for the chunk (e.g., 'corpus/chunks/act/chunk_001.json')
+            
+        Returns:
+            Dict containing chunk data including chunk_text, or None if fetch fails
+        """
+        r2_client = self._get_r2_client()
+        if not r2_client:
+            return None
+            
+        async with self._r2_semaphore:  # Limit concurrent requests
+            try:
+                # Use asyncio to make the sync boto3 call non-blocking
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: r2_client.get_object(
+                        Bucket=R2_BUCKET_NAME,
+                        Key=chunk_object_key
+                    )
+                )
+                
+                content = response['Body'].read().decode('utf-8')
+                chunk_data = json.loads(content)
+                return chunk_data
+                
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch chunk content from R2",
+                    chunk_key=chunk_object_key,
+                    error=str(e)
+                )
+                return None
+    
+    async def _fetch_chunk_contents_batch(self, chunk_object_keys: List[str]) -> List[Optional[Dict[str, Any]]]:
+        """Fetch multiple chunk contents from R2 in parallel.
+        
+        Args:
+            chunk_object_keys: List of R2 object keys for chunks
+            
+        Returns:
+            List of chunk data dicts (same order as input), None for failed fetches
+        """
+        if not chunk_object_keys:
+            return []
+        
+        start_time = time.time()
+        logger.info(
+            "Starting R2 batch fetch",
+            chunk_count=len(chunk_object_keys),
+            concurrent_limit=R2_CONCURRENT_REQUESTS
+        )
+        
+        # Create tasks for parallel fetching
+        tasks = [
+            self._fetch_chunk_content_from_r2(key) 
+            for key in chunk_object_keys
+        ]
+        
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle exceptions in results
+        processed_results = []
+        success_count = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "R2 fetch task failed",
+                    chunk_key=chunk_object_keys[i],
+                    error=str(result)
+                )
+                processed_results.append(None)
+            else:
+                processed_results.append(result)
+                if result is not None:
+                    success_count += 1
+        
+        fetch_time = time.time() - start_time
+        logger.info(
+            "R2 batch fetch completed",
+            total_chunks=len(chunk_object_keys),
+            successful=success_count,
+            failed=len(chunk_object_keys) - success_count,
+            duration_ms=round(fetch_time * 1000, 2)
+        )
+        
+        return processed_results
+
+    async def _fetch_parent_document_from_r2(self, parent_doc_id: str, doc_type: str = "") -> Optional[Dict[str, Any]]:
+        """Fetch full parent document from R2 for small-to-big retrieval.
+        
+        Args:
+            parent_doc_id: Parent document ID (e.g., 'labour_act_2023')
+            doc_type: Document type for path construction (e.g., 'act')
+            
+        Returns:
+            Dict containing full parent document or None if fetch fails
+        """
+        r2_client = self._get_r2_client()
+        if not r2_client:
+            return None
+        
+        # Construct parent document object key
+        if doc_type:
+            parent_object_key = f"corpus/docs/{doc_type}/{parent_doc_id}.json"
+        else:
+            # Try common patterns if doc_type not provided
+            possible_keys = [
+                f"corpus/docs/act/{parent_doc_id}.json",
+                f"corpus/docs/judgment/{parent_doc_id}.json", 
+                f"corpus/docs/constitution/{parent_doc_id}.json",
+                f"corpus/docs/si/{parent_doc_id}.json"
+            ]
+            
+            # Try each possible key
+            for key in possible_keys:
+                result = await self._fetch_parent_document_from_r2_key(key)
+                if result:
+                    return result
+            return None
+        
+        return await self._fetch_parent_document_from_r2_key(parent_object_key)
+    
+    async def _fetch_parent_document_from_r2_key(self, parent_object_key: str) -> Optional[Dict[str, Any]]:
+        """Fetch parent document by exact R2 key."""
+        async with self._r2_semaphore:
+            try:
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self._get_r2_client().get_object(
+                        Bucket=R2_BUCKET_NAME,
+                        Key=parent_object_key
+                    )
+                )
+                
+                content = response['Body'].read().decode('utf-8')
+                parent_doc_data = json.loads(content)
+                return parent_doc_data
+                
+            except Exception as e:
+                logger.debug(
+                    "Parent document not found at key",
+                    key=parent_object_key,
+                    error=str(e)
+                )
+                return None
+    
+    async def _fetch_parent_documents_batch(self, parent_doc_requests: List[tuple]) -> List[Optional[Dict[str, Any]]]:
+        """Fetch multiple parent documents in parallel.
+        
+        Args:
+            parent_doc_requests: List of (parent_doc_id, doc_type) tuples
+            
+        Returns:
+            List of parent document data (same order as input), None for failed fetches
+        """
+        if not parent_doc_requests:
+            return []
+        
+        start_time = time.time()
+        logger.info(
+            "Starting parent document batch fetch",
+            parent_count=len(parent_doc_requests)
+        )
+        
+        # Create tasks for parallel fetching
+        tasks = [
+            self._fetch_parent_document_from_r2(parent_id, doc_type) 
+            for parent_id, doc_type in parent_doc_requests
+        ]
+        
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle exceptions
+        processed_results = []
+        success_count = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Parent document fetch failed",
+                    parent_doc_id=parent_doc_requests[i][0],
+                    error=str(result)
+                )
+                processed_results.append(None)
+            else:
+                processed_results.append(result)
+                if result is not None:
+                    success_count += 1
+        
+        fetch_time = time.time() - start_time
+        logger.info(
+            "Parent document batch fetch completed",
+            total_requests=len(parent_doc_requests),
+            successful=success_count,
+            failed=len(parent_doc_requests) - success_count,
+            duration_ms=round(fetch_time * 1000, 2)
+        )
+        
+        return processed_results
+    
+    async def _expand_to_parent_documents(self, chunk_results: List[RetrievalResult]) -> List[RetrievalResult]:
+        """
+        Expand small chunks to full parent documents for synthesis (small-to-big).
+        
+        This is the CORE of Task 3.1: after identifying top-k small chunks,
+        fetch their corresponding parent documents for rich context.
+        
+        Args:
+            chunk_results: Small chunk results from hybrid search
+            
+        Returns:
+            Results with full parent document content for synthesis
+        """
+        if not chunk_results:
+            return []
+        
+        logger.info(
+            "Expanding chunks to parent documents (small-to-big)",
+            chunk_count=len(chunk_results)
+        )
+        
+        # Extract unique parent document requests
+        parent_requests = []
+        chunk_to_parent_map = {}  # Map chunk index to parent doc index
+        
+        for i, result in enumerate(chunk_results):
+            parent_doc_id = result.metadata.get("parent_doc_id") or result.doc_id
+            doc_type = result.metadata.get("doc_type", "")
+            
+            # Check if we already requested this parent doc
+            parent_key = (parent_doc_id, doc_type)
+            existing_idx = None
+            for j, existing in enumerate(parent_requests):
+                if existing == parent_key:
+                    existing_idx = j
+                    break
+            
+            if existing_idx is not None:
+                chunk_to_parent_map[i] = existing_idx
+            else:
+                parent_requests.append(parent_key)
+                chunk_to_parent_map[i] = len(parent_requests) - 1
+        
+        # Fetch parent documents in parallel
+        parent_docs = await self._fetch_parent_documents_batch(parent_requests)
+        
+        # Create expanded results with parent document content
+        expanded_results = []
+        for i, chunk_result in enumerate(chunk_results):
+            parent_idx = chunk_to_parent_map[i]
+            parent_doc = parent_docs[parent_idx] if parent_idx < len(parent_docs) else None
+            
+            if parent_doc:
+                # Replace chunk with full parent document for synthesis
+                expanded_result = RetrievalResult(
+                    chunk_id=chunk_result.chunk_id,
+                    chunk_text=parent_doc.get("doc_text", chunk_result.chunk_text),  # Full parent text
+                    doc_id=chunk_result.doc_id,
+                    metadata={
+                        **chunk_result.metadata,
+                        "expanded_to_parent": True,
+                        "parent_doc_length": len(parent_doc.get("doc_text", "")),
+                        "original_chunk_text": chunk_result.chunk_text,  # Keep original for citation
+                        "parent_doc_object_key": parent_doc.get("doc_object_key", ""),
+                    },
+                    score=chunk_result.score,
+                    source=f"{chunk_result.source}_expanded"
+                )
+                expanded_results.append(expanded_result)
+            else:
+                # Keep original chunk if parent not found
+                logger.warning(
+                    "Parent document not found, keeping original chunk",
+                    chunk_id=chunk_result.chunk_id,
+                    parent_doc_id=chunk_result.metadata.get("parent_doc_id")
+                )
+                expanded_results.append(chunk_result)
+        
+        success_count = sum(1 for r in expanded_results if r.metadata.get("expanded_to_parent"))
+        logger.info(
+            "Small-to-big expansion completed",
+            total_chunks=len(chunk_results),
+            expanded_to_parents=success_count,
+            kept_as_chunks=len(chunk_results) - success_count
+        )
+        
+        return expanded_results
 
     def _check_preconditions(self) -> None:
         """Validate Milvus and data availability once per engine instance."""
@@ -853,52 +1184,136 @@ class RetrievalEngine:
                 top_k=config.top_k_per_variant,
                 doc_type_filter=doc_types,
             )
-            # Sparse retrieval (optional)
+            # Sparse retrieval using production BM25 (optional)
             sparse_hits_by_variant: List[List[RetrievalResult]] = []
             if ENABLE_SPARSE:
-                sparse = SimpleSparseProvider()
-                for v in variants:
-                    sh = await sparse.search(v, top_k=50)
-                    sparse_hits_by_variant.append(sh)
+                try:
+                    from api.bm25_provider import production_bm25_provider
+                    sparse_start = time.time()
+                    
+                    # Use production BM25 for all variants
+                    for v in variants:
+                        bm25_results = await production_bm25_provider.search(v, top_k=50)
+                        sparse_hits_by_variant.append(bm25_results)
+                    
+                    sparse_time = time.time() - sparse_start
+                    logger.info(
+                        "BM25 sparse search completed",
+                        variants_count=len(variants),
+                        total_results=sum(len(hits) for hits in sparse_hits_by_variant),
+                        elapsed_ms=round(sparse_time * 1000, 2)
+                    )
+                    
+                except ImportError:
+                    logger.warning("Production BM25 provider not available, falling back to SimpleSparseProvider")
+                    sparse = SimpleSparseProvider()
+                    for v in variants:
+                        sh = await sparse.search(v, top_k=50)
+                        sparse_hits_by_variant.append(sh)
 
-            # RRF fusion across dense + sparse results
+            # ========================================================================
+            # TASK 3.1: Optimized RRF (Reciprocal Rank Fusion) for production performance
+            # ========================================================================
+            rrf_start = time.time()
+            logger.info("Starting optimized RRF fusion", 
+                       dense_variants=len(dense_hits_by_variant),
+                       sparse_variants=len(sparse_hits_by_variant))
+            
             rrf_scores: Dict[str, float] = {}
             rrf_details: Dict[str, Dict[str, Any]] = {}
             K = config.rrf_k
-            # dense contributions
-            for idx, hits in enumerate(dense_hits_by_variant):
+            
+            # Dense contributions (vector search results)
+            dense_contribution_count = 0
+            for variant_idx, hits in enumerate(dense_hits_by_variant):
                 for rank, hit in enumerate(hits, start=1):
                     key = hit.chunk_id
-                    rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (K + rank)
-                    best = rrf_details.get(key)
-                    if not best or hit.score > best["hit"].score:
-                        rrf_details[key] = {"hit": hit, "variant": idx, "source": "dense"}
-            # sparse contributions
-            for idx, hits in enumerate(sparse_hits_by_variant, start=len(dense_hits_by_variant)):
+                    rrf_contribution = 1.0 / (K + rank)
+                    rrf_scores[key] = rrf_scores.get(key, 0.0) + rrf_contribution
+                    dense_contribution_count += 1
+                    
+                    # Keep track of best hit for this chunk_id
+                    existing = rrf_details.get(key)
+                    if not existing or hit.score > existing["hit"].score:
+                        rrf_details[key] = {
+                            "hit": hit, 
+                            "variant": variant_idx, 
+                            "source": "dense",
+                            "rrf_contribution": rrf_contribution
+                        }
+            
+            # Sparse contributions (BM25 results)  
+            sparse_contribution_count = 0
+            for variant_idx, hits in enumerate(sparse_hits_by_variant, start=len(dense_hits_by_variant)):
                 for rank, hit in enumerate(hits, start=1):
                     key = hit.chunk_id
-                    rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (K + rank)
-                    best = rrf_details.get(key)
-                    if not best or hit.score > best["hit"].score:
-                        rrf_details[key] = {"hit": hit, "variant": idx, "source": "sparse"}
+                    rrf_contribution = 1.0 / (K + rank)
+                    rrf_scores[key] = rrf_scores.get(key, 0.0) + rrf_contribution
+                    sparse_contribution_count += 1
+                    
+                    # Prefer dense hits for ties, but allow sparse-only results
+                    existing = rrf_details.get(key)
+                    if not existing or (hit.score > existing["hit"].score and existing["source"] != "dense"):
+                        rrf_details[key] = {
+                            "hit": hit,
+                            "variant": variant_idx,
+                            "source": "sparse", 
+                            "rrf_contribution": rrf_contribution
+                        }
 
-            # Build fused list with diversity and thresholds
+            # Build optimized fused results with performance optimizations
             fused: List[Tuple[str, float]] = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+            
+            # Apply diversity and quality filters
             seen_per_doc: Dict[str, int] = {}
             final: List[RetrievalResult] = []
-            for chunk_id, _ in fused:
-                hit = rrf_details[chunk_id]["hit"]
-                # keep even if sparse-only; apply minimum dense-score gate only to dense
+            quality_filtered = 0
+            diversity_filtered = 0
+            
+            for chunk_id, rrf_score in fused:
+                detail = rrf_details[chunk_id]
+                hit = detail["hit"]
+                
+                # Quality gate: apply minimum score filter only to vector results
                 if hit.source == "vector" and hit.score < config.min_score:
+                    quality_filtered += 1
                     continue
+                
+                # Diversity control: limit chunks per document
                 doc_id = hit.doc_id
                 cnt = seen_per_doc.get(doc_id, 0)
                 if cnt >= config.max_per_doc:
+                    diversity_filtered += 1
                     continue
+                
                 seen_per_doc[doc_id] = cnt + 1
+                
+                # Enrich metadata with RRF information
+                hit.metadata.update({
+                    "rrf_score": round(rrf_score, 4),
+                    "rrf_rank": len(final) + 1,
+                    "fusion_source": detail["source"]
+                })
+                
                 final.append(hit)
+                
                 if len(final) >= config.top_k:
                     break
+            
+            rrf_time = time.time() - rrf_start
+            
+            # Log RRF performance metrics 
+            logger.info(
+                "Optimized RRF fusion completed",
+                dense_contributions=dense_contribution_count,
+                sparse_contributions=sparse_contribution_count,
+                unique_chunks=len(rrf_scores),
+                quality_filtered=quality_filtered,
+                diversity_filtered=diversity_filtered,
+                final_results=len(final),
+                rrf_time_ms=round(rrf_time * 1000, 2),
+                top_rrf_score=final[0].metadata.get("rrf_score") if final else 0
+            )
             # Optional rerank
             if ENABLE_RERANK and OPENAI_RERANK_MODEL:
                 reranker = OpenAIReranker(OPENAI_RERANK_MODEL)
@@ -907,15 +1322,117 @@ class RetrievalEngine:
         else:
             logger.warning("No embeddings generated for variants; skipping search")
         
+        # ========================================================================
+        # TASK 3.1: Small-to-Big Retrieval - Expand chunks to parent documents
+        # ========================================================================
+        if results:
+            # Step 1: Expand small chunks to parent documents for rich synthesis context
+            logger.info("Expanding to parent documents (small-to-big)", chunk_count=len(results))
+            results = await self._expand_to_parent_documents(results)
+            
+            # Step 2: For chunks without parent docs, fetch original chunk content from R2
+            chunks_needing_content = [
+                (i, r) for i, r in enumerate(results) 
+                if not r.chunk_text and not r.metadata.get("expanded_to_parent")
+            ]
+            
+            if chunks_needing_content:
+                logger.info("Fetching chunk content from R2 for non-expanded results", 
+                           count=len(chunks_needing_content))
+                
+                chunk_keys = []
+                chunk_indices = []
+                for i, result in chunks_needing_content:
+                    chunk_key = result.metadata.get("chunk_object_key", "")
+                    if chunk_key:
+                        chunk_keys.append(chunk_key)
+                        chunk_indices.append(i)
+                
+                if chunk_keys:
+                    # Batch fetch chunk content from R2
+                    chunk_contents = await self._fetch_chunk_contents_batch(chunk_keys)
+                    
+                    # Update results with fetched content
+                    for content_idx, result_idx in enumerate(chunk_indices):
+                        if content_idx < len(chunk_contents) and chunk_contents[content_idx] is not None:
+                            chunk_data = chunk_contents[content_idx]
+                            results[result_idx].chunk_text = chunk_data.get("chunk_text", "")
+                            results[result_idx].metadata.update({
+                                "section_path": chunk_data.get("section_path", ""),
+                                "start_char": chunk_data.get("start_char", 0),
+                                "end_char": chunk_data.get("end_char", 0),
+                            })
+            
+            # Log final content status
+            expanded_count = sum(1 for r in results if r.metadata.get("expanded_to_parent"))
+            content_count = sum(1 for r in results if r.chunk_text)
+            
+            logger.info(
+                "Small-to-big content retrieval completed",
+                total_results=len(results),
+                expanded_to_parents=expanded_count,
+                chunk_content_fetched=content_count - expanded_count,
+                ready_for_synthesis=content_count
+            )
+        
+        # ========================================================================
+        # TASK 3.1: Comprehensive Performance Monitoring & Observability  
+        # ========================================================================
         elapsed_ms = int((time.time() - start_time) * 1000)
         
+        # Calculate detailed performance metrics
+        performance_metrics = {
+            "total_latency_ms": elapsed_ms,
+            "results_count": len(results),
+            "top_score": results[0].score if results else 0,
+            "query_variants": len(variants) if 'variants' in locals() else 1,
+            "dense_search_enabled": bool(embeddings),
+            "sparse_search_enabled": ENABLE_SPARSE and len(sparse_hits_by_variant) > 0,
+            "small_to_big_enabled": bool(results and any(r.metadata.get("expanded_to_parent") for r in results)),
+            "r2_content_fetched": bool(results and any(r.chunk_text for r in results)),
+        }
+        
+        # Add fusion metrics if available
+        if 'rrf_scores' in locals():
+            performance_metrics.update({
+                "rrf_candidates": len(rrf_scores),
+                "rrf_fusion_time_ms": round(rrf_time * 1000, 2),
+                "dense_contributions": dense_contribution_count,
+                "sparse_contributions": sparse_contribution_count,
+            })
+        
+        # Add parent document metrics if available  
+        if results:
+            parent_expanded_count = sum(1 for r in results if r.metadata.get("expanded_to_parent"))
+            performance_metrics.update({
+                "parent_docs_expanded": parent_expanded_count,
+                "parent_expansion_rate": round(parent_expanded_count / len(results), 2),
+                "avg_content_length": round(sum(len(r.chunk_text) for r in results if r.chunk_text) / max(1, len([r for r in results if r.chunk_text])), 0)
+            })
+        
+        # Log comprehensive performance metrics
         logger.info(
-            "Retrieval completed",
-            results_count=len(results),
-            elapsed_ms=elapsed_ms,
-            top_score=results[0].score if results else 0,
-            expansions=len(variants) if 'variants' in locals() else 1
+            "Production hybrid retrieval completed",
+            **performance_metrics
         )
+        
+        # Performance alerting - warn if exceeding production thresholds
+        if elapsed_ms > 2500:  # > 2.5s P95 target
+            logger.warning(
+                "Retrieval latency exceeded target",
+                latency_ms=elapsed_ms,
+                target_ms=2500,
+                query_preview=query[:50]
+            )
+        
+        # Quality alerting - warn if low relevance
+        if results and results[0].score < 0.3:
+            logger.warning(
+                "Low relevance results detected", 
+                top_score=results[0].score,
+                results_count=len(results),
+                query_preview=query[:50]
+            )
         
         return results
     
