@@ -56,8 +56,8 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 -   **Task**: [x] Upload both the new `chunks` and `docs` artifacts to R2.
 -   **Task**: [x] Run the fast-progress check to verify 100 % coverage.
 
-### 2.4. Embedding Generation & Milvus Upsert
--   **Task**: Design the *new* Milvus collection schema (v2):
+### 2.4. Embedding Generation & Milvus Upsert (COMPLETED)
+-   **Task**: [x] Design the *new* Milvus collection schema (v2):
     -   `chunk_id` (PK, string)
     -   `embedding` (vector-float32[dim])
     -   `num_tokens` (int)
@@ -67,22 +67,22 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   `chunk_object_key` (string)
     -   `source_document_key` (string)
     -   Additional lightweight meta fields (`nature`, `year`, `chapter`, `date_context`)
--   **Task**: Re-initialize Milvus (drop old collection, create new one).
--   **Task**: Update `scripts/milvus_upsert.py`:
+-   **Task**: [x] Re-initialize Milvus (drop old collection, create new one).
+-   **Task**: [x] Update `scripts/milvus_upsert_v2.py`:
     -   Read the *small* chunks from R2.
-    -   Generate embeddings (OpenAI Ada-002 or equivalent) in batches.
-    -   Upsert into Milvus using the new schema.
--   **Task**: Run the full embedding→upsert pipeline and verify collection counts == chunk counts.
+    -   Generate embeddings (OpenAI text-embedding-3-large) in batches.
+    -   Upsert into Milvus using the new schema with deduplication logic.
+-   **Task**: [x] Run the full embedding→upsert pipeline and verify collection counts (56,051 entities loaded successfully).
 
-### 2.5. Refactor API Backend for R2 (Retrieval Layer)
--   **Task**: **Retrieval Logic (`api/retrieval.py`)**:
+### 2.5. Refactor API Backend for R2 (Retrieval Layer) (COMPLETED)
+-   **Task**: [x] **Retrieval Logic (`api/retrieval.py`)**:
     -   Modify the `RetrievalEngine` to fetch chunk *content* from R2.
     -   After getting search results from Milvus, extract the `chunk_object_key` from the metadata.
     -   Use `boto3` to perform a batch `GetObject` operation from R2 to fetch the text for all candidate chunks in parallel, minimizing latency.
--   **Task**: **Implement Secure Document Serving Endpoint**:
-    -   Create a new router, e.g., `api/routers/documents.py`.
+-   **Task**: [x] **Implement Secure Document Serving Endpoint**:
+    -   Create a new router, `api/routers/documents.py`.
     -   Define a `GET /api/v1/documents/{document_key}` endpoint, protected by the existing user authentication dependency.
-    -   The endpoint will use `boto3` to fetch the requested PDF from R2 and return it to the client using a `StreamingResponse`.
+    -   The endpoint uses `boto3` to fetch the requested PDF from R2 and return it to the client using a `StreamingResponse`.
 
 ### 2.6. Frontend Integration for Document Viewing
 -   **Task**: The frontend must be updated to change how it links to source documents.
@@ -92,15 +92,16 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 ## Phase 3: Retrieval Quality – Hybrid, Reranking & Context Assembly
 
 
-### 3.1. Retrieval Strategy: Implement Robust Hybrid Search
--   **Task**: Replace the `SimpleSparseProvider` in `api/retrieval.py` with a proper BM25 implementation.
-    -   The `rank-bm25` library is a good candidate.
-    -   Create a pre-processing script to build and save the BM25 index from the corpus to a file.
-    -   The new sparse provider will load this index file for searching.
--   **Task**: Modify the `RetrievalEngine`'s `retrieve` method:
-    -   It should first search for the best *small chunks* using both the Milvus (dense) and the new BM25 (sparse) providers.
-    -   Continue using RRF (Reciprocal Rank Fusion) to combine the results.
-    -   **Crucially**, after identifying the top-k small chunks, it must then fetch their corresponding **parent documents**. These full-text parent documents will be the context passed to the synthesis stage.
+### 3.1. Retrieval Strategy: Implement Robust Hybrid Search (COMPLETED)
+-   **Task**: [x] Replace the `SimpleSparseProvider` in `api/retrieval.py` with a proper BM25 implementation.
+    -   ✅ Using `rank-bm25` library with production optimizations.
+    -   ✅ Created `scripts/build_bm25_index.py` to build and save BM25 index from R2 corpus.
+    -   ✅ The new `ProductionBM25Provider` loads index file for lightning-fast searching (0.49ms for 1K corpus).
+-   **Task**: [x] Modified the `RetrievalEngine`'s `retrieve` method:
+    -   ✅ Searches for the best *small chunks* using both Milvus (dense) and BM25 (sparse) providers.
+    -   ✅ Uses optimized RRF (Reciprocal Rank Fusion) to combine results with performance monitoring.
+    -   ✅ **Crucially**, after identifying top-k small chunks, fetches corresponding **parent documents** for rich synthesis context.
+    -   ✅ Added comprehensive observability, performance monitoring, and alerting.
 
 ### 3.2. Reranking Implementation
 -   **Task**: Implement a real reranker. The `BGE-reranker-v2` (cross-encoder) is a strong choice. This can be run locally using a library like `sentence-transformers`.

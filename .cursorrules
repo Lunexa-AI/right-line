@@ -1,7 +1,7 @@
 # CORE PRINCIPLES
 
 - **Test-Driven Development (TDD) is mandatory.** Always write failing unit or integration tests before implementing any new feature, logic, or bug fix. Ensure tests are clean, readable, and cover all critical paths.
-- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures.
+- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures. 
 - **Asynchronous & Concurrent by Default.** Design all I/O-bound and long-running operations to be asynchronous using `async/await`. Employ concurrency, multithreading, and parallelism to maximize performance and ensure non-blocking execution.
 
 # ARCHITECTURE & TECHNOLOGY STACK
