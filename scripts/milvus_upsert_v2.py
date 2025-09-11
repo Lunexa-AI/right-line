@@ -170,8 +170,35 @@ def generate_embeddings_batch(texts: List[str], model: str = "text-embedding-3-l
         raise
 
 
+def generate_parent_doc_id_from_chunk(chunk: Dict[str, Any]) -> str:
+    """Generate parent_doc_id that matches chunk_docs.py logic."""
+    try:
+        # Get required fields from chunk
+        doc_id = chunk.get('doc_id', '')
+        section_path = chunk.get('section_path', '')
+        chunk_text = chunk.get('chunk_text', '')
+        
+        if not all([doc_id, section_path, chunk_text]):
+            # Fallback to doc_id if we can't generate proper parent_doc_id
+            return doc_id
+        
+        # Replicate chunk_docs.py generate_chunk_id logic for parent docs
+        # parent_doc_id = generate_chunk_id(doc_id, section_path, 0, len(section_content), section_content)
+        import hashlib
+        
+        # Create deterministic ID using same algorithm as chunk_docs.py
+        content_hash = hashlib.sha256(chunk_text.encode('utf-8')).hexdigest()[:8]
+        id_components = f"{doc_id}_{section_path}_0_{len(chunk_text)}_{content_hash}"
+        parent_doc_id = hashlib.sha256(id_components.encode('utf-8')).hexdigest()[:16]
+        
+        return parent_doc_id
+        
+    except Exception as e:
+        logger.warning("Failed to generate parent_doc_id, using doc_id fallback", error=str(e))
+        return chunk.get('doc_id', chunk.get('chunk_id', ''))
+
 def transform_chunk_for_milvus_v2(chunk: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform chunk data to match v2.0 Milvus schema."""
+    """Transform chunk data to match v2.0 Milvus schema with CORRECT parent_doc_id."""
     # Extract source document key from chunk metadata or construct it
     source_document_key = chunk.get('metadata', {}).get('source_document_key')
     if not source_document_key:
@@ -180,8 +207,8 @@ def transform_chunk_for_milvus_v2(chunk: Dict[str, Any]) -> Dict[str, Any]:
         doc_type = chunk.get('doc_type', 'unknown')
         source_document_key = f"sources/{doc_type}/{doc_id}.pdf"
     
-    # Create parent_doc_id - for small-to-big, this could be the doc_id or a section-level ID
-    parent_doc_id = chunk.get('doc_id', chunk.get('chunk_id', ''))
+    # 🔧 FIX: Generate proper parent_doc_id that matches R2 parent documents
+    parent_doc_id = generate_parent_doc_id_from_chunk(chunk)
     
     transformed = {
         "chunk_id": chunk.get('chunk_id', ''),

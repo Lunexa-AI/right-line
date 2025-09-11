@@ -354,7 +354,18 @@ class MilvusClient:
                 "collectionName": MILVUS_COLLECTION_NAME,
                 "data": [query_vector],
                 "limit": top_k,
-                "outputFields": ["doc_id", "chunk_text", "metadata"]
+                "outputFields": [
+                    "chunk_id",           # v2.0 primary key
+                    "parent_doc_id",      # For small-to-big expansion
+                    "chunk_object_key",   # For R2 content fetching
+                    "source_document_key", # For document serving
+                    "doc_type",           # Document type filtering
+                    "num_tokens",         # Token count metadata
+                    "nature",             # Legal document nature
+                    "year",               # Publication year
+                    "chapter",            # Chapter reference
+                    "date_context"        # Date context
+                ]
             }
             
             # Add filter expression if specified
@@ -397,9 +408,14 @@ class MilvusClient:
                             metadata={
                                 **metadata,
                                 "chunk_object_key": hit.get("chunk_object_key", ""),  # Store R2 key
+                                "parent_doc_id": hit.get("parent_doc_id", ""),        # 🔧 FIX: Explicitly store parent_doc_id
                                 "source_document_key": hit.get("source_document_key", ""),
                                 "doc_type": hit.get("doc_type", ""),
-                                "num_tokens": hit.get("num_tokens", 0)
+                                "num_tokens": hit.get("num_tokens", 0),
+                                "nature": hit.get("nature", ""),
+                                "year": hit.get("year", 0),
+                                "chapter": hit.get("chapter", ""),
+                                "date_context": hit.get("date_context", "")
                             },
                             score=float(hit.get("distance", 0.0)),
                             source="vector"
@@ -793,12 +809,13 @@ class RetrievalEngine:
         
         return processed_results
 
-    async def _fetch_parent_document_from_r2(self, parent_doc_id: str, doc_type: str = "") -> Optional[Dict[str, Any]]:
+    async def _fetch_parent_document_from_r2(self, parent_doc_id: str, doc_type: str = "", chunk_doc_id: str = "") -> Optional[Dict[str, Any]]:
         """Fetch full parent document from R2 for small-to-big retrieval.
         
         Args:
-            parent_doc_id: Parent document ID (e.g., 'labour_act_2023')
+            parent_doc_id: Parent document ID from chunk metadata
             doc_type: Document type for path construction (e.g., 'act')
+            chunk_doc_id: Chunk's doc_id for ID mapping resolution
             
         Returns:
             Dict containing full parent document or None if fetch fails
@@ -806,6 +823,23 @@ class RetrievalEngine:
         r2_client = self._get_r2_client()
         if not r2_client:
             return None
+        
+        # TEMPORARY FIX: Use ID mapping to resolve parent_doc_id mismatch
+        try:
+            from api.parent_doc_mapping import parent_doc_mapper
+            resolved_parent_id = await parent_doc_mapper.resolve_parent_doc_id(parent_doc_id, chunk_doc_id)
+            
+            if resolved_parent_id and resolved_parent_id != parent_doc_id:
+                logger.debug(
+                    "Resolved parent doc ID via mapping",
+                    original_parent_id=parent_doc_id,
+                    resolved_parent_id=resolved_parent_id,
+                    chunk_doc_id=chunk_doc_id
+                )
+                parent_doc_id = resolved_parent_id
+                
+        except ImportError:
+            logger.warning("Parent doc mapping not available, using original ID")
         
         # Construct parent document object key
         if doc_type:
@@ -871,9 +905,9 @@ class RetrievalEngine:
             parent_count=len(parent_doc_requests)
         )
         
-        # Create tasks for parallel fetching
+        # Create tasks for parallel fetching with ID mapping
         tasks = [
-            self._fetch_parent_document_from_r2(parent_id, doc_type) 
+            self._fetch_parent_document_from_r2(parent_id, doc_type, chunk_doc_id="") 
             for parent_id, doc_type in parent_doc_requests
         ]
         
