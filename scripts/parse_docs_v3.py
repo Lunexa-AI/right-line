@@ -15,10 +15,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -101,6 +103,88 @@ def _tree_to_markdown(tree_nodes: List[Dict[str, Any]], level: int = 0) -> str:
     
     return "".join(markdown_parts)
 
+def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Extract comprehensive metadata from filename and PageIndex tree."""
+    metadata = {
+        "title": os.path.basename(filename).replace(".pdf", ""),
+        "jurisdiction": "ZW",
+        "language": "eng",
+        "doc_type": None,
+        "chapter": None,
+        "act_number": None,
+        "act_year": None,
+        "version_date": None,
+        "akn_uri": None,
+        "canonical_citation": None,
+        "subject_category": None
+    }
+    
+    # Determine doc_type from R2 path structure first
+    if "/acts/" in filename:
+        metadata["doc_type"] = "act"
+        metadata["subject_category"] = "legislation"
+    elif "/ordinances/" in filename:
+        metadata["doc_type"] = "ordinance"  
+        metadata["subject_category"] = "legislation"
+    elif "/statutory_instruments/" in filename:
+        metadata["doc_type"] = "si"
+        metadata["subject_category"] = "legislation"
+    elif "/judgments/" in filename:
+        metadata["doc_type"] = "judgment"
+        metadata["subject_category"] = "case_law"
+    elif "/case_law/" in filename:
+        metadata["doc_type"] = "case"
+        metadata["subject_category"] = "case_law"
+    else:
+        metadata["doc_type"] = "unknown"
+        metadata["subject_category"] = "unknown"
+    
+    # Parse AKN URI from filename: akn_zw_act_1860_28_eng_2016-12-31.pdf
+    akn_pattern = r"akn_([a-z]{2})_([a-z]+)_(\d{4})_(\d+)_([a-z]{3})_(\d{4}-\d{2}-\d{2})"
+    match = re.search(akn_pattern, filename)
+    if match:
+        jurisdiction, akn_doc_type, year, number, lang, version = match.groups()
+        metadata.update({
+            "jurisdiction": jurisdiction.upper(),
+            "doc_type": akn_doc_type,  # Override with AKN type if available
+            "act_year": year,
+            "act_number": number,
+            "language": lang,
+            "version_date": version,
+            "akn_uri": f"/akn/{jurisdiction}/{akn_doc_type}/{year}/{number}/{lang}@{version}"
+        })
+        
+        # Update subject category based on AKN doc type
+        if akn_doc_type in ["act", "ordinance", "si"]:
+            metadata["subject_category"] = "legislation"
+        elif akn_doc_type in ["judgment", "case"]:
+            metadata["subject_category"] = "case_law"
+    
+    # Extract title and chapter from PageIndex tree
+    if tree_nodes:
+        root_node = tree_nodes[0]
+        title = root_node.get("title", "")
+        if title and title != "Untitled":
+            metadata["title"] = title
+            
+        # Look for chapter in nested nodes
+        for node in tree_nodes:
+            if "nodes" in node:
+                for child in node["nodes"]:
+                    child_title = child.get("title", "")
+                    if "chapter" in child_title.lower():
+                        # Extract chapter number: "Chapter 25:01"
+                        chapter_match = re.search(r"chapter\s+(\d+:\d+)", child_title, re.IGNORECASE)
+                        if chapter_match:
+                            metadata["chapter"] = chapter_match.group(1)
+                        break
+    
+    # Build canonical citation
+    if metadata["title"] and metadata["chapter"]:
+        metadata["canonical_citation"] = f"{metadata['title']} [Chapter {metadata['chapter']}]"
+    
+    return metadata
+
 def submit_to_pageindex(pdf_bytes: bytes, filename: str, api_key: str) -> str:
     """Upload PDF; return remote `doc_id`."""
     url = f"{PAGEINDEX_API_URL}/doc/"
@@ -156,21 +240,41 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
 
     result = poll_pageindex(remote_doc_id, api_key, poll_interval)
 
-    # metadata placeholders (could call head_object to retrieve details later)
-    doc_type = "act" if "acts/" in key else "ordinance" if "ordinances/" in key else "si"
+    # Extract comprehensive metadata
+    metadata = extract_akn_metadata(key, result["tree"])
     canonical_id = sha256_16(f"{key}_{remote_doc_id}")
 
+    # Count nodes
+    def count_nodes(nodes):
+        total = len(nodes)
+        for node in nodes:
+            if 'nodes' in node:
+                total += count_nodes(node['nodes'])
+        return total
+    
+    total_nodes = count_nodes(result["tree"])
+    
     parent_doc = {
         "doc_id": canonical_id,
-        "doc_type": doc_type,
-        "title": os.path.basename(key),
-        "language": "eng",
+        "doc_type": metadata["doc_type"],
+        "title": metadata["title"],
+        "language": metadata["language"],
+        "jurisdiction": metadata["jurisdiction"],
+        "chapter": metadata["chapter"],
+        "act_number": metadata["act_number"],
+        "act_year": metadata["act_year"],
+        "version_date": metadata["version_date"],
+        "akn_uri": metadata["akn_uri"],
+        "canonical_citation": metadata["canonical_citation"],
+        "subject_category": metadata["subject_category"],
         "pageindex_doc_id": remote_doc_id,
         "content_tree": result["tree"],
         "pageindex_markdown": result["markdown"],
         "extra": {
             "r2_pdf_key": key,
-            "page_count": len(result["markdown"].split("\n")),
+            "tree_nodes_count": total_nodes,
+            "markdown_length": len(result["markdown"]),
+            "processed_at": datetime.datetime.utcnow().isoformat() + "Z"
         },
     }
     return parent_doc
@@ -178,7 +282,40 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
 
 def upload_parent_doc(r2, bucket: str, doc: Dict[str, Any]):
     obj_key = f"corpus/docs/{doc['doc_type']}/{doc['doc_id']}.json"
-    r2.put_object(Bucket=bucket, Key=obj_key, Body=json.dumps(doc).encode("utf-8"), ContentType="application/json")
+    
+    # Build R2 metadata (string values only)
+    r2_metadata = {
+        "doc_id": doc["doc_id"],
+        "doc_type": doc["doc_type"],
+        "title": doc["title"][:1000],  # R2 metadata has size limits
+        "jurisdiction": doc["jurisdiction"],
+        "language": doc["language"],
+        "subject_category": doc["subject_category"],
+        "pageindex_doc_id": doc["pageindex_doc_id"],
+        "tree_nodes_count": str(doc["extra"]["tree_nodes_count"]),
+        "markdown_length": str(doc["extra"]["markdown_length"]),
+        "processed_at": doc["extra"]["processed_at"]
+    }
+    
+    # Add optional fields if present
+    if doc.get("chapter"):
+        r2_metadata["chapter"] = doc["chapter"]
+    if doc.get("act_number"):
+        r2_metadata["act_number"] = doc["act_number"]
+    if doc.get("act_year"):
+        r2_metadata["act_year"] = doc["act_year"]
+    if doc.get("version_date"):
+        r2_metadata["version_date"] = doc["version_date"]
+    if doc.get("akn_uri"):
+        r2_metadata["akn_uri"] = doc["akn_uri"][:1000]
+    
+    r2.put_object(
+        Bucket=bucket, 
+        Key=obj_key, 
+        Body=json.dumps(doc).encode("utf-8"), 
+        ContentType="application/json",
+        Metadata=r2_metadata
+    )
 
 
 def main():
@@ -218,9 +355,42 @@ def main():
         logger.warning("No documents parsed successfully.")
         return
 
+    # Build manifest with R2 metadata
     manifest_key = "corpus/processed/legislation_docs.jsonl"
     content = "\n".join(json.dumps(d) for d in parsed)
-    r2.put_object(Bucket=bucket, Key=manifest_key, Body=content.encode("utf-8"), ContentType="application/json")
+    
+    # Aggregate statistics for manifest metadata
+    doc_types = {}
+    jurisdictions = set()
+    total_nodes = 0
+    total_markdown_chars = 0
+    
+    for doc in parsed:
+        doc_type = doc.get("doc_type", "unknown")
+        doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
+        jurisdictions.add(doc.get("jurisdiction", "unknown"))
+        total_nodes += doc["extra"]["tree_nodes_count"]
+        total_markdown_chars += doc["extra"]["markdown_length"]
+    
+    manifest_metadata = {
+        "content_type": "application/jsonl",
+        "description": "Parsed legislation documents manifest",
+        "document_count": str(len(parsed)),
+        "total_tree_nodes": str(total_nodes),
+        "total_markdown_chars": str(total_markdown_chars),
+        "doc_types": ",".join(f"{k}:{v}" for k, v in doc_types.items()),
+        "jurisdictions": ",".join(jurisdictions),
+        "processing_timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "pageindex_integration": "enabled"
+    }
+    
+    r2.put_object(
+        Bucket=bucket, 
+        Key=manifest_key, 
+        Body=content.encode("utf-8"), 
+        ContentType="application/json",
+        Metadata=manifest_metadata
+    )
     logger.info("Uploaded manifest with %d documents", len(parsed))
 
 
