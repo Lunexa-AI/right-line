@@ -355,8 +355,9 @@ class MilvusClient:
                 "data": [query_vector],
                 "limit": top_k,
                 "outputFields": [
-                    "chunk_id",           # v2.0 primary key
+                    "chunk_id",           # v3.0 primary key
                     "parent_doc_id",      # For small-to-big expansion
+                    "tree_node_id",       # PageIndex tree node reference
                     "chunk_object_key",   # For R2 content fetching
                     "source_document_key", # For document serving
                     "doc_type",           # Document type filtering
@@ -400,13 +401,17 @@ class MilvusClient:
                             except:
                                 metadata = {}
                         
-                        # For v2.0 schema, we'll fetch chunk_text from R2 later
+                        # For v3.0 schema with enhanced metadata
                         retrieval_results.append(RetrievalResult(
-                            chunk_id=str(hit.get("chunk_id", "")),  # v2.0 uses chunk_id field
-                            chunk_text="",  # Will be populated from R2
-                            doc_id=hit.get("parent_doc_id", ""),   # v2.0 uses parent_doc_id
+                            chunk_id=str(hit.get("chunk_id", "")),  # v3.0 uses chunk_id field
+                            chunk_text="",  # Will be populated from R2 or parent expansion
+                            doc_id=hit.get("parent_doc_id", ""),   # v3.0 uses parent_doc_id
                             metadata={
                                 **metadata,
+                                "tree_node_id": hit.get("tree_node_id", ""),
+                                "chapter": hit.get("chapter", ""),
+                                "nature": hit.get("nature", ""),
+                                "year": hit.get("year", ""),
                                 "chunk_object_key": hit.get("chunk_object_key", ""),  # Store R2 key
                                 "parent_doc_id": hit.get("parent_doc_id", ""),        # 🔧 FIX: Explicitly store parent_doc_id
                                 "source_document_key": hit.get("source_document_key", ""),
@@ -996,16 +1001,22 @@ class RetrievalEngine:
             
             if parent_doc:
                 # Replace chunk with full parent document for synthesis
+                # Get parent document content (PageIndex markdown)
+                parent_content = parent_doc.get("pageindex_markdown", parent_doc.get("doc_text", ""))
+                
                 expanded_result = RetrievalResult(
                     chunk_id=chunk_result.chunk_id,
-                    chunk_text=parent_doc.get("doc_text", chunk_result.chunk_text),  # Full parent text
+                    chunk_text=parent_content,  # Use PageIndex markdown content
                     doc_id=chunk_result.doc_id,
                     metadata={
                         **chunk_result.metadata,
                         "expanded_to_parent": True,
-                        "parent_doc_length": len(parent_doc.get("doc_text", "")),
+                        "parent_doc_length": len(parent_content),
                         "original_chunk_text": chunk_result.chunk_text,  # Keep original for citation
                         "parent_doc_object_key": parent_doc.get("doc_object_key", ""),
+                        "title": parent_doc.get("title", ""),
+                        "chapter": parent_doc.get("chapter", ""),
+                        "canonical_citation": parent_doc.get("canonical_citation", ""),
                     },
                     score=chunk_result.score,
                     source=f"{chunk_result.source}_expanded"

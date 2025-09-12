@@ -95,7 +95,7 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   Define a `GET /api/v1/documents/{document_key}` endpoint, protected by the existing user authentication dependency.
     -   The endpoint uses `boto3` to fetch the requested PDF from R2 and return it to the client using a `StreamingResponse`.
 
-### 2.6. Frontend Integration for Document Viewing
+### 2.6. Frontend Integration for Document Viewing (to be implemented in frontend)
 -   **Task**: The frontend must be updated to change how it links to source documents.
 -   **Task**: Source links in the UI should now point to the new `/api/v1/documents/{document_key}` endpoint.
 -   **Task**: Implement an in-app PDF viewer (using an `<iframe>` or a library like `react-pdf`) that uses this API endpoint as its source, allowing users to view citations without leaving the application. Add support for jumping to a specific page using URL fragments (`#page=...`).
@@ -113,7 +113,6 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   ✅ Uses optimized RRF (Reciprocal Rank Fusion) to combine results with performance monitoring.
     -   ✅ **Crucially**, after identifying top-k small chunks, fetches corresponding **parent documents** for rich synthesis context.
     -   ✅ Added comprehensive observability, performance monitoring, and alerting.
-    -   **NEW**: [ ] After top-K parent docs are identified, call PageIndex Retrieval API (`submit_query`) in parallel and merge returned tree nodes via RRF.
 
 ### 3.2. Reranking Implementation
 -   **Task**: Implement a real reranker. The `BGE-reranker-v2` (cross-encoder) is a strong choice. This can be run locally using a library like `sentence-transformers`.
