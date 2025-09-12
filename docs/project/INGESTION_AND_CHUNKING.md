@@ -1,35 +1,61 @@
-### RightLine Ingestion, Normalization, Chunking, Retrieval, and Milvus Plan (Legislation‑first)
+### RightLine v3.0 Ingestion & Chunking — PageIndex OCR + Tree-Aware Strategy
 
-This document describes a robust, scalable plan to parse ZimLII legislation and judgments HTML, normalize and enrich content, chunk with state-of-the-art strategies, embed with OpenAI, and insert into Milvus for fast retrieval. The plan is designed to support future sources (more Acts/Statutory Instruments, Constitution, more judgments and courts) with stable IDs and idempotent processing.
+This document describes the enhanced ingestion and chunking pipeline using **PageIndex OCR + Tree Generation** for superior document structure extraction and **node-aligned chunking** for semantic coherence. The system processes PDF legislation from R2 storage with comprehensive metadata extraction and tree-guided chunking strategies.
 
-References: [Milvus Docs](https://milvus.io/docs)
-
----
-
-## 1) Current State and Goals
-
-- Current raw data: 405 current‑legislation HTMLs (375 Acts, 14 Ordinances, 16 SIs) in `data/raw/legislation/*.html`.
-- API and retrieval: FastAPI (serverless‑ready), OpenAI `text-embedding-3-small` (1536‑dim), Milvus collection (HNSW index). Hybrid retrieval to be tightened for legislation‑only MVP.
-- Gaps: finalize enriched schema (nature/year/chapter), hierarchy‑aware chunking, embedding regeneration, retrieval tuning.
-
-Goals:
-- Parse legislation (Acts, Ordinances, SIs) into a normalized schema.
-- Extract: nature, year, chapter, FRBR/AKN URIs, effective date, section IDs/paths.
-- Stable, repeatable chunking with adaptive overlap and short‑section merging.
-- Embeddings + upsert to Milvus with scalar filters for nature/year/chapter.
-- Idempotent, resumable ingestion.
+**Key Technologies**: PageIndex API, Cloudflare R2, OpenAI Embeddings, Milvus Cloud
 
 ---
 
-## 2) Source HTML Characteristics (ZimLII)
+## 1) Enhanced Pipeline Architecture
 
-Observations from ZimLII (example: Labour Act page):
-- Standard HTML with global header, menus, social/meta tags, scripts (Sentry/Matomo), and a main document content region
-- AKN/FRBR metadata present in JSON blocks or attributes (e.g., `work_frbr_uri`, `expression_frbr_uri`, doctype: `act`, language `eng`, expression date `eng@2016-12-31`)
-- Legislation structure generally follows hierarchy: Part > Chapter > Section (with headings and anchors)
-- Judgments typically include: case title, court, neutral citation, case number, date delivered, judges, counsel, headnote/summary, body paragraphs, references
+### **Current State v3.0**:
+- **Source Data**: 465 legislation PDFs in Cloudflare R2 (`corpus/sources/legislation/`)
+- **OCR Engine**: PageIndex API for superior text extraction and document structure analysis
+- **Vector Store**: Milvus Cloud with `text-embedding-3-large` (3072-dim) embeddings
+- **Storage**: Cloud-native with R2 for documents/chunks, comprehensive metadata
 
-Key takeaway: We can rely on consistent landmarks to locate the main content area and structured anchors/headings.
+### **Core Goals v3.0**:
+- **Structure-Aware Extraction**: Use PageIndex OCR + Tree to capture document hierarchy
+- **Node-Aligned Chunking**: Generate chunks that respect semantic boundaries (sections, subsections)
+- **Rich Metadata**: Extract comprehensive legal metadata (AKN URIs, chapters, citations)
+- **Cloud-Native Storage**: All data in R2 with proper metadata for fast filtering
+- **Semantic Coherence**: Chunks aligned with legal document structure, not arbitrary token windows
+
+---
+
+## 2) PageIndex OCR + Tree Processing
+
+### **PageIndex Integration**:
+The system leverages PageIndex's advanced OCR and tree generation capabilities:
+
+**OCR Extraction**:
+- **Page-by-page OCR**: High-quality text extraction preserving document structure
+- **Global document context**: Unlike traditional OCR, maintains relationships across pages
+- **Rich markdown output**: Clean, structured text with proper formatting
+
+**Tree Generation**:
+- **Hierarchical structure**: Automatically identifies document hierarchy (Parts, Sections, Subsections)
+- **Node-based organization**: Each section becomes a tree node with title, content, and position
+- **Semantic boundaries**: Natural breakpoints for chunking aligned with legal structure
+
+**Example Tree Structure**:
+```json
+{
+  "title": "Art Unions Act",
+  "node_id": "0000",
+  "nodes": [
+    {
+      "title": "Chapter 25:01", 
+      "node_id": "0001",
+      "text": "Preamble and chapter content...",
+      "nodes": [
+        {"title": "1. Short title", "node_id": "0002", "text": "This Act may be cited..."},
+        {"title": "2. Interpretation", "node_id": "0003", "text": "In this Act..."}
+      ]
+    }
+  ]
+}
+```
 
 ---
 
@@ -107,39 +133,84 @@ Note: In Milvus, we’ll store `doc_id` (varchar), `chunk_text` (varchar ~5000),
 
 ---
 
-## 5) Chunking Strategy (state‑of‑the‑art, tuned for legislation)
+## 5) Tree-Aware Chunking Strategy v3.0
 
-We will chunk to balance retrieval quality and latency. Strategy depends on document type but shares common principles.
+### **Node-Aligned Chunking Principles**:
+The chunking strategy leverages PageIndex tree structure for semantic coherence:
 
-### 5.1 Common principles
-- Target 400–600 tokens per chunk; hard cap ~5000 chars.
-- Adaptive overlap 10–20% based on chunk length.
-- Respect boundaries: section is atomic; merge only adjacent short sections within same Part/Regulation.
-- Preserve `section_path` and `section_id`; optionally prefix first chunk with section heading.
-- Store `num_tokens`; deterministic `chunk_id`.
+**Core Strategy**:
+- **Tree Node = Chunk Boundary**: Each PageIndex tree node becomes a potential chunk
+- **Semantic Coherence**: Chunks respect legal document structure (sections, subsections)
+- **Size Optimization**: Target 256-512 tokens per chunk for optimal retrieval precision
+- **Hierarchical Context**: Preserve parent-child relationships in metadata
 
-### 5.2 Legislation (Acts, Ordinances, SIs)
-- Primary unit: Section; for SIs, treat each numbered clause/regulation as a section.
-- Long sections: paragraph‑aware sliding window 450–600 tokens, 15–20% overlap.
-- Short sections: greedy forward merge to ≥250 tokens; record merged `section_ids`.
-- Boilerplate (short title/citation): attach to following section.
-- Include `nature`, `year`, `chapter`, `akn_uri` in metadata.
+### **Chunking Algorithm**:
 
-### 5.3 Judgments (post‑MVP)
-- Primary unit: Paragraphs
-- Headnote becomes its own chunk(s)
-- Compose sequential paragraphs into ~512 token chunks with 15–20% overlap; include paragraph indices (e.g., `para 14–18`) in `section_path`
-- Store court, neutral citation, date decided in metadata for scalar filtering and recency/authority boosts
+**Step 1: Tree Traversal**
+```python
+def chunk_from_tree(tree_nodes, parent_path=""):
+    for node in tree_nodes:
+        section_path = f"{parent_path} > {node['title']}" if parent_path else node['title']
+        node_text = node.get('text', '')
+        
+        if node_text and estimate_tokens(node_text) >= MIN_TOKENS:
+            # Create chunk from node content
+            yield create_chunk(node_text, section_path, node['node_id'])
+        
+        # Recursively process child nodes
+        if 'nodes' in node:
+            yield from chunk_from_tree(node['nodes'], section_path)
+```
+
+**Step 2: Size Management**
+- **Small nodes** (<128 tokens): Merge with adjacent nodes in same parent
+- **Large nodes** (>512 tokens): Split while preserving paragraph boundaries
+- **Optimal nodes** (128-512 tokens): Use as-is for perfect semantic alignment
+
+**Step 3: Metadata Enhancement**
+```json
+{
+  "chunk_id": "a1b2c3d4e5f6g7h8",
+  "doc_id": "parent_document_id", 
+  "parent_doc_id": "parent_document_id",
+  "tree_node_id": "0003",
+  "section_path": "Art Unions Act > Chapter 25:01 > 2. Interpretation",
+  "chunk_text": "In this Act— \"art union\" means a voluntary association...",
+  "num_tokens": 287,
+  "doc_type": "act",
+  "chapter": "25:01",
+  "nature": "Act"
+}
+```
 
 ---
 
-## 6) Embeddings (OpenAI) and batching
+## 6) Enhanced Embeddings & Vector Storage
 
-- Model: `text-embedding-3-small` (1536-dim)
-- Clean text input: ensure no HTML, normalized whitespace
-- Batch size: 64–128; exponential backoff; write sample preview JSON.
-- Persist chunk+embedding in memory or temp before upsert to Milvus to ensure idempotency and partial-failure recovery
-- Cost observability: log tokens per batch; estimate cost (~$0.02 per 1M tokens for this model per the current pricing)
+### **OpenAI Embeddings v3.0**:
+- **Model**: `text-embedding-3-large` (3072-dim) for superior semantic understanding
+- **Input Processing**: Clean PageIndex markdown text with normalized whitespace
+- **Batch Processing**: 64-128 chunks per batch with exponential backoff
+- **Cost Optimization**: ~$0.13 per 1M tokens; comprehensive logging for cost tracking
+
+### **Milvus Schema v2.0**:
+```python
+{
+    "chunk_id": "VARCHAR(16)",      # Primary key
+    "embedding": "FLOAT_VECTOR(3072)",  # Dense vector
+    "num_tokens": "INT64",
+    "doc_type": "VARCHAR(20)",      # act, si, ordinance
+    "language": "VARCHAR(10)",      # eng
+    "parent_doc_id": "VARCHAR(16)", # Link to parent document
+    "tree_node_id": "VARCHAR(16)",  # PageIndex node reference
+    "chunk_object_key": "VARCHAR(200)", # R2 storage key
+    "source_document_key": "VARCHAR(200)", # Original PDF key
+    "nature": "VARCHAR(50)",        # Act, Ordinance, SI
+    "year": "INT64",               # Legislation year
+    "chapter": "VARCHAR(20)",      # Chapter number
+    "date_context": "VARCHAR(50)"  # Version date
+}
+```
 
 ---
 
