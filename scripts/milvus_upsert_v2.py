@@ -198,17 +198,13 @@ def generate_parent_doc_id_from_chunk(chunk: Dict[str, Any]) -> str:
         return chunk.get('doc_id', chunk.get('chunk_id', ''))
 
 def transform_chunk_for_milvus_v2(chunk: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform chunk data to match v2.0 Milvus schema with CORRECT parent_doc_id."""
-    # Extract source document key from chunk metadata or construct it
-    source_document_key = chunk.get('metadata', {}).get('source_document_key')
-    if not source_document_key:
-        # Construct from doc_id and doc_type
-        doc_id = chunk.get('doc_id', '')
-        doc_type = chunk.get('doc_type', 'unknown')
-        source_document_key = f"sources/{doc_type}/{doc_id}.pdf"
+    """Transform chunk data to match v3.0 Milvus schema with PageIndex tree support."""
+    # Extract source document key from chunk metadata
+    metadata = chunk.get('metadata', {})
+    source_document_key = metadata.get('source_document_key') or metadata.get('r2_pdf_key', '')
     
-    # 🔧 FIX: Generate proper parent_doc_id that matches R2 parent documents
-    parent_doc_id = generate_parent_doc_id_from_chunk(chunk)
+    # Use parent_doc_id directly from chunk (no generation needed)
+    parent_doc_id = chunk.get('parent_doc_id', chunk.get('doc_id', ''))
     
     transformed = {
         "chunk_id": chunk.get('chunk_id', ''),
@@ -217,6 +213,7 @@ def transform_chunk_for_milvus_v2(chunk: Dict[str, Any]) -> Dict[str, Any]:
         "doc_type": (chunk.get('doc_type', 'unknown')[:20]),  # Truncate to max length
         "language": (chunk.get('language', 'eng')[:10]),  # Truncate to max length
         "parent_doc_id": parent_doc_id[:64],  # Truncate to max length
+        "tree_node_id": chunk.get('tree_node_id', '')[:16],  # NEW: PageIndex node reference
         "chunk_object_key": chunk.get('chunk_object_key', ''),
         "source_document_key": source_document_key,
         "nature": (chunk.get('nature', '') or '')[:32],  # Truncate to max length
@@ -280,6 +277,7 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
         doc_types = []
         languages = []
         parent_doc_ids = []
+        tree_node_ids = []
         chunk_object_keys = []
         source_document_keys = []
         natures = []
@@ -294,6 +292,7 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
             doc_types.append(item["doc_type"])
             languages.append(item["language"])
             parent_doc_ids.append(item["parent_doc_id"])
+            tree_node_ids.append(item["tree_node_id"])
             chunk_object_keys.append(item["chunk_object_key"])
             source_document_keys.append(item["source_document_key"])
             natures.append(item["nature"])
@@ -310,6 +309,7 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
                 doc_types,
                 languages,
                 parent_doc_ids,
+                tree_node_ids,
                 chunk_object_keys,
                 source_document_keys,
                 natures,
