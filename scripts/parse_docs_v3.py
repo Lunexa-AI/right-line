@@ -103,7 +103,7 @@ def _tree_to_markdown(tree_nodes: List[Dict[str, Any]], level: int = 0) -> str:
     
     return "".join(markdown_parts)
 
-def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_markdown: str = "", ocr_pages: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Extract comprehensive metadata from filename and PageIndex tree."""
     metadata = {
         "title": os.path.basename(filename).replace(".pdf", ""),
@@ -160,24 +160,53 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]]) -> Dic
         elif akn_doc_type in ["judgment", "case"]:
             metadata["subject_category"] = "case_law"
     
-    # Extract title and chapter from PageIndex tree
-    if tree_nodes:
+    # Extract title and chapter from OCR pages first (more reliable)
+    if ocr_pages:
+        # Look in first few pages for document title and chapter
+        for page in ocr_pages[:3]:  # Check first 3 pages
+            page_text = page.get("markdown", "")
+            
+            # Look for document title patterns
+            title_patterns = [
+                r"^([A-Z][A-Za-z\s]+Act)\s*$",  # "Some Act"
+                r"([A-Z][A-Za-z\s]+Act)\s*Chapter",  # "Some Act Chapter"
+                r"([A-Z][A-Za-z\s]+Act)\s*\n",  # "Some Act" followed by newline
+            ]
+            
+            for pattern in title_patterns:
+                title_match = re.search(pattern, page_text, re.MULTILINE)
+                if title_match:
+                    potential_title = title_match.group(1).strip()
+                    if len(potential_title) > 5:  # Reasonable title length
+                        metadata["title"] = potential_title
+                        break
+            
+            # Look for chapter pattern
+            chapter_match = re.search(r"Chapter\s+(\d+:\d+)", page_text, re.IGNORECASE)
+            if chapter_match:
+                metadata["chapter"] = chapter_match.group(1)
+    
+    # Fallback: Extract from full markdown
+    if not metadata["title"] or not metadata["chapter"]:
+        if full_markdown:
+            # Look for document title
+            if not metadata["title"]:
+                title_match = re.search(r"([A-Z][A-Za-z\s]+Act)", full_markdown)
+                if title_match:
+                    metadata["title"] = title_match.group(1).strip()
+            
+            # Look for chapter
+            if not metadata["chapter"]:
+                chapter_match = re.search(r"Chapter\s+(\d+:\d+)", full_markdown, re.IGNORECASE)
+                if chapter_match:
+                    metadata["chapter"] = chapter_match.group(1)
+    
+    # Final fallback: Extract from PageIndex tree
+    if not metadata["title"] and tree_nodes:
         root_node = tree_nodes[0]
         title = root_node.get("title", "")
-        if title and title != "Untitled":
+        if title and title != "Untitled" and not title.startswith("1."):
             metadata["title"] = title
-            
-        # Look for chapter in nested nodes
-        for node in tree_nodes:
-            if "nodes" in node:
-                for child in node["nodes"]:
-                    child_title = child.get("title", "")
-                    if "chapter" in child_title.lower():
-                        # Extract chapter number: "Chapter 25:01"
-                        chapter_match = re.search(r"chapter\s+(\d+:\d+)", child_title, re.IGNORECASE)
-                        if chapter_match:
-                            metadata["chapter"] = chapter_match.group(1)
-                        break
     
     # Build canonical citation
     if metadata["title"] and metadata["chapter"]:
@@ -196,12 +225,11 @@ def submit_to_pageindex(pdf_bytes: bytes, filename: str, api_key: str) -> str:
 
 
 def poll_pageindex(doc_id: str, api_key: str, poll_interval: int = 8) -> Dict[str, Any]:
-    """Wait until OCR + Tree is finished; return result."""
+    """Wait until OCR + Tree is finished; return combined result."""
     headers = {"api_key": api_key}
     status_url = f"{PAGEINDEX_API_URL}/doc/{doc_id}/"
 
     # wait until processing completed
-    completed_response = None
     while True:
         resp = requests.get(status_url, headers=headers, timeout=30)
         resp.raise_for_status()
@@ -210,20 +238,53 @@ def poll_pageindex(doc_id: str, api_key: str, poll_interval: int = 8) -> Dict[st
         st = data.get("status")
         logger.info("Current status: %s", st)
         if st == "completed":
-            completed_response = data
             break
         elif st == "failed":
             raise RuntimeError(f"PageIndex processing failed for {doc_id}: {resp.text}")
         time.sleep(poll_interval)
 
-    # Extract tree from completed status response
-    tree = completed_response.get("result", [])
+    # Fetch tree structure for hierarchical info
+    tree_url = f"{status_url}?type=tree"
+    tree_resp = requests.get(tree_url, headers=headers, timeout=60)
+    tree_resp.raise_for_status()
+    tree_data = tree_resp.json()
+    tree = tree_data.get("result", [])
     logger.info("Got tree with %d root nodes", len(tree))
     
-    # Generate markdown from tree structure (simplified)
-    markdown = _tree_to_markdown(tree)
+    # Fetch OCR in page format for full content and metadata
+    ocr_page_url = f"{status_url}?type=ocr&format=page"
+    ocr_resp = requests.get(ocr_page_url, headers=headers, timeout=60)
+    ocr_resp.raise_for_status()
+    ocr_data = ocr_resp.json()
+    pages = ocr_data.get("result", [])
+    logger.info("Got OCR with %d pages", len(pages))
+    
+    # Combine all page markdown
+    full_markdown = ""
+    for page in pages:
+        page_markdown = page.get("markdown", "")
+        if page_markdown:
+            full_markdown += f"\n\n--- Page {page.get('page_index', '?')} ---\n\n{page_markdown}"
+    
+    # Also try OCR node format for structured content
+    ocr_node_url = f"{status_url}?type=ocr&format=node"
+    try:
+        node_resp = requests.get(ocr_node_url, headers=headers, timeout=60)
+        node_resp.raise_for_status()
+        node_data = node_resp.json()
+        ocr_nodes = node_data.get("result", [])
+        logger.info("Got OCR nodes: %d", len(ocr_nodes))
+    except Exception as e:
+        logger.warning("Failed to get OCR nodes: %s", e)
+        ocr_nodes = []
 
-    return {"markdown": markdown, "tree": tree, "pageindex_doc_id": doc_id}
+    return {
+        "markdown": full_markdown.strip(), 
+        "tree": tree, 
+        "ocr_pages": pages,
+        "ocr_nodes": ocr_nodes,
+        "pageindex_doc_id": doc_id
+    }
 
 # ---------------------------------------------------------------------------
 # Main processing
@@ -240,8 +301,8 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
 
     result = poll_pageindex(remote_doc_id, api_key, poll_interval)
 
-    # Extract comprehensive metadata
-    metadata = extract_akn_metadata(key, result["tree"])
+    # Extract comprehensive metadata with OCR data
+    metadata = extract_akn_metadata(key, result["tree"], result["markdown"], result.get("ocr_pages", []))
     canonical_id = sha256_16(f"{key}_{remote_doc_id}")
 
     # Count nodes
@@ -283,11 +344,17 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
 def upload_parent_doc(r2, bucket: str, doc: Dict[str, Any]):
     obj_key = f"corpus/docs/{doc['doc_type']}/{doc['doc_id']}.json"
     
-    # Build R2 metadata (string values only)
+    # Build R2 metadata (string values only, sanitized)
+    def sanitize_metadata_value(value):
+        """Remove newlines and limit length for R2 metadata."""
+        if not value:
+            return ""
+        return str(value).replace('\n', ' ').replace('\r', ' ').strip()[:1000]
+    
     r2_metadata = {
         "doc_id": doc["doc_id"],
-        "doc_type": doc["doc_type"],
-        "title": doc["title"][:1000],  # R2 metadata has size limits
+        "doc_type": doc["doc_type"], 
+        "title": sanitize_metadata_value(doc["title"]),
         "jurisdiction": doc["jurisdiction"],
         "language": doc["language"],
         "subject_category": doc["subject_category"],
@@ -307,7 +374,7 @@ def upload_parent_doc(r2, bucket: str, doc: Dict[str, Any]):
     if doc.get("version_date"):
         r2_metadata["version_date"] = doc["version_date"]
     if doc.get("akn_uri"):
-        r2_metadata["akn_uri"] = doc["akn_uri"][:1000]
+        r2_metadata["akn_uri"] = sanitize_metadata_value(doc["akn_uri"])
     
     r2.put_object(
         Bucket=bucket, 
