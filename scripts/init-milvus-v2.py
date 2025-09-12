@@ -106,6 +106,12 @@ def create_collection_schema_v2() -> CollectionSchema:
             description="Parent document ID for expanding to full context"
         ),
         FieldSchema(
+            name="tree_node_id",
+            dtype=DataType.VARCHAR,
+            max_length=16,
+            description="PageIndex tree node ID for structure reference"
+        ),
+        FieldSchema(
             name="chunk_object_key",
             dtype=DataType.VARCHAR,
             max_length=200,
