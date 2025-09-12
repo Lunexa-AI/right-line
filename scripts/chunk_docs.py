@@ -105,10 +105,12 @@ COURTS = [
 
 
 class Chunk(BaseModel):
-    """Pydantic model for a document chunk."""
+    """Pydantic model for a document chunk (v3.0 - PageIndex tree-aware)."""
     
     chunk_id: str = Field(description="Stable, deterministic ID")
     doc_id: str = Field(description="Parent document ID")
+    parent_doc_id: str = Field(description="Parent document ID (same as doc_id)")
+    tree_node_id: Optional[str] = Field(description="PageIndex tree node ID", max_length=16)
     chunk_text: str = Field(description="Clean text content (max ~5000 chars)")
     section_path: str = Field(description="Hierarchical path in document")
     start_char: int = Field(description="Start character offset in original document")
@@ -521,9 +523,109 @@ def chunk_text(
     return chunks
 
 
+def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Chunk a document using PageIndex tree structure for semantic boundaries.
+    
+    Args:
+        doc: Document with PageIndex content_tree
+        
+    Returns:
+        List of chunk dictionaries
+    """
+    doc_id = doc["doc_id"]
+    doc_type = doc.get("doc_type", "act")
+    language = doc.get("language", "eng")
+    nature = doc.get("nature", "Act")
+    year = doc.get("act_year")
+    chapter = doc.get("chapter")
+    version_date = doc.get("version_date")
+    source_url = doc.get("source_url", "")
+    
+    # Get PageIndex tree
+    content_tree = doc.get("content_tree", [])
+    if not content_tree:
+        logger.warning(f"Document {doc_id} has no PageIndex tree structure")
+        return []
+    
+    all_chunks = []
+    
+    def process_tree_node(node: Dict[str, Any], parent_path: str = "") -> None:
+        """Recursively process tree nodes into chunks."""
+        node_title = node.get("title", "")
+        node_id = node.get("node_id", "")
+        node_text = node.get("text", "")
+        
+        # Build section path
+        section_path = f"{parent_path} > {node_title}" if parent_path else node_title
+        
+        # Create chunk if node has text content
+        if node_text and len(node_text.strip()) > 0:
+            # Estimate tokens
+            token_count = estimate_tokens(node_text)
+            
+            # Only create chunks that meet minimum requirements
+            if token_count >= MIN_TOKENS:
+                # Generate chunk ID
+                chunk_id = generate_chunk_id(
+                    doc_id=doc_id,
+                    section_path=section_path,
+                    start_char=0,  # PageIndex doesn't provide char offsets
+                    end_char=len(node_text),
+                    chunk_text=node_text
+                )
+                
+                # Extract entities
+                entities = extract_entities(node_text)
+                
+                # Create chunk
+                chunk = Chunk(
+                    chunk_id=chunk_id,
+                    doc_id=doc_id,
+                    parent_doc_id=doc_id,  # Always same as doc_id
+                    tree_node_id=node_id,
+                    chunk_text=node_text.strip(),
+                    section_path=section_path,
+                    start_char=0,
+                    end_char=len(node_text),
+                    num_tokens=token_count,
+                    language=language,
+                    doc_type=doc_type,
+                    date_context=version_date,
+                    entities=entities,
+                    source_url=source_url,
+                    nature=nature,
+                    year=int(year) if year and str(year).isdigit() else None,
+                    chapter=chapter,
+                    metadata={
+                        "title": doc.get("title", ""),
+                        "jurisdiction": doc.get("jurisdiction", "ZW"),
+                        "akn_uri": doc.get("akn_uri", ""),
+                        "canonical_citation": doc.get("canonical_citation", ""),
+                        "pageindex_doc_id": doc.get("pageindex_doc_id", ""),
+                        "tree_node_id": node_id,
+                        "page_index": node.get("page_index")
+                    }
+                )
+                
+                all_chunks.append(chunk.model_dump())
+                logger.debug(f"Created chunk {chunk_id} from node {node_id}: {token_count} tokens")
+        
+        # Process child nodes recursively
+        child_nodes = node.get("nodes", [])
+        for child_node in child_nodes:
+            process_tree_node(child_node, section_path)
+    
+    # Process all root nodes
+    for root_node in content_tree:
+        process_tree_node(root_node)
+    
+    logger.info(f"Generated {len(all_chunks)} chunks from PageIndex tree for doc {doc_id}")
+    return all_chunks, []  # Return empty parent_docs list since we don't create them anymore
+
 def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Chunk a legislation document into optimal segments.
+    Legacy chunking function - replaced by chunk_from_pageindex_tree.
     
     Args:
         doc: The document to chunk
@@ -531,7 +633,14 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     Returns:
         List of chunk dictionaries
     """
-    all_chunks = []
+    # Check if document has PageIndex tree
+    if doc.get("content_tree") and doc.get("pageindex_doc_id"):
+        logger.info(f"Using PageIndex tree-aware chunking for doc {doc['doc_id']}")
+        return chunk_from_pageindex_tree(doc)
+    else:
+        logger.warning(f"Document {doc['doc_id']} missing PageIndex tree, using legacy chunking")
+        # Fall back to legacy logic (existing code below)
+        all_chunks = []
     doc_id = doc["doc_id"]
     language = doc["language"]
     date_context = doc.get("version_effective_date")
