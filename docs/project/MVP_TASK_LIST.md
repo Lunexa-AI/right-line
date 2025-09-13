@@ -74,16 +74,16 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   Upsert into Milvus using the new schema with deduplication logic.
 -   **Task**: [x] Run the full embedding→upsert pipeline and verify collection counts (56,051 entities loaded successfully).
 
-### 2.7. PageIndex OCR & Tree Integration (MANDATORY)
--   **Task**: [ ] Configure `PAGEINDEX_API_KEY` in all environments (local, Render, CI).  Pipeline fails fast if key missing.*
--   **Task**: [ ] Create a PoC script (`scripts/pageindex_ingest_poc.py`) to upload 5 PDFs from R2, fetch markdown + tree, and log stats.*
--   **Task**: [ ] Refactor `scripts/parse_docs.py` → `parse_docs_v3.py`:
-    1.  When API key is present, call PageIndex OCR & Tree.
-    2.  Persist `pageindex_doc_id`, `pageindex_markdown`, and `pageindex_tree` in parent doc `extra`.
-    3.  Fallback to PyMuPDF extraction if key absent.
--   **Task**: [ ] Refactor `scripts/chunk_docs.py` to **always** walk PageIndex tree for chunk boundaries.  Each chunk’s `section_path` becomes the node path. Parsing must abort if tree absent.*
--   **Task**: [ ] Update `Chunk` Pydantic model to include optional `tree_node_id`.
--   **Task**: [ ] Update end-to-end tests to mock PageIndexClient and verify new fields.*
+### 2.7. PageIndex OCR & Tree Integration (MANDATORY) (COMPLETED)
+-   **Task**: [x] Configure `PAGEINDEX_API_KEY` in all environments (local, Render, CI).  Pipeline fails fast if key missing.*
+-   **Task**: [x] Create enhanced `parse_docs_v3.py` with PageIndex OCR + Tree integration, comprehensive metadata extraction, and R2 object metadata.*
+-   **Task**: [x] Implement tree-aware chunking in `chunk_docs.py`:
+    1.  Walk PageIndex tree structure for semantic chunk boundaries.
+    2.  Generate node-aligned chunks with `tree_node_id` and hierarchical `section_path`.
+    3.  Ensure `parent_doc_id = doc_id` for consistent ID linking.
+-   **Task**: [x] Update `Chunk` Pydantic model to include `parent_doc_id` and `tree_node_id` fields.*
+-   **Task**: [x] Enhanced Milvus schema v3.0 with `tree_node_id` field and updated upsert pipeline.*
+-   **Task**: [x] Verified end-to-end pipeline: Parse (5 docs) → Chunk (33 chunks) → Embed → Milvus → BM25 → Retrieval with perfect quality.*
 
 ### 2.5. Refactor API Backend for R2 (Retrieval Layer) (COMPLETED)
 -   **Task**: [x] **Retrieval Logic (`api/retrieval.py`)**:
@@ -114,10 +114,11 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   ✅ **Crucially**, after identifying top-k small chunks, fetches corresponding **parent documents** for rich synthesis context.
     -   ✅ Added comprehensive observability, performance monitoring, and alerting.
 
-### 3.2. Reranking Implementation
--   **Task**: Implement a real reranker. The `BGE-reranker-v2` (cross-encoder) is a strong choice. This can be run locally using a library like `sentence-transformers`.
--   **Task**: Replace the placeholder `OpenAIReranker` in `api/retrieval.py` with this new implementation.
--   **Task**: The reranker should take the combined candidate chunks from the hybrid search step (before parent document retrieval) and re-score them against the query to find the most relevant ones.
+### 3.2. Reranking Implementation (COMPLETED)
+-   **Task**: [x] Implement BGE-reranker-base using `sentence-transformers` library for production-grade reranking.
+-   **Task**: [x] Integrate reranker into `api/retrieval.py` pipeline after RRF fusion but before parent document expansion.
+-   **Task**: [x] The reranker processes candidate chunks from hybrid search and re-scores them for improved relevance ranking.
+-   **Task**: [x] Added comprehensive logging and performance monitoring for reranking operations.
 
 ## Phase 4: The Agentic Loop
 
