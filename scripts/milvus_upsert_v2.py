@@ -35,6 +35,10 @@ import openai
 import structlog
 from dotenv import load_dotenv
 
+# Import chunk model
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from api.models import ChunkV3 as Chunk
+
 try:
     from pymilvus import (
         connections,
@@ -131,16 +135,22 @@ def list_chunks_from_r2(r2_client, bucket: str, prefix: str = "corpus/chunks/") 
     return chunk_keys
 
 
-def load_chunk_from_r2(r2_client, bucket: str, chunk_key: str) -> Chunk:
-    """Load a single chunk from R2."""
+def load_chunk_from_r2(r2_client, bucket: str, chunk_key: str) -> Dict[str, Any]:
+    """Load a single chunk from R2and add required fields."""
     try:
         response = r2_client.get_object(Bucket=bucket, Key=chunk_key)
         chunk_data = json.loads(response['Body'].read().decode('utf-8'))  # Load as dict
         
-        # Add the R2 object key to the chunk data
-        chunk_data['chunk_object_key'] = chunk_key  # Add extra field if needed
+        # Add the R2 object key to the chunk data (required by Milvus schema)
+        chunk_data['chunk_object_key'] = chunk_key
         
-        return Chunk(**chunk_data)  # Validate and create model instance
+        # Add source_document_key from metadata if available
+        if 'metadata' in chunk_data and 'r2_pdf_key' in chunk_data['metadata']:
+            chunk_data['source_document_key'] = chunk_data['metadata']['r2_pdf_key']
+        else:
+            chunk_data['source_document_key'] = chunk_data.get('source_url', '')
+        
+        return chunk_data  # Return dict instead of model instance
     except Exception as e:
         logger.error(f"Error loading chunk {chunk_key} from R2: {e}")
         return None
@@ -370,7 +380,7 @@ def main():
         
         # Load chunks from R2
         logger.info("Loading chunks from R2...")
-        chunks: List[Chunk] = []
+        chunks: List[Dict[str, Any]] = []
         failed_chunks = 0
         
         for chunk_key in tqdm(chunk_keys, desc="Loading chunks"):
@@ -390,7 +400,7 @@ def main():
         logger.info("Generating embeddings...")
         
         # Extract texts for embedding
-        texts = [chunk.chunk_text for chunk in chunks]
+        texts = [chunk['chunk_text'] for chunk in chunks]
         all_embeddings = []
         
         # Process in batches to avoid API limits
@@ -405,15 +415,14 @@ def main():
         logger.info("Transforming chunks for Milvus v2.0...")
         milvus_chunks = []
         
-        for chunk_model, embedding in zip(chunks, all_embeddings):
+        for chunk_dict, embedding in zip(chunks, all_embeddings):
             try:
-                # Create copy with embedding
-                chunk_dict = chunk_model.model_dump()
+                # Add embedding to chunk data
                 chunk_dict['embedding'] = embedding
                 transformed_chunk = transform_chunk_for_milvus_v2(chunk_dict)
                 milvus_chunks.append(transformed_chunk)
             except Exception as e:
-                logger.error(f"Error transforming chunk {chunk_model.chunk_id}: {e}")
+                logger.error(f"Error transforming chunk {chunk_dict.get('chunk_id', 'unknown')}: {e}")
                 continue
         
         logger.info(f"Transformed {len(milvus_chunks)} chunks for Milvus")
