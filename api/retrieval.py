@@ -22,6 +22,9 @@ import structlog
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+# Import reranker for quality improvement
+from .reranker import get_reranker, RerankerConfig
+
 logger = structlog.get_logger(__name__)
 
 # Milvus configuration from environment
@@ -1360,10 +1363,21 @@ class RetrievalEngine:
                 rrf_time_ms=round(rrf_time * 1000, 2),
                 top_rrf_score=final[0].metadata.get("rrf_score") if final else 0
             )
-            # Optional rerank
-            if ENABLE_RERANK and OPENAI_RERANK_MODEL:
-                reranker = OpenAIReranker(OPENAI_RERANK_MODEL)
-                final = await reranker.rerank(clean_query, final, max_items=40)
+            
+            # TASK 3.2: Reranking (MVP: disabled for <2.5s latency, Phase 4: optimize)
+            # ====================================================================
+            # Note: Reranking implemented but disabled for MVP latency requirements
+            # TODO Phase 4: Optimize with model caching, smaller models, or async loading
+            enable_reranking = os.environ.get("ENABLE_RERANKING", "false").lower() == "true"
+            if enable_reranking and final and len(final) >= 3:
+                logger.info("Starting reranking", candidates=len(final))
+                reranker = await get_reranker()
+                final = await reranker.rerank(
+                    query=clean_query,
+                    candidates=final,
+                    top_k=config.top_k
+                )
+            
             results = final
         else:
             logger.warning("No embeddings generated for variants; skipping search")
