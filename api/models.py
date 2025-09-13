@@ -412,14 +412,33 @@ class ChunkV3(BaseModel):
         None, description="PageIndex tree node identifier (4-digit zero-padded)"
     )
 
-    # Metadata & content
+    # Content and location
+    chunk_text: str = Field(..., description="Full text of the chunk")
     section_path: str | None = Field(
         None, description="Hierarchical path within the document (breadcrumb)"
     )
+    start_char: int = Field(0, description="Start character position in document")
+    end_char: int = Field(0, description="End character position in document")
+    num_tokens: int = Field(0, description="Estimated token count")
+
+    # Document metadata
+    language: str = Field("eng", description="Document language code")
+    doc_type: str = Field("act", description="Document type (act, si, ordinance, etc.)")
+    date_context: str | None = Field(None, description="Date context for the content")
+    source_url: str | None = Field(None, description="Source URL if available")
+    nature: str | None = Field(None, description="Nature of the document")
+    year: int | None = Field(None, description="Year of the document")
+    chapter: str | None = Field(None, description="Chapter identifier")
+
+    # Entity extraction
+    entities: dict[str, List[str]] | None = Field(
+        default_factory=dict, description="Extracted entities (dates, statute_refs, etc.)"
+    )
+
+    # Additional metadata
     metadata: dict[str, Any] | None = Field(
         default_factory=dict, description="Additional metadata for the chunk"
     )
-    chunk_text: str = Field(..., description="Full text of the chunk")
 
     # Deprecation shims (old code may still access these)
     @property
