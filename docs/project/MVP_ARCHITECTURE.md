@@ -1,197 +1,156 @@
 
-# Gweta v2.0 Architecture — Advanced RAG & Agentic Systems
+# Gweta Agentic Core Architecture (v3.0)
 
-## 0) Product Promise (v2.0)
+## 1. Core Principles
 
-- **Deep, Multi-Source Answers**: Go beyond simple document retrieval. Synthesize information across multiple documents with clear citations and context-aware follow-ups.
-- **Agentic Reasoning**: Decompose complex questions, automatically rewrite queries for clarity, and validate evidence before answering.
-- **Stateful & Personalized**: Maintain conversational context within and across sessions, leveraging user history to provide more relevant and precise results.
-- **Enterprise-Grade Security**: Ensure robust user authentication and data isolation from the ground up.
-- **High-Performance & Low-Latency**: Target a **< 2.5s P95** response time for typical queries through optimized pipelines and intelligent caching.
-- **Serverless & Scalable**: Built on Render (backend) and Vercel (frontend) with Firebase for a low-ops, pay‑per‑use, and tightly integrated infrastructure.
+- **Agentic & Composable**: The system is built as a graph of specialized, stateless tools orchestrated by a central `QueryOrchestrator`. This multi-agent-ready design allows new capabilities (drafting, redlining) to be added as modular subgraphs.
+- **State-Driven**: Every query is executed within a versioned, explicit state machine (`AgentState`). This enables reproducibility, observability, and robust error handling.
+- **Cloud-Native & Serverless**: All components are designed for a serverless environment. Heavy artifacts (PDFs, chunks, indexes) are stored in Cloudflare R2, and compute is handled by ephemeral containers (Render).
+- **Performance by Design**: We target a **sub-second first-token** latency and a **< 4s full-answer** P95 latency budget through aggressive parallelism, caching, and staged degradation.
 
------
+---
 
-## 1) High-Level Architecture (v2.0)
+## 2. High-Level Architecture
 
-The architecture evolves from a simple pipeline to a lightweight agentic system. The core is an **Agentic Loop** that plans, executes, and validates the retrieval and synthesis process, enabling more complex reasoning and higher accuracy.
+The architecture is a multi-stage, asynchronous pipeline managed by a LangGraph state machine. It prioritizes speed, accuracy, and verifiability.
 
-```
-           ┌────────────────────────────────────┐
-           │              Channels              │
-           │ Web (Authenticated) | WhatsApp (Future) │
-           └──────────────┬─────────────────────┘
-                          │ (JWT Auth Token to Vercel Frontend)
-                   ┌──────▼───────────────────────────┐
-                   │   API Layer (Render Backend)    │
-                   │ (FastAPI, Auth Middleware)      │
-                   └──────┬────────────────────┬─────┘
-                          │ (User Query)       │ (User Context & State)
-      ┌───────────────────▼──────────────────┐ │ ┌───────────────────────┐
-      │         Core Agentic Engine          │ │ │ Firebase              │
-      │ ┌──────────────────────────────────┐ │ │ │ - Authentication      │
-      │ │ 1. Agentic Loop & Query Planner  ├─┼─► │ - Firestore (Memory)  │
-      │ │    - Decompose & Rewrite (HyDE)  │ │ │ - Firestore (Feedback)│
-      │ └─────────────────┬────────────────┘ │ └───────────────────────┘
-      │                   │ (Planned Sub-Queries)
-      │ ┌─────────────────▼────────────────┐
-      │ │  2. Multi-Strategy Retrieval     │
-      │ │    - Hybrid Search (BM25 + Dense)│
-      │ │    - Parent Document Retrieval   │
-      │ │    - (Future: GraphRAG)          │
-      │ └─────────────────┬────────────────┘
-      │                   │ (Candidate Documents)
-      │ ┌─────────────────▼────────────────┐
-      │ │  3. Reranking & Evidence Check   │
-      │ │    - BGE-Reranker v2             │
-      │ │    - Validate sufficiency        │
-      │ └─────────────────┬────────────────┘
-      │                   │ (High-Quality Evidence)
-      │ ┌─────────────────▼────────────────┐
-      │ │   4. Synthesis & Composition     │
-      │ │    - OpenAI GPT-4o-mini          │
-      │ │    - Generate Answer & Citations │
-      │ └─────────────────┬────────────────┘
-      │                   │ (Final Answer)
-      └───────────────────│──────────────────┘
-                          │
-                   ┌──────▼───────────────────────────────────┐
-                   │                 Data Plane                │
-                   ├───────────────────┬───────────────────────┤
-                   │ Milvus Cloud      │ Cloudflare R2         │
-                   │ (Dense Vectors &  │ (Source PDFs &        │
-                   │ Metadata)         │ Processed Text Chunks)│
-                   └───────────────────┴───────────────────────┘
+```mermaid
+graph TD
+    subgraph User Interaction
+        A[Client: Web/WhatsApp] -->|HTTPS Request with JWT| B(API: FastAPI on Render)
+    end
+
+    subgraph Agentic Core
+        B --> C{Query Orchestrator (LangGraph)}
+        C --> D[1. Intent Router]
+        D --> E[2. Rewrite & Expand]
+        E --> F[3. Concurrent Retrieval]
+        F --> G[4. Rerank & Fuse]
+        G --> H[5. Expand to Parents]
+        H --> I[6. Synthesize & Stream]
+    end
+
+    subgraph Data & State Plane
+        C <-->|Read/Write State| J(State Checkpointer: Firestore)
+        F -->|Hybrid Search| K(Milvus Cloud: Dense Vectors)
+        F -->|Hybrid Search| L(BM25 Index on R2: Sparse Vectors)
+        H -->|Fetch Parent Docs| M(Cloudflare R2: Chunks & Parent Docs)
+        I -->|Cite Sources| M
+    end
+
+    subgraph Observability
+        C -->|Trace Every Step| N(LangSmith)
+    end
+
+    I -->|Streaming SSE Response| B
 ```
 
------
+---
 
-## 2) Core Components
+## 3. Proposed Repo Structure Refactoring
 
-### 2.1 Channels & API Layer
-- **Web Interface (Vercel)**: Authenticated frontend managing JWT tokens via Firebase Auth.
-- **Render Web Service (FastAPI)**: Protected backend endpoints for querying, feedback, and session history, validating tokens on each request.
+To support a multi-agent architecture and improve modularity, we will refactor the `api/` directory. This isolates concerns and makes adding new capabilities cleaner.
 
-### 2.2 Authentication & State (Firebase)
-The two-tier memory system (Short-Term Session, Long-Term Profile) remains a core pillar for personalization and is now a key input into the agentic planner.
-
-### 2.3 Advanced RAG Pipeline (Agentic & Multi-Strategy)
-
-This is the core evolution, moving from a linear chain to a dynamic, query-aware agent.
-
-#### a. The Agentic Loop: Query Planning & Decomposition
-Instead of directly embedding a user's raw query, a lightweight "planner" LLM call happens first.
-
-- **Responsibility**:
-    1.  **Analyze Intent**: Is the query simple or complex?
-    2.  **Query Rewrite/Expansion**: For simple queries, use techniques like **HyDE (Hypothetical Document Embeddings)** to generate a more detailed, embedding-friendly query.
-    3.  **Decomposition**: For complex questions ("Compare and contrast X and Y"), break it down into multiple sub-queries that can be executed independently.
-    4.  **Route**: (Future) Direct the query to the best retrieval strategy (e.g., vector search for semantic questions, GraphRAG for multi-hop reasoning).
-- **Example**:
-    - **User Query**: "What about for a private company?"
-    - **Context (from Firestore)**: Previous question was "What are the registration requirements for a PBC?"
-    - **Planner Action**: Rewrites the query to a standalone question: "What are the registration requirements for a Private Limited Company (PLC) in Zimbabwe?"
-
-#### b. Multi-Strategy Retrieval
-The system retrieves evidence using multiple techniques in parallel to improve recall.
-
-**(NEW — Hierarchical Chunks)**  Because our chunks are aligned with PageIndex tree nodes, the hybrid search over Milvus/BM25 already operates on semantically coherent sections. No additional PageIndex retrieval call is needed; the existing pipeline traverses hierarchy via `section_path` metadata to surface precise sections.
-- **Hybrid Search**: Combine the strengths of two search types:
-    - **Dense Retrieval (Vector Search)**: Use Milvus with OpenAI embeddings (`text-embedding-3-small`) to find semantically similar documents. Excellent for concepts and meaning.
-    - **Sparse Retrieval (Keyword Search)**: Use a lightweight BM25 index to find documents with exact keyword matches. Critical for acronyms, specific names, and legal jargon.
-- **Parent Document / Small-to-Big Retrieval**:
-    - Chunks are kept small and specific for high-precision matching during retrieval.
-    - Once the best small chunks are identified, the system retrieves their larger "parent" documents.
-    - This provides the synthesis LLM with broader context, reducing the risk of generating answers from fragmented or incomplete information.
-
-#### c. Reranking & Evidence Validation
-This step ensures only the most relevant information reaches the final synthesis stage.
-
-- **Reranking**: The top ~50-100 candidate documents from the hybrid search are passed to a more powerful and precise reranker model (e.g., `BGE-reranker-v2`). This model re-scores the documents based on their direct relevance to the original query.
-- **Evidence Check**: The agentic loop can perform a quick validation step here. An LLM call checks if the reranked documents seem sufficient to answer the question. If not, it can trigger another retrieval cycle with a modified query.
-
-#### d. Synthesis & Composition
-The final, high-quality evidence is used to generate the user-facing answer.
-
-- **Model**: `gpt-4o-mini` remains the primary choice for its balance of cost, speed, and capability.
-- **Personalized & Grounded Prompt**: The prompt is enriched with user context and strict instructions.
-  > *"You are a Zimbabwean legal AI assistant. The user you are helping has shown past interest in [long\_term\_summary]. Answer the question **only using the provided legal texts**. Cite your sources meticulously using the format [doc_id, chunk_id]. If the answer is not in the texts, state that clearly. Here is the recent conversation history for context: [session\_history]."*
-
-### 2.4 Chunking & Embedding Strategy
-
-- **(NEW — PageIndex-Centric)**  The pipeline **always** calls **PageIndex OCR + Tree** during parsing. The returned markdown and hierarchical tree are stored in each parent document’s `extra.pageindex_*` fields.  Chunking walks the PageIndex tree and creates chunks that align with node boundaries (never naïve sliding windows).
-- **Strategy**: Implement "Small-to-Big" retrieval.
-    1.  **Chunking**: Documents are split into small, semantically coherent chunks (e.g., 256 tokens). Each chunk stores a reference to its parent document ID. If PageIndex data is present, node boundaries define the chunk breaks; otherwise we fall back to token-based windows.
-    2.  **Embedding**: Only the small chunks are embedded and stored in Milvus.
-    3.  **Retrieval**: The retrieval process (hybrid search + reranking) operates on these small chunks to find the most precise matches.
-    4.  **Expansion**: Before passing the context to the synthesis LLM, the system fetches the full parent documents corresponding to the top-ranked small chunks.
-
-### 2.5 Data Plane: The Source of Truth
-
-The architecture explicitly decouples the application from the local filesystem, ensuring it is stateless and scalable.
-
-- **Vector & Metadata Store**: Milvus Cloud stores the dense embeddings and, critically, the metadata which acts as a pointer to the full data. This metadata includes:
-    - `chunk_object_key`: The unique identifier for the processed text chunk stored in R2.
-    - `source_document_key`: The unique identifier for the original source PDF stored in R2.
-    - `page_number`: The page within the PDF where the chunk originated.
-
-- **Object Storage**: Cloudflare R2 serves as the primary data store for all large objects.
-    - **Source Documents**: Original PDFs are stored here for citation and viewing.
-    - **Processed Chunks**: The text content of each chunk is stored as a separate object, retrievable via the key from Milvus.
-    - **Benefits**: This approach is highly scalable, cost-effective (zero egress fees), and essential for a serverless environment like Render where the filesystem is ephemeral.
-
-#### R2 Bucket Structure
-
-To ensure scalability and security, the R2 bucket follows a prefix-based structure:
-
+**Current Structure:**
 ```
-gweta-prod-data/
-│
-├── corpus/
-│   ├── sources/
-│   │   ├── legislation/
-│   │   └── case_law/
-│   └── chunks/
-│       ├── legislation/
-│       └── case_law/
-│
-└── users/
-    └── {user_id}/
-        ├── uploads/
-        └── generated_docs/
+api/
+  - retrieval.py
+  - composer.py
+  - routers/
+  - ...
 ```
 
-- **`corpus/`**: Contains the shared, public knowledge base.
-  - `sources/`: Original, raw PDF documents, categorized by type.
-  - `chunks/`: Processed text chunks for embedding, mirroring the source structure.
-- **`users/{user_id}/`**: All data firewalled to a specific user, identified by their Firebase UID.
-  - `uploads/`: Raw documents uploaded by the user for analysis.
-  - `generated_docs/`: Documents created by the application for the user.
+**Proposed Structure:**
+```
+api/
+  schemas/              # Pydantic models for state, requests, etc.
+    - agent_state.py
+  orchestrators/        # High-level LangGraph state machines
+    - query_orchestrator.py
+  agents/               # Subgraphs for specialized tasks (future)
+    - protocol.py
+    - research_qa/
+    - summarizer/
+  tools/                # Stateless, reusable capabilities
+    - retrieval_engine.py # Replaces api/retrieval.py
+    - reranker.py
+    - citation_resolver.py
+  composer/             # Prompt engineering and LLM interaction
+    - prompts.py
+    - synthesis.py
+  routers/              # API endpoints (no business logic)
+    - query.py
+    - debug.py
+  main.py
+```
 
-- **State & User Data**: Firestore (unchanged).
+This structure separates the "what" (schemas) from the "how" (tools, agents) and the "when" (orchestrators), which is critical for a scalable agentic system.
 
-- **(Future) Graph Database**: For GraphRAG capabilities, a graph database like Neo4j would be introduced to store entities and relationships extracted from the corpus.
+---
 
-### 2.6 Secure Document Serving
+## 4. Core Components Deep Dive
 
-To provide users access to source documents without exposing storage credentials, a dedicated, authenticated API endpoint (`GET /api/v1/documents/{document_key}`) is used. This endpoint acts as a secure proxy, fetching the document from R2 and streaming it to the authenticated user, enabling seamless in-app viewing.
+### 4.1. Data Ingestion Pipeline (V3 - Current & Validated)
+- **Source**: PDFs fetched and stored in `R2:corpus/sources/`.
+- **Parsing**: `parse_docs_v3.py` uses **PageIndex** for OCR and to generate a structural `content_tree`.
+- **Sanitization**: A robust pass removes boilerplate, OCR artifacts, and duplicate headings.
+- **Chunking**: `chunk_docs.py` performs **tree-aware chunking**, creating semantic chunks aligned with document nodes. `MIN_TOKENS` is set to 10 to capture small but important documents.
+- **Storage**: Parent documents (`docs/`) and chunks (`chunks/`) are stored as JSON in R2.
 
------
+### 4.2. Retrieval Engine (V3 - Current & Validated)
+- **Hybrid Search**: The engine runs two searches in parallel:
+    - **Dense**: Milvus vector search on OpenAI embeddings (`text-embedding-3-large`) for semantic relevance.
+    - **Sparse**: BM25 keyword search (index loaded from R2) for specific terms.
+- **Fusion**: Results are combined using **Reciprocal Rank Fusion (RRF)** to produce a single, high-quality candidate list.
+- **Reranking**: A cross-encoder model (`BGE-reranker-base`) reranks the fused list for maximum precision.
+- **Small-to-Big Expansion**: The top N reranked chunks are expanded by fetching their full parent documents from R2, providing rich context for synthesis.
 
-## 3) Enhanced Feedback Loop (Unchanged)
-The existing feedback mechanism using Firestore is robust and provides a high-quality dataset for future fine-tuning and evaluation of the more complex RAG pipeline.
+### 4.3. The Agentic Core (The New Implementation)
+- **Orchestrator**: `QueryOrchestrator` implemented as a **LangGraph** state machine.
+- **State**: A Pydantic model, `AgentState`, tracks the full lifecycle of a query, enabling retries and detailed tracing.
+- **Key Nodes (Steps in the Graph)**:
+    1.  **Intent Router**: Fast heuristics and a mini-LLM classify the user's goal (e.g., `rag_qa`, `conversational`). Budget: ≤ 70 ms heuristics / ≤ 250 ms LLM.
+    2.  **Rewrite & Expand**: History-aware rewrite + **Multi-HyDE** (3–5 hypotheticals, ≤ 120 tokens each) run in parallel with strict timeouts. Budget: ≤ 450 ms.
+    3.  **Concurrent Retrieval**: The `RetrievalEngine` runs dense+BM25 in parallel; RRF fuses results. Budget: ≤ 350 ms.
+    4.  **Rerank & Fuse**: BGE cross-encoder reranker with caching and timeouts. Budget: ≤ 250 ms.
+    5.  **Expand to Parents**: Fetch parent docs/pages from R2; token-aware context bundler. Budget: ≤ 150 ms.
+    6.  **Synthesize & Stream**: Build structured prompt and stream tokens with guardrails. First-token budget: ≤ 400 ms from node start.
+- **Observability**: Every step is traced to **LangSmith**, providing full visibility into the agent's reasoning process.
 
------
+### 4.4. Streaming API (SSE Contract)
+- **Endpoint**: `GET /api/v1/query/stream?session_id=...`
+- **Events**:
+    - `meta`: `{ trace_id, route, budgets }`
+    - `token`: `{ text }`
+    - `citation`: `{ doc_key, page?, confidence }`
+    - `warning`: `{ type }`
+    - `final`: `{ answer_key, citations, usage, timings }`
+- **Timeouts & Backpressure**: First `token` within 1.2s P95; if stall > 3s, abort and emit structured error with `trace_id`.
 
-## 4) Security & Privacy (Unchanged)
-JWT validation, Firestore Security Rules, and the new proxied document endpoint remain the cornerstone of the security model, ensuring users can only access their own data.
+### 4.5. Caching & Budgets
+- **Semantic cache**: `(rewritten_query → chunk_ids)` LRU 15 min.
+- **Reranker cache**: `(chunk_id, query_hash) → score` for 1 h.
+- **Doc fetch cache**: `parent_doc_key → pages` for 1 h.
+- **Adaptive degradation**: Under pressure, skip Multi-HyDE and reduce K/M.
 
------
+### 4.6. Guardrails & Safety
+- **AttributionGate**: Reject if < 2 citations when available or any paragraph lacks a citation.
+- **QuoteVerifier**: Sampled verbatim string checks (8–15 words) against retrieved spans.
+- **Policy rules**: No advice outside ZW; inject disclaimers; route to clarify if insufficient context.
 
-## 5) Non-Functional Requirements
+---
 
-- **Latency**: The P95 target of <2.5s is more aggressive given the multi-step agentic process. Each LLM call in the planner and validation step adds latency. Fetching chunks from R2 introduces network latency that must be minimized (e.g., via parallel requests). Caching strategies will be critical.
-- **Cost**: The agentic loop introduces additional LLM calls, increasing operational costs. The trade-off is a significant increase in accuracy and reasoning capability. Start with a simple rewrite and add more complex decomposition as needed.
-- **Modularity**: The pipeline should be designed in a modular way, allowing different strategies (e.g., HyDE vs. multi-query, different rerankers) to be swapped in and out for evaluation.
+## 5. Security & Compliance
+- **Authentication**: All user-facing endpoints are protected by JWT-based Firebase Authentication.
+- **Data Isolation**: R2 and Firestore security rules ensure users can only access their own data.
+- **R2 Path Traversal Guard**: Server-side mapping from `doc_key` → R2 object key; never trust client-supplied paths.
+- **Auditability**: Store trace metadata: who asked what, when, which sources, and prompt hashes.
 
-This architecture provides a robust foundation for building a truly next-generation, reliable, and personalized AI research assistant.
+---
+
+## 6. Acceptance Criteria (Architecture-Level)
+- **Latency**: P95 end-to-end ≤ 4s; first-token ≤ 1.2s.
+- **Accuracy**: ≥ 95% answers include verifiable citations; zero uncited statutory claims.
+- **Resilience**: Any single dependency failure downgrades gracefully (no blank outputs).
+- **Observability**: 100% of nodes traced with input/output schemas and timings in LangSmith.
+- **Security**: No direct R2 paths exposed; JWT validation enforced on all protected endpoints.
