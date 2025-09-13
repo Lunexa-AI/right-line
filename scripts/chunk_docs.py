@@ -479,8 +479,10 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Di
     version_date = doc.get("version_date")
     source_url = doc.get("source_url", "")
     
-    # Get PageIndex tree
+    # Get PageIndex tree and markdown
     content_tree = doc.get("content_tree", [])
+    pageindex_markdown = doc.get("pageindex_markdown", "")
+    
     if not content_tree:
         logger.warning(f"Document {doc_id} has no PageIndex tree structure")
         return [], []
@@ -1180,6 +1182,31 @@ def enrich_chunks(chunks: List[Chunk], verbose: bool = False) -> List[Chunk]:
     return enriched_chunks
 
 
+def check_document_already_chunked(r2_client, bucket: str, doc_id: str) -> bool:
+    """Check if a document has already been chunked by looking for chunks in R2."""
+    try:
+        # List objects with prefix for this document's chunks
+        paginator = r2_client.get_paginator('list_objects_v2')
+        prefix = f"corpus/chunks/"
+        
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix, MaxKeys=1000):
+            for obj in page.get('Contents', []):
+                if obj['Key'].endswith('.json'):
+                    # Quick check: if any chunk file contains this doc_id, assume already chunked
+                    try:
+                        response = r2_client.get_object(Bucket=bucket, Key=obj['Key'])
+                        chunk_data = json.loads(response['Body'].read().decode('utf-8'))
+                        if chunk_data.get('doc_id') == doc_id:
+                            logger.info(f"Document {doc_id} already chunked, skipping")
+                            return True
+                    except Exception:
+                        continue  # Skip malformed chunks
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking if document {doc_id} is chunked: {e}")
+        return False
+
+
 def process_documents_from_r2(
     r2_client,
     bucket: str,
@@ -1187,6 +1214,7 @@ def process_documents_from_r2(
     verbose: bool = False,
     enrich: bool = True,
     doc_ids: Optional[Set[str]] = None,
+    force: bool = False,
 ) -> None:
     """
     Process documents from R2, chunk them, and upload chunks back to R2.
@@ -1213,10 +1241,18 @@ def process_documents_from_r2(
     
     all_chunks: List[Chunk] = []
     all_parent_docs = []
+    skipped_count = 0
     
     # Process each document
     for doc in tqdm(documents, desc="Chunking documents"):
         try:
+            doc_id = doc.get('doc_id')
+            
+            # Skip if already chunked (unless forced)
+            if not force and check_document_already_chunked(r2_client, bucket, doc_id):
+                skipped_count += 1
+                continue
+            
             # Determine document type and apply appropriate chunking strategy
             doc_type_value = (doc.get("doc_type") or "").lower()
             nature_value = (doc.get("extra", {}).get("nature") or "").lower()
@@ -1287,6 +1323,8 @@ def process_documents_from_r2(
     avg_chars = sum(len(chunk.chunk_text) for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
     
     logger.info(f"Generated {len(all_chunks)} chunks from {len(documents)} documents")
+    if skipped_count > 0:
+        logger.info(f"Skipped {skipped_count} already chunked documents")
     logger.info(f"Successfully uploaded: {successful_uploads}, Failed: {failed_uploads}")
     logger.info(f"Average chunk size: {avg_tokens:.1f} tokens, {avg_chars:.1f} characters")
 
@@ -1359,6 +1397,7 @@ def main():
     parser.add_argument("--no-enrich", action="store_true", 
                         help="Skip advanced entity enrichment")
     parser.add_argument("--verbose", action="store_true", help="Print verbose output")
+    parser.add_argument("--force", action="store_true", help="Force reprocessing of already chunked documents")
     
     args = parser.parse_args()
     
@@ -1378,7 +1417,8 @@ def main():
             max_docs=args.max_docs,
             verbose=args.verbose,
             enrich=not args.no_enrich,
-            doc_ids=set(args.doc_ids.split(",")) if args.doc_ids else None
+            doc_ids=set(args.doc_ids.split(",")) if args.doc_ids else None,
+            force=args.force
         )
             
     except Exception as e:
