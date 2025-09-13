@@ -68,7 +68,7 @@ SMALL_TARGET_TOKENS = 256
 # Old constant kept for legacy functions that still use it (judgments path)
 TARGET_TOKENS = 512  # will be phased out for legislation path
 MAX_CHARS = 5000  # Maximum characters per chunk (Milvus varchar limit)
-MIN_TOKENS = 100  # Minimum tokens per chunk
+MIN_TOKENS = 10  # Minimum tokens per chunk (allow small but important documents)
 
 # We keep a slight overlap so embeddings capture context
 OVERLAP_RATIO = 0.15  # 15 %
