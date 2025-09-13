@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from api.retrieval import RetrievalResult
+from api.models import ParentDocumentV3 as ParentDocument
 
 logger = structlog.get_logger(__name__)
 
@@ -115,7 +116,7 @@ class ExtractiveComposer:
             metadata = result.metadata
             if isinstance(metadata, dict):
                 # Extract section or topic information
-                section = metadata.get('section', '')
+                section = metadata.get('section_path', '') # Use section_path for V3
                 title = metadata.get('title', '')
                 if section:
                     topics.add(section)
@@ -178,16 +179,16 @@ class ExtractiveComposer:
         for i, result in enumerate(results[:3]):  # Use top 3 results
             combined_text += f" {result.chunk_text}"
             
-            # Build citation
-            metadata = result.metadata if isinstance(result.metadata, dict) else {}
-            citation = {
+            # Build citation using V3 fields
+            metadata = result.metadata
+            citations.append({
                 "id": i + 1,
-                "title": metadata.get("title", f"Document {result.doc_id}"),
-                "section": metadata.get("section", ""),
-                "source_url": metadata.get("source_url", ""),
+                "title": metadata.get("title") or f"Document {result.doc_id}",
+                "section_path": metadata.get("section_path"),
+                "tree_node_id": metadata.get("tree_node_id"),
+                "source_url": metadata.get("source_document_key"),
                 "score": round(result.score, 3)
-            }
-            citations.append(citation)
+            })
         
         # Extract key sentences for TL;DR
         key_sentences = self.extract_key_sentences(combined_text, max_sentences=2)
@@ -229,7 +230,7 @@ class OpenAIComposer:
         
         # Sanitize inputs - remove any potential prompt injection
         clean_query = re.sub(r'[^\w\s\-\.\?\!]', ' ', query)[:500]
-        clean_tldr = re.sub(r'[^\w\s\-\.\?\!\,]', ' ', extractive_answer.tldr)[:300]
+        clean_tldr = re.sub(r'[^\w\s\-\.\?\!\,]', ' ', extractive_answer.tldr)[:500]
         
         system_prompt = f"""You are a legal information assistant for Zimbabwe law. 
 Create a structured summary from the provided legal text.
@@ -289,7 +290,7 @@ Return only valid JSON with the required fields."""
             prompt_data = self._build_prompt(extractive_answer, query, lang)
             
             # Estimate input tokens
-            prompt_text = json.dumps(prompt_data["messages"])
+            prompt_text = json.dumps(prompt_data["messages"], indent=2)
             estimated_input_tokens = self._estimate_tokens(prompt_text)
             
             # Check cost limits (simple circuit breaker)

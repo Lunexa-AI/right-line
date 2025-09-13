@@ -131,16 +131,16 @@ def list_chunks_from_r2(r2_client, bucket: str, prefix: str = "corpus/chunks/") 
     return chunk_keys
 
 
-def load_chunk_from_r2(r2_client, bucket: str, chunk_key: str) -> Dict[str, Any]:
+def load_chunk_from_r2(r2_client, bucket: str, chunk_key: str) -> Chunk:
     """Load a single chunk from R2."""
     try:
         response = r2_client.get_object(Bucket=bucket, Key=chunk_key)
-        chunk_data = json.loads(response['Body'].read().decode('utf-8'))
+        chunk_data = json.loads(response['Body'].read().decode('utf-8'))  # Load as dict
         
         # Add the R2 object key to the chunk data
-        chunk_data['chunk_object_key'] = chunk_key
+        chunk_data['chunk_object_key'] = chunk_key  # Add extra field if needed
         
-        return chunk_data
+        return Chunk(**chunk_data)  # Validate and create model instance
     except Exception as e:
         logger.error(f"Error loading chunk {chunk_key} from R2: {e}")
         return None
@@ -370,13 +370,13 @@ def main():
         
         # Load chunks from R2
         logger.info("Loading chunks from R2...")
-        chunks = []
+        chunks: List[Chunk] = []
         failed_chunks = 0
         
         for chunk_key in tqdm(chunk_keys, desc="Loading chunks"):
-            chunk = load_chunk_from_r2(r2_client, config["r2_bucket"], chunk_key)
-            if chunk:
-                chunks.append(chunk)
+            chunk_data = load_chunk_from_r2(r2_client, config["r2_bucket"], chunk_key)
+            if chunk_data:
+                chunks.append(chunk_data)
             else:
                 failed_chunks += 1
         
@@ -390,7 +390,7 @@ def main():
         logger.info("Generating embeddings...")
         
         # Extract texts for embedding
-        texts = [chunk.get('chunk_text', '') for chunk in chunks]
+        texts = [chunk.chunk_text for chunk in chunks]
         all_embeddings = []
         
         # Process in batches to avoid API limits
@@ -405,13 +405,15 @@ def main():
         logger.info("Transforming chunks for Milvus v2.0...")
         milvus_chunks = []
         
-        for chunk, embedding in zip(chunks, all_embeddings):
+        for chunk_model, embedding in zip(chunks, all_embeddings):
             try:
-                chunk['embedding'] = embedding
-                transformed_chunk = transform_chunk_for_milvus_v2(chunk)
+                # Create copy with embedding
+                chunk_dict = chunk_model.model_dump()
+                chunk_dict['embedding'] = embedding
+                transformed_chunk = transform_chunk_for_milvus_v2(chunk_dict)
                 milvus_chunks.append(transformed_chunk)
             except Exception as e:
-                logger.error(f"Error transforming chunk {chunk.get('chunk_id', 'unknown')}: {e}")
+                logger.error(f"Error transforming chunk {chunk_model.chunk_id}: {e}")
                 continue
         
         logger.info(f"Transformed {len(milvus_chunks)} chunks for Milvus")

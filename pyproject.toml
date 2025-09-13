@@ -196,6 +196,7 @@ markers = [
     "slow: Slow tests",
     "requires_openai: Tests that require OpenAI API",
     "requires_milvus: Tests that require Milvus connection",
+    "benchmark: marks tests as benchmark tests",
 ]
 
 [tool.coverage.run]

@@ -390,3 +390,61 @@ class WaitlistResponse(BaseModel):
         description="Unique identifier for the waitlist entry (only for new signups)",
         example="550e8400-e29b-41d4-a716-446655440000"
     )
+
+# ---------------------------------------------------------------------------
+# V3 Canonical Data Models (PageIndex-aligned)
+# ---------------------------------------------------------------------------
+
+class ChunkV3(BaseModel):
+    """Canonical chunk model used throughout the V3 pipeline.
+
+    Notes
+    -----
+    * parent_doc_id is always identical to doc_id (one-parent-doc strategy)
+    * tree_node_id maps to PageIndex node identifier (e.g. "0006")
+    * section_path is a human-readable breadcrumb (e.g. "Part II > §3")
+    """
+
+    # Core identifiers
+    doc_id: str = Field(..., description="Canonical document ID (parent)")
+    chunk_id: str = Field(..., description="Unique chunk ID (hash)")
+    tree_node_id: str | None = Field(
+        None, description="PageIndex tree node identifier (4-digit zero-padded)"
+    )
+
+    # Metadata & content
+    section_path: str | None = Field(
+        None, description="Hierarchical path within the document (breadcrumb)"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default_factory=dict, description="Additional metadata for the chunk"
+    )
+    chunk_text: str = Field(..., description="Full text of the chunk")
+
+    # Deprecation shims (old code may still access these)
+    @property
+    def parent_doc_id(self) -> str:  # noqa: D401 – simple property shim
+        """Alias maintained for V2 compatibility."""
+        return self.doc_id
+
+
+class ParentDocumentV3(BaseModel):
+    """Full parent document stored in R2 (Markdown + tree)."""
+
+    doc_id: str = Field(..., description="Canonical document ID")
+    title: str | None = Field(None, description="Document title")
+    chapter: str | None = Field(None, description="Chapter identifier")
+    canonical_citation: str | None = Field(None, description="Official citation string")
+    pageindex_markdown: str = Field(..., description="Full Markdown text from PageIndex")
+    pageindex_tree: list[dict[str, Any]] | None = Field(
+        None, description="Hierarchical tree nodes from PageIndex"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default_factory=dict, description="Additional metadata for the document"
+    )
+
+
+# Legacy re-exports (soft deprecation) ------------------------------------------------
+# Importing code can transition gradually.
+Chunk = ChunkV3  # type: ignore
+ParentDocument = ParentDocumentV3  # type: ignore

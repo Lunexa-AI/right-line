@@ -19,8 +19,10 @@ import pickle
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import List, Dict, Any
 import time
+import json
 
 from api.retrieval import RetrievalResult, RetrievalConfig
+from api.models import ParentDocument
 
 
 @pytest.fixture
@@ -62,16 +64,16 @@ def sample_parent_documents():
     """Sample parent documents for small-to-big testing."""
     return {
         "labour_act_2023": {
-            "parent_doc_id": "labour_act_2023",
-            "doc_text": "LABOUR ACT [CHAPTER 28:01] PART I - PRELIMINARY Section 1. This Act may be cited... Section 5. Every employer must pay minimum wage to workers as prescribed by regulation. The minimum wage shall be reviewed annually...",
-            "doc_object_key": "corpus/docs/act/labour_act_2023.json",
-            "metadata": {"title": "Labour Act [Chapter 28:01]", "year": 2023}
+            "doc_id": "labour_act_2023",
+            "pageindex_markdown": "LABOUR ACT [CHAPTER 28:01]... Every employer must pay minimum wage...",
+            "title": "Labour Act", "chapter": "28:01",
+            "metadata": {"year": 2023}
         },
         "employment_act_2020": {
-            "parent_doc_id": "employment_act_2020", 
-            "doc_text": "EMPLOYMENT ACT [CHAPTER 28:02] Section 12. Employment contracts shall specify working hours, overtime pay, and leave entitlements. All contracts must comply with minimum standards...",
-            "doc_object_key": "corpus/docs/act/employment_act_2020.json",
-            "metadata": {"title": "Employment Act [Chapter 28:02]", "year": 2020}
+            "doc_id": "employment_act_2020",
+            "pageindex_markdown": "EMPLOYMENT ACT [CHAPTER 28:02]...",
+            "title": "Employment Act", "chapter": "28:02",
+            "metadata": {"year": 2020}
         }
     }
 
@@ -147,7 +149,7 @@ class TestSmallToBigRetrieval:
         
         # Mock R2 response
         mock_response = Mock()
-        mock_response.read.return_value = pickle.dumps(sample_parent_documents["labour_act_2023"]).decode('latin-1').encode('utf-8')
+        mock_response.read.return_value = json.dumps(sample_parent_documents["labour_act_2023"]).encode('utf-8')
         
         with patch.object(engine, '_get_r2_client') as mock_get_client:
             mock_r2_client = Mock()
@@ -155,12 +157,12 @@ class TestSmallToBigRetrieval:
             mock_get_client.return_value = mock_r2_client
             
             # Act
-            result = await engine._fetch_parent_document_from_r2(parent_doc_key)
+            result = await engine._fetch_parent_document_from_r2("labour_act_2023", "act")
             
             # Assert
             assert result is not None
-            assert "LABOUR ACT" in result.get("doc_text", "")
-            assert result["parent_doc_id"] == "labour_act_2023"
+            assert "LABOUR ACT" in result.pageindex_markdown
+            assert result.doc_id == "labour_act_2023"
     
     @pytest.mark.asyncio
     async def test_expand_chunks_to_parent_documents(self, sample_corpus, sample_parent_documents):
@@ -183,14 +185,14 @@ class TestSmallToBigRetrieval:
         
         # Mock parent document fetching
         with patch.object(engine, '_fetch_parent_documents_batch') as mock_fetch:
-            mock_fetch.return_value = [sample_parent_documents["labour_act_2023"]]
+            mock_fetch.return_value = [ParentDocument(**sample_parent_documents["labour_act_2023"])]
             
             # Act
             expanded_results = await engine._expand_to_parent_documents(small_chunks)
             
             # Assert
             assert len(expanded_results) == 1
-            assert len(expanded_results[0].chunk_text) > 100  # Should have full document text
+            assert len(expanded_results[0].chunk_text) > 50
             assert "LABOUR ACT" in expanded_results[0].chunk_text
     
     @pytest.mark.asyncio
