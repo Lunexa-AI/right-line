@@ -14,7 +14,8 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from libs.common.settings import get_settings
 from api.models import HealthResponse
@@ -25,6 +26,7 @@ from api.routers import (
     users as users_router,
     waitlist as waitlist_router,
     whatsapp as whatsapp_router,
+    debug as debug_router,
 )
 from libs.firebase.client import initialize_firebase_app
 
@@ -132,6 +134,16 @@ app.include_router(documents_router.router, prefix="/api", tags=["Documents"])  
 app.include_router(waitlist_router.router, prefix="/api", tags=["Waitlist"])
 app.include_router(analytics_router.router, prefix="/api", tags=["Analytics"])
 app.include_router(whatsapp_router.router, prefix="/api", tags=["WhatsApp"])
+
+# Debug endpoints (development only)
+if os.getenv("DEBUG_MODE", "false").lower() == "true":
+    app.include_router(debug_router.router, prefix="/api/v1", tags=["Debug"])
+
+
+@app.get("/debug", include_in_schema=False)
+async def debug_frontend():
+    """Serve debug frontend for API testing."""
+    return FileResponse("/Users/simbarashe.timire/repos/right-line/debug_simple.html")
 
 
 @app.get("/", include_in_schema=False)

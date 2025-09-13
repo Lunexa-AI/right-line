@@ -24,6 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import reranker for quality improvement
 from .reranker import get_reranker, RerankerConfig
+from api.models import ChunkV3 as Chunk, ParentDocumentV3 as ParentDocument
 
 logger = structlog.get_logger(__name__)
 
@@ -62,9 +63,8 @@ ENABLE_RERANK = os.environ.get("ENABLE_RERANK", "0") == "1"
 OPENAI_RERANK_MODEL = os.environ.get("OPENAI_RERANK_MODEL", "")
 
 
-@dataclass
-class RetrievalResult:
-    """Result from document retrieval."""
+class RetrievalResult(BaseModel):
+    """Result from document retrieval (V3)."""
     
     chunk_id: str
     chunk_text: str
@@ -725,7 +725,7 @@ class RetrievalEngine:
             )
         return self._r2_client
     
-    async def _fetch_chunk_content_from_r2(self, chunk_object_key: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_chunk_content_from_r2(self, chunk_object_key: str) -> Optional[Chunk]:
         """Fetch single chunk content from R2.
         
         Args:
@@ -751,8 +751,8 @@ class RetrievalEngine:
                 )
                 
                 content = response['Body'].read().decode('utf-8')
-                chunk_data = json.loads(content)
-                return chunk_data
+                chunk_dict = json.loads(content)
+                return Chunk(**chunk_dict)
                 
             except Exception as e:
                 logger.warning(
@@ -762,7 +762,7 @@ class RetrievalEngine:
                 )
                 return None
     
-    async def _fetch_chunk_contents_batch(self, chunk_object_keys: List[str]) -> List[Optional[Dict[str, Any]]]:
+    async def _fetch_chunk_contents_batch(self, chunk_object_keys: List[str]) -> List[Optional[Chunk]]:
         """Fetch multiple chunk contents from R2 in parallel.
         
         Args:
@@ -802,9 +802,9 @@ class RetrievalEngine:
                 )
                 processed_results.append(None)
             else:
-                processed_results.append(result)
                 if result is not None:
                     success_count += 1
+                processed_results.append(result)
         
         fetch_time = time.time() - start_time
         logger.info(
@@ -817,60 +817,30 @@ class RetrievalEngine:
         
         return processed_results
 
-    async def _fetch_parent_document_from_r2(self, parent_doc_id: str, doc_type: str = "", chunk_doc_id: str = "") -> Optional[Dict[str, Any]]:
-        """Fetch full parent document from R2 for small-to-big retrieval.
-        
-        Args:
-            parent_doc_id: Parent document ID from chunk metadata
-            doc_type: Document type for path construction (e.g., 'act')
-            chunk_doc_id: Chunk's doc_id for ID mapping resolution
-            
-        Returns:
-            Dict containing full parent document or None if fetch fails
-        """
+    async def _fetch_parent_document_from_r2(self, parent_doc_id: str, doc_type: str = "") -> Optional[ParentDocument]:
+        """Fetch full parent document from R2 for small-to-big retrieval."""
         r2_client = self._get_r2_client()
         if not r2_client:
             return None
+        # Construct parent document object key.
+        # Note: In V3, parent_doc_id is the canonical doc_id, so we can look it up directly.
+        # The doc_type helps narrow the path for efficiency but is not strictly required if IDs are unique.
+        possible_prefixes = [f"corpus/docs/{doc_type}/", "corpus/docs/"] if doc_type else ["corpus/docs/"]
         
-        # TEMPORARY FIX: Use ID mapping to resolve parent_doc_id mismatch
-        try:
-            from api.parent_doc_mapping import parent_doc_mapper
-            resolved_parent_id = await parent_doc_mapper.resolve_parent_doc_id(parent_doc_id, chunk_doc_id)
-            
-            if resolved_parent_id and resolved_parent_id != parent_doc_id:
-                logger.debug(
-                    "Resolved parent doc ID via mapping",
-                    original_parent_id=parent_doc_id,
-                    resolved_parent_id=resolved_parent_id,
-                    chunk_doc_id=chunk_doc_id
-                )
-                parent_doc_id = resolved_parent_id
-                
-        except ImportError:
-            logger.warning("Parent doc mapping not available, using original ID")
-        
-        # Construct parent document object key using doc_id (simplified after reorganization)
-        if doc_type:
-            parent_object_key = f"corpus/docs/{doc_type}/{parent_doc_id}.json"
-        else:
-            # Try common patterns if doc_type not provided
-            possible_keys = [
-                f"corpus/docs/act/{parent_doc_id}.json",
-                f"corpus/docs/judgment/{parent_doc_id}.json", 
-                f"corpus/docs/constitution/{parent_doc_id}.json",
-                f"corpus/docs/si/{parent_doc_id}.json"
-            ]
-            
-            # Try each possible key with direct doc_id lookup
-            for key in possible_keys:
+        for prefix in possible_prefixes:
+            # Attempt to find the document in primary and fallback locations
+            # This is robust to cases where doc_type might be missing from metadata
+            # but the doc_id is globally unique.
+            for dt in ["act", "si", "judgment", "constitution", "ordinance", ""]:
+                key = f"{prefix}{dt}/{parent_doc_id}.json" if dt else f"{prefix}{parent_doc_id}.json"
                 result = await self._fetch_parent_document_from_r2_key(key)
                 if result:
                     return result
-            return None
         
-        return await self._fetch_parent_document_from_r2_key(parent_object_key)
+        logger.warning("Parent document not found in any known R2 path", doc_id=parent_doc_id)
+        return None
     
-    async def _fetch_parent_document_from_r2_key(self, parent_object_key: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_parent_document_from_r2_key(self, parent_object_key: str) -> Optional[ParentDocument]:
         """Fetch parent document by exact R2 key."""
         async with self._r2_semaphore:
             try:
@@ -884,8 +854,8 @@ class RetrievalEngine:
                 )
                 
                 content = response['Body'].read().decode('utf-8')
-                parent_doc_data = json.loads(content)
-                return parent_doc_data
+                parent_dict = json.loads(content)
+                return ParentDocument(**parent_dict)
                 
             except Exception as e:
                 logger.debug(
@@ -895,7 +865,7 @@ class RetrievalEngine:
                 )
                 return None
     
-    async def _fetch_parent_documents_batch(self, parent_doc_requests: List[tuple]) -> List[Optional[Dict[str, Any]]]:
+    async def _fetch_parent_documents_batch(self, parent_doc_requests: List[tuple]) -> List[Optional[ParentDocument]]:
         """Fetch multiple parent documents in parallel.
         
         Args:
@@ -914,10 +884,7 @@ class RetrievalEngine:
         )
         
         # Create tasks for parallel fetching with ID mapping
-        tasks = [
-            self._fetch_parent_document_from_r2(parent_id, doc_type, chunk_doc_id="") 
-            for parent_id, doc_type in parent_doc_requests
-        ]
+        tasks = [self._fetch_parent_document_from_r2(parent_id, doc_type) for parent_id, doc_type in parent_doc_requests]
         
         # Execute all tasks in parallel
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -934,9 +901,9 @@ class RetrievalEngine:
                 )
                 processed_results.append(None)
             else:
-                processed_results.append(result)
                 if result is not None:
                     success_count += 1
+                processed_results.append(result)
         
         fetch_time = time.time() - start_time
         logger.info(
@@ -1005,7 +972,7 @@ class RetrievalEngine:
             if parent_doc:
                 # Replace chunk with full parent document for synthesis
                 # Get parent document content (PageIndex markdown)
-                parent_content = parent_doc.get("pageindex_markdown", parent_doc.get("doc_text", ""))
+                parent_content = parent_doc.pageindex_markdown if parent_doc else ""
                 
                 expanded_result = RetrievalResult(
                     chunk_id=chunk_result.chunk_id,
@@ -1014,12 +981,11 @@ class RetrievalEngine:
                     metadata={
                         **chunk_result.metadata,
                         "expanded_to_parent": True,
-                        "parent_doc_length": len(parent_content),
+                        "parent_doc_length": len(parent_content) if parent_doc else 0,
                         "original_chunk_text": chunk_result.chunk_text,  # Keep original for citation
-                        "parent_doc_object_key": parent_doc.get("doc_object_key", ""),
-                        "title": parent_doc.get("title", ""),
-                        "chapter": parent_doc.get("chapter", ""),
-                        "canonical_citation": parent_doc.get("canonical_citation", ""),
+                        "title": parent_doc.title if parent_doc else "",
+                        "chapter": parent_doc.chapter if parent_doc else "",
+                        "canonical_citation": parent_doc.canonical_citation if parent_doc else "",
                     },
                     score=chunk_result.score,
                     source=f"{chunk_result.source}_expanded"
@@ -1416,11 +1382,11 @@ class RetrievalEngine:
                     for content_idx, result_idx in enumerate(chunk_indices):
                         if content_idx < len(chunk_contents) and chunk_contents[content_idx] is not None:
                             chunk_data = chunk_contents[content_idx]
-                            results[result_idx].chunk_text = chunk_data.get("chunk_text", "")
+                            results[result_idx].chunk_text = chunk_data.chunk_text
                             results[result_idx].metadata.update({
-                                "section_path": chunk_data.get("section_path", ""),
-                                "start_char": chunk_data.get("start_char", 0),
-                                "end_char": chunk_data.get("end_char", 0),
+                                "section_path": chunk_data.section_path,
+                                "start_char": chunk_data.start_char,
+                                "end_char": chunk_data.end_char,
                             })
             
             # Log final content status

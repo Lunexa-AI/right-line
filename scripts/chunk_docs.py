@@ -21,12 +21,13 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Set
+from api.models import ChunkV3 as Chunk  # Use canonical V3 model
 
 try:
     import boto3
     from botocore.client import Config
-    from pydantic import BaseModel, Field, field_validator
+    from pydantic import BaseModel, Field, field_validator, model_validator
     from tqdm import tqdm
 except ImportError as e:
     print(f"❌ Error: Missing dependency. Run: poetry add boto3 pydantic tqdm")
@@ -102,70 +103,6 @@ COURTS = [
     "Magistrates Court",
     "Labour Court",
 ]
-
-
-class Chunk(BaseModel):
-    """Pydantic model for a document chunk (v3.0 - PageIndex tree-aware)."""
-    
-    chunk_id: str = Field(description="Stable, deterministic ID")
-    doc_id: str = Field(description="Parent document ID")
-    parent_doc_id: str = Field(description="Parent document ID (same as doc_id)")
-    tree_node_id: Optional[str] = Field(description="PageIndex tree node ID", max_length=16)
-    chunk_text: str = Field(description="Clean text content (max ~5000 chars)")
-    section_path: str = Field(description="Hierarchical path in document")
-    start_char: int = Field(description="Start character offset in original document")
-    end_char: int = Field(description="End character offset in original document")
-    num_tokens: int = Field(description="Estimated token count")
-    language: str = Field(description="Document language (e.g., eng)", max_length=10)
-    doc_type: str = Field(description="Document type (act, judgment, etc.)", max_length=20)
-    date_context: Optional[str] = Field(description="Date context (YYYY-MM-DD)", max_length=32)
-    entities: Dict[str, List[str]] = Field(default_factory=dict, description="Extracted entities")
-    source_url: Optional[str] = Field(None, description="Source URL")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    nature: Optional[str] = Field(default=None, description="Act | Ordinance | Statutory Instrument", max_length=32)
-    year: Optional[int] = Field(default=None, description="Publication/effective year")
-    chapter: Optional[str] = Field(default=None, description="Chapter number like 7:01", max_length=16)
-    
-    @field_validator("chunk_text")
-    def validate_chunk_text(cls, v):
-        """Validate chunk text length."""
-        if len(v) > MAX_CHARS:
-            raise ValueError(f"Chunk text exceeds maximum length of {MAX_CHARS} characters")
-        return v
-    
-    @field_validator("num_tokens")
-    def validate_num_tokens(cls, v):
-        """Validate token count."""
-        if v < 1:
-            raise ValueError("Number of tokens must be >= 1")
-        return v
-    
-    @field_validator("doc_type")
-    def validate_doc_type(cls, v):
-        """Validate and fix doc_type field."""
-        if v is None:
-            return "unknown"
-        if len(v) > 20:
-            return v[:20]
-        return v
-    
-    @field_validator("language")
-    def validate_language(cls, v):
-        """Validate and fix language field."""
-        if v is None:
-            return "eng"
-        if len(v) > 10:
-            return v[:10]
-        return v
-    
-    @field_validator("date_context")
-    def validate_date_context(cls, v):
-        """Validate and fix date_context field."""
-        if v is None:
-            return None
-        if len(v) > 32:
-            return v[:32]
-        return v
 
 
 def load_documents_from_r2(r2_client, bucket: str) -> List[Dict[str, Any]]:
@@ -523,7 +460,7 @@ def chunk_text(
     return chunks
 
 
-def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, Any]]]:
     """
     Chunk a document using PageIndex tree structure for semantic boundaries.
     
@@ -546,9 +483,9 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     content_tree = doc.get("content_tree", [])
     if not content_tree:
         logger.warning(f"Document {doc_id} has no PageIndex tree structure")
-        return []
+        return [], []
     
-    all_chunks = []
+    chunks: List[Chunk] = []
     
     def process_tree_node(node: Dict[str, Any], parent_path: str = "") -> None:
         """Recursively process tree nodes into chunks."""
@@ -608,7 +545,7 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     }
                 )
                 
-                all_chunks.append(chunk.model_dump())
+                chunks.append(chunk)
                 logger.debug(f"Created chunk {chunk_id} from node {node_id}: {token_count} tokens")
         
         # Process child nodes recursively
@@ -620,10 +557,10 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     for root_node in content_tree:
         process_tree_node(root_node)
     
-    logger.info(f"Generated {len(all_chunks)} chunks from PageIndex tree for doc {doc_id}")
-    return all_chunks, []  # Return empty parent_docs list since we don't create them anymore
+    logger.info(f"Generated {len(chunks)} chunks from PageIndex tree for doc {doc_id}")
+    return chunks, []  # Return empty parent_docs list since we don't create them anymore
 
-def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def chunk_legislation(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, Any]]]:
     """
     Legacy chunking function - replaced by chunk_from_pageindex_tree.
     
@@ -640,7 +577,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     else:
         logger.warning(f"Document {doc['doc_id']} missing PageIndex tree, using legacy chunking")
         # Fall back to legacy logic (existing code below)
-        all_chunks = []
+        chunks: List[Chunk] = []
     doc_id = doc["doc_id"]
     language = doc["language"]
     date_context = doc.get("version_effective_date")
@@ -674,7 +611,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     # If content_tree is empty or has no parts, return empty list
     if not parts:
         logger.warning(f"Document {doc_id} has no content to chunk")
-        return []
+        return [], []
     
     parent_docs: List[Dict[str, Any]] = []
 
@@ -783,7 +720,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                                 "chapter": chapter,
                             },
                         )
-                        all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                        chunks.append(full_chunk)
                     except Exception as e:
                         logger.warning(f"Skipping minimal chunk for document {doc_id}: {e}")
                     continue
@@ -831,7 +768,7 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                         },
                     )
                     
-                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    chunks.append(full_chunk)
                 except Exception as e:
                     logger.warning(f"Skipping invalid merged chunk for document {doc_id}: {e}")
             else:
@@ -890,14 +827,14 @@ def chunk_legislation(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                             },
                         )
                         
-                        all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                        chunks.append(full_chunk)
                     except Exception as e:
                         logger.warning(f"Skipping invalid chunk for document {doc_id}: {e}")
     
-    return all_chunks, parent_docs
+    return chunks, parent_docs
 
 
-def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def chunk_judgment(doc: Dict[str, Any]) -> List[Chunk]:
     """
     Chunk a judgment document into optimal segments.
     
@@ -907,7 +844,7 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     Returns:
         List of chunk dictionaries
     """
-    all_chunks = []
+    all_chunks: List[Chunk] = []
     doc_id = doc["doc_id"]
     doc_type = doc["doc_type"]
     language = doc["language"]
@@ -978,7 +915,7 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                         },
                     )
                     
-                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    all_chunks.append(full_chunk)
                 except Exception as e:
                     logger.warning(f"Skipping invalid headnote chunk for document {doc_id}: {e}")
     
@@ -1079,7 +1016,7 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                         },
                     )
                     
-                    all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                    all_chunks.append(full_chunk)
                     chunk_index += 1
                 except Exception as e:
                     logger.warning(f"Skipping invalid body chunk for document {doc_id}: {e}")
@@ -1157,14 +1094,14 @@ def chunk_judgment(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     },
                 )
                 
-                all_chunks.append(full_chunk.model_dump(exclude_none=True))
+                all_chunks.append(full_chunk)
             except Exception as e:
                 logger.warning(f"Skipping invalid body chunk for document {doc_id}: {e}")
     
     return all_chunks
 
 
-def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[Dict[str, Any]]:
+def enrich_chunks(chunks: List[Chunk], verbose: bool = False) -> List[Chunk]:
     """
     Enrich chunks with additional entity extraction and normalization.
     
@@ -1180,47 +1117,47 @@ def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[D
     for chunk in tqdm(chunks, desc="Enriching chunks"):
         try:
             # Extract text for processing
-            chunk_text = chunk.get("chunk_text", "")
+            chunk_text = chunk.chunk_text
             
             # Extract and normalize entities with improved extraction
             entities = extract_entities(chunk_text)
             
             # Merge with existing entities if present
-            if "entities" in chunk and isinstance(chunk["entities"], dict):
+            if chunk.entities and isinstance(chunk.entities, dict):
                 for entity_type, values in entities.items():
-                    if entity_type in chunk["entities"]:
+                    if entity_type in chunk.entities:
                         # Combine and deduplicate
                         if entity_type == "parties":
                             # Special handling for parties
-                            chunk["entities"][entity_type] = values
+                            chunk.entities[entity_type] = values
                         else:
-                            existing = set(chunk["entities"][entity_type])
+                            existing = set(chunk.entities[entity_type])
                             existing.update(values)
-                            chunk["entities"][entity_type] = list(existing)
+                            chunk.entities[entity_type] = list(existing)
                     else:
-                        chunk["entities"][entity_type] = values
+                        chunk.entities[entity_type] = values
             else:
-                chunk["entities"] = entities
+                chunk.entities = entities
             
             # Extract date context if available
-            if "dates" in entities and entities["dates"] and not chunk.get("date_context"):
+            if "dates" in entities and entities["dates"] and not chunk.date_context:
                 # Use the first date as date_context if not already set
-                chunk["date_context"] = entities["dates"][0]
+                chunk.date_context = entities["dates"][0]
             
             # Add court to metadata if available
             if "courts" in entities and entities["courts"]:
                 if "metadata" not in chunk:
-                    chunk["metadata"] = {}
-                if "court" not in chunk["metadata"] or not chunk["metadata"]["court"]:
-                    chunk["metadata"]["court"] = entities["courts"][0]
+                    chunk.metadata = {}
+                if "court" not in chunk.metadata or not chunk.metadata["court"]:
+                    chunk.metadata["court"] = entities["courts"][0]
             
             enriched_chunks.append(chunk)
             
             if verbose:
-                logger.info(f"Enriched chunk {chunk.get('chunk_id')}")
+                logger.info(f"Enriched chunk {chunk.chunk_id}")
                 
         except Exception as e:
-            logger.error(f"Error enriching chunk {chunk.get('chunk_id')}: {e}")
+            logger.error(f"Error enriching chunk {chunk.chunk_id}: {e}")
             if verbose:
                 import traceback
                 logger.error(traceback.format_exc())
@@ -1230,8 +1167,8 @@ def enrich_chunks(chunks: List[Dict[str, Any]], verbose: bool = False) -> List[D
     # Log statistics
     entity_counts = {}
     for chunk in enriched_chunks:
-        if "entities" in chunk:
-            for entity_type, values in chunk["entities"].items():
+        if chunk.entities:
+            for entity_type, values in chunk.entities.items():
                 if entity_type not in entity_counts:
                     entity_counts[entity_type] = 0
                 entity_counts[entity_type] += len(values) if isinstance(values, list) else 1
@@ -1274,7 +1211,7 @@ def process_documents_from_r2(
         documents = documents[:max_docs]
         logger.info(f"Limited processing to {max_docs} documents for testing")
     
-    all_chunks = []
+    all_chunks: List[Chunk] = []
     all_parent_docs = []
     
     # Process each document
@@ -1339,15 +1276,15 @@ def process_documents_from_r2(
     
     for chunk in tqdm(all_chunks, desc="Uploading chunks"):
         try:
-            upload_chunk_to_r2(r2_client, bucket, chunk)
+            upload_chunk_to_r2(r2_client, bucket, chunk.model_dump()) # Use model_dump() for consistency
             successful_uploads += 1
         except Exception as e:
-            logger.error(f"Failed to upload chunk {chunk.get('chunk_id')}: {e}")
+            logger.error(f"Failed to upload chunk {chunk.chunk_id}: {e}")
             failed_uploads += 1
     
     # Log statistics
-    avg_tokens = sum(chunk["num_tokens"] for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
-    avg_chars = sum(len(chunk["chunk_text"]) for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
+    avg_tokens = sum(chunk.num_tokens for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
+    avg_chars = sum(len(chunk.chunk_text) for chunk in all_chunks) / len(all_chunks) if all_chunks else 0
     
     logger.info(f"Generated {len(all_chunks)} chunks from {len(documents)} documents")
     logger.info(f"Successfully uploaded: {successful_uploads}, Failed: {failed_uploads}")

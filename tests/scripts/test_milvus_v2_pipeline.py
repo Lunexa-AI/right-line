@@ -46,11 +46,7 @@ try:
         list_chunks_from_r2
     )
     
-    # Import the init-milvus-v2 module using importlib due to hyphens in filename
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("init_milvus_v2", "scripts/init-milvus-v2.py")
-    init_milvus_v2 = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(init_milvus_v2)
+    from scripts import init_milvus_v2
     
     IMPORTS_AVAILABLE = True
     print("✅ Successfully imported all required modules for testing")
@@ -65,10 +61,10 @@ class TestMilvusV2Schema(unittest.TestCase):
     
     @unittest.skipIf(not IMPORTS_AVAILABLE, "Imports not available")
     def test_schema_has_required_fields(self):
-        """Test that the v2.0 schema contains all required fields from task spec."""
-        schema = init_milvus_v2.create_collection_schema_v2()
+        """Test that the v3.0 schema contains all required fields from task spec."""
+        schema = init_milvus_v2.create_collection_schema_v3()
         
-        # Required fields from task 2.4 specification
+        # Required fields from V3 schema (including tree_node_id)
         required_fields = {
             "chunk_id",
             "embedding", 
@@ -76,6 +72,7 @@ class TestMilvusV2Schema(unittest.TestCase):
             "doc_type",
             "language",
             "parent_doc_id",
+            "tree_node_id",
             "chunk_object_key",
             "source_document_key",
             "nature",
@@ -93,7 +90,7 @@ class TestMilvusV2Schema(unittest.TestCase):
     @unittest.skipIf(not IMPORTS_AVAILABLE, "Imports not available")
     def test_chunk_id_is_primary_key(self):
         """Test that chunk_id is set as the primary key."""
-        schema = init_milvus_v2.create_collection_schema_v2()
+        schema = init_milvus_v2.create_collection_schema_v3()
         
         primary_fields = [field for field in schema.fields if field.is_primary]
         self.assertEqual(len(primary_fields), 1, "Should have exactly one primary key")
@@ -103,7 +100,7 @@ class TestMilvusV2Schema(unittest.TestCase):
     @unittest.skipIf(not IMPORTS_AVAILABLE, "Imports not available")
     def test_embedding_field_configuration(self):
         """Test that embedding field has correct configuration."""
-        schema = init_milvus_v2.create_collection_schema_v2()
+        schema = init_milvus_v2.create_collection_schema_v3()
         
         embedding_field = None
         for field in schema.fields:
@@ -117,12 +114,13 @@ class TestMilvusV2Schema(unittest.TestCase):
     @unittest.skipIf(not IMPORTS_AVAILABLE, "Imports not available")
     def test_string_fields_have_max_length(self):
         """Test that string fields have appropriate max_length constraints."""
-        schema = init_milvus_v2.create_collection_schema_v2()
+        schema = init_milvus_v2.create_collection_schema_v3()
         
         expected_lengths = {
             "doc_type": 20,
             "language": 10,
             "parent_doc_id": 64,
+            "tree_node_id": 16,
             "chunk_object_key": 200,
             "source_document_key": 200,
             "nature": 32,
@@ -137,13 +135,15 @@ class TestMilvusV2Schema(unittest.TestCase):
 
 
 class TestChunkTransformation(unittest.TestCase):
-    """Test chunk data transformation for the v2.0 schema."""
+    """Test chunk data transformation for the v3.0 schema."""
     
     def setUp(self):
         """Set up test data."""
         self.sample_chunk = {
             "chunk_id": "test_chunk_001",
             "doc_id": "test_doc_123",
+            "parent_doc_id": "test_doc_123",
+            "tree_node_id": "001A",
             "chunk_text": "This is test content for legal document chunking.",
             "num_tokens": 150,
             "doc_type": "act",
@@ -167,7 +167,7 @@ class TestChunkTransformation(unittest.TestCase):
         # Test required fields are present
         required_fields = [
             "chunk_id", "num_tokens", "doc_type", "language", 
-            "parent_doc_id", "chunk_object_key", "source_document_key",
+            "parent_doc_id", "tree_node_id", "chunk_object_key", "source_document_key",
             "nature", "year", "chapter", "date_context"
         ]
         
@@ -180,6 +180,7 @@ class TestChunkTransformation(unittest.TestCase):
         self.assertEqual(result["doc_type"], "act")
         self.assertEqual(result["language"], "eng")
         self.assertEqual(result["parent_doc_id"], "test_doc_123")
+        self.assertEqual(result["tree_node_id"], "001A")
     
     @unittest.skipIf(not IMPORTS_AVAILABLE, "Imports not available")
     def test_transform_chunk_field_length_constraints(self):
