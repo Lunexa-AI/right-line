@@ -120,46 +120,210 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 -   **Task**: [x] The reranker processes candidate chunks from hybrid search and re-scores them for improved relevance ranking.
 -   **Task**: [x] Added comprehensive logging and performance monitoring for reranking operations.
 
-## Phase 4: The Agentic Loop
+## Phase 4: Building the Agentic Core
 
-*Goal: Restructure the query processing flow from a linear chain into an intelligent, multi-step agentic loop.*
+*Goal: Implement the state-of-the-art agentic core using LangGraph for robust, observable, and high-performance reasoning.*
 
-### 4.1. Create the Core Agentic Engine
--   **Task**: Create a new module, e.g., `api/agent.py`, to house the `AgenticEngine`.
--   **Task**: The `AgenticEngine` will be the new entry point for processing a query, replacing the direct call to `retrieval.retrieve` in the router. It will orchestrate the entire Plan -> Retrieve -> Rerank -> Synthesize flow.
+> Responsibility overview (LangGraph vs You)
+> - **LangGraph provides**: StateGraph runtime, node execution + state merge, checkpointing interface, tracing hooks, minimal streaming support via LangChain integration.
+> - **You implement**: `AgentState` schema, node functions, routing/edges, concrete checkpointer wiring, SSE endpoint and event protocol, tool integrations (retrieval, reranker, R2 fetch), caching and guardrails, latency budgets.
 
-### 4.2. Implement the Query Planner
--   **Task**: Inside the `AgenticEngine`, create the "Query Planner" component. This will be an LLM-powered function.
--   **Task**: The planner's first responsibility is **Query Transformation**.
-    -   It must take the user's raw query and the short-term session history (from Firestore).
-    -   It will make an LLM call (e.g., to `gpt-4o-mini`) to rewrite the query into a clear, standalone question.
-    -   Implement **HyDE (Hypothetical Document Embeddings)**: have the planner generate a hypothetical answer to the rewritten query. This hypothetical answer is then used for the embedding search, improving retrieval quality.
--   **Task**: (Stretch Goal) Add query decomposition capabilities for more complex questions.
+### 4.1. Foundational Setup: State & Orchestrator
+-   **Task**: **Refactor Repo Structure**:
+    -   [ ] Create new directories: `api/schemas`, `api/orchestrators`, `api/tools`, `api/composer`.
+    -   [ ] Move `api/retrieval.py` to `api/tools/retrieval_engine.py`.
+    -   [ ] Move reranker logic to `api/tools/reranker.py`.
+    -   [ ] Move prompt logic from `api/composer.py` to `api/composer/prompts.py` and rename the file to `synthesis.py`.
+    -   **Acceptance**: App boots; imports resolve; old endpoints unchanged.
+    -   **Tests**: `pytest -k "imports and routers"` runs without failures.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: File moves, imports, path updates, CI green.
+    -   **Sanity checklist**:
+        -   [ ] No circular imports; [ ] `uvicorn` starts; [ ] `/docs` loads; [ ] `/api/v1/query` still auth-protected.
+-   **Task**: **Define Agent State**:
+    -   [ ] Create `api/schemas/agent_state.py`.
+    -   [ ] Implement the `AgentState` Pydantic model (v1) including `trace_id`, `raw_query`, `session_history_ids`, `jurisdiction`, `date_context`, `rewritten_query`, `hypothetical_docs`, `sub_questions`, `candidate_chunk_ids`, `reranked_chunk_ids`, `parent_doc_keys`, `final_answer`, `cited_sources`.
+    -   **Acceptance**: JSON-serializable, < 8 KB typical.
+    -   **Tests**: Round-trip schema tests; rejects oversize arrays; validates enums.
+    -   **Responsibilities**:
+        -   Framework: State merge mechanics, validation at runtime.
+        -   You: Schema design, versioning, validators, migrations when evolving.
+    -   **Sanity checklist**:
+        -   [ ] State dumps to JSON; [ ] Enum fields validated; [ ] Oversized inputs rejected.
+-   **Task**: **Implement LangGraph Orchestrator**:
+    -   [ ] Create `api/orchestrators/query_orchestrator.py`.
+    -   [ ] Define `StateGraph` with `AgentState`.
+    -   [ ] Implement placeholder nodes: `route_intent`, `rewrite_expand`, `retrieve_concurrent`, `rerank`, `expand_parents`, `synthesize_stream`.
+    -   [ ] Add edges and conditional routing logic.
+    -   [ ] Integrate `MemorySaver` checkpointer (in-memory for now).
+    -   [ ] Add `graph.draw_svg()` export script to `docs/diagrams/`.
+    -   **Acceptance**: Graph compiles and can run a no-op flow.
+    -   **Tests**: Node stubs unit-tested; compile-time test ensures edges consistent.
+    -   **Responsibilities**:
+        -   Framework: Graph runtime, node scheduling, state update merge.
+        -   You: Node functions, edges, checkpointer selection and wiring, SVG export.
+    -   **Sanity checklist**:
+        -   [ ] Entry node set; [ ] All nodes reachable; [ ] Conditional routes covered; [ ] SVG exported.
 
-### 4.3. Refactor the Query Router
--   **Task**: Update the `/api/v1/query` endpoint in `api/routers/query.py`.
--   **Task**: It should now:
-    1.  Get the current user from the authentication dependency.
-    2.  Fetch the session history from Firestore.
-    3.  Instantiate and run the new `AgenticEngine` with the query and session history.
-    4.  Store the final answer back into the session history.
-    5.  Return the response.
+### 4.2. Implement Agent Nodes: Pre-Processing
+-   **Task**: **Intent Router Node**:
+    -   [ ] Implement heuristics for `summarize`, `conversational`, `qa`, jurisdiction/date detection.
+    -   [ ] Fallback to mini-LLM (≤ 200 tokens, temp 0.0) when ambiguous.
+    -   **Acceptance**: P50 < 70 ms heuristics; P95 < 250 ms with mini-LLM.
+    -   **Tests**: Heuristic unit tests; LLM stubbed with fixtures.
+    -   **Responsibilities**:
+        -   Framework: Node execution + merge.
+        -   You: Heuristics, LLM call, timeouts, outputs (`intent`, `jurisdiction`, `date_context`).
+    -   **Sanity checklist**:
+        -   [ ] Ambiguous inputs route to fallback; [ ] Deterministic at temp=0; [ ] Timeouts enforced.
+-   **Task**: **Rewrite & Expand Node**:
+    -   [ ] Implement history-aware rewrite.
+    -   [ ] Implement **Multi-HyDE** (3–5 hypotheticals, ≤ 120 tokens each) in parallel with timeouts.
+    -   [ ] Optional sub-question decomposition (cap 3) behind heuristics.
+    -   **Acceptance**: Produces rewrite + ≥ 2 hypotheticals under 450 ms P95.
+    -   **Tests**: Async timeout tests; determinism at temp 0; schema constraints.
+    -   **Responsibilities**:
+        -   Framework: Node execution + merge.
+        -   You: Rewrite prompt, parallel fan-out, caps/timeouts, output fields.
+    -   **Sanity checklist**:
+        -   [ ] Caps respected; [ ] On timeout, degrade to rewrite-only; [ ] No empty outputs.
 
-### 4.4. Update Synthesis Prompt
--   **Task**: Modify the `_build_prompt` method in `api/composer.py`.
--   **Task**: The system prompt for the synthesis model must now accept and use both the **long-term user profile summary** and the **short-term session history** to provide a more personalized and context-aware answer.
--   **Task**: Reinforce the instructions to ground the answer strictly in the provided (parent document) context and to cite sources meticulously.
+### 4.3. Implement Agent Nodes: Retrieval & Synthesis
+-   **Task**: **Integrate Retrieval as a Tool**:
+    -   [ ] In `retrieve_concurrent`, call `RetrievalEngine` with `[rewritten_query, *hypothetical_docs, *sub_questions]` (capped fan-out).
+    -   [ ] Update state with `candidate_chunk_ids`.
+    -   **Acceptance**: P95 retrieval ≤ 350 ms on typical queries.
+    -   **Tests**: Mock Milvus/BM25 providers and verify RRF fusion and fan-out bounds.
+    -   **Responsibilities**:
+        -   Framework: Node execution + merge.
+        -   You: Tool invocation, caps, exception handling, state update.
+    -   **Sanity checklist**:
+        -   [ ] K capped; [ ] Errors degrade to single-provider; [ ] Metrics logged.
+-   **Task**: **Rerank & Parent Expansion Nodes**:
+    -   [ ] `rerank`: call BGE reranker; cache scores; timeout ≤ 180 ms.
+    -   [ ] `expand_parents`: fetch parent docs (M=8–12); context bundler with token caps.
+    -   **Acceptance**: P95 rerank+expand ≤ 400 ms; context contains ≥ 2 authoritative sources.
+    -   **Tests**: Reranker cache hit path; bundler token-cap enforcement.
+    -   **Responsibilities**:
+        -   Framework: Node execution + merge.
+        -   You: Reranker cache, R2 fetch batching, bundling policy, source prioritization.
+    -   **Sanity checklist**:
+        -   [ ] Cache hit rate measured; [ ] Token cap enforced; [ ] Source allow-list applied.
+-   **Task**: **Synthesis Node**:
+    -   [ ] Build structured prompt and stream tokens.
+    -   [ ] Implement **AttributionGate** and **QuoteVerifier**.
+    -   **Acceptance**: First token ≤ 1.2 s P95; every paragraph cited.
+    -   **Tests**: Streaming contract tests; gates unit tests with fixtures.
+    -   **Responsibilities**:
+        -   Framework: Node execution; tracing.
+        -   You: Prompt contract, streaming emitter, gates, downgrade policy.
+    -   **Sanity checklist**:
+        -   [ ] First-token SLA met; [ ] Each paragraph has citation; [ ] Warnings emitted on gate failure.
 
-## Phase 5: Long-Term Memory & Final Polish
+### 4.4. Expose via Streaming API
+-   **Task**: **Query Router (SSE)**:
+    -   [ ] Refactor `api/routers/query.py` to `GET /api/v1/query/stream` using SSE.
+    -   [ ] Instantiate orchestrator, create initial `AgentState`, run graph, stream typed events (`meta`, `token`, `citation`, `warning`, `final`).
+    -   **Acceptance**: Browser receives first token < 1.2 s P95; no main-thread blocks.
+    -   **Tests**: Integration test with SSE client; event types validated.
+    -   **Responsibilities**:
+        -   Framework: N/A (transport is app code).
+        -   You: Endpoint, event protocol, keep-alive, backpressure + stall handling.
+    -   **Sanity checklist**:
+        -   [ ] SSE ping interval set; [ ] Client reconnect strategy documented; [ ] Errors carry `trace_id`.
 
-*Goal: Implement the background processes for personalization and ensure the system is robust.*
+## Phase 5: Production Hardening & Long-Term Memory
 
-### 5.1. Long-Term Memory Summarizer
--   **Task**: Create a background process (e.g., a Vercel Cron Job or a scheduled GitHub Action) that periodically processes user session histories.
--   **Task**: This process will use an LLM to summarize conversation threads into a `long_term_summary` field in the user's profile in Firestore (e.g., "User is interested in corporate law and PBCs.").
--   **Task**: Ensure this summary is loaded and used by the agentic planner and synthesis components.
+*Goal: Add long-term memory, robust testing, and observability to make the agentic core production-ready.*
 
-### 5.2. Testing & Documentation
--   **Task**: Update existing unit and integration tests to account for the new authentication flow and the agentic architecture. Mocks for Firebase will be essential.
--   **Task**: Write new tests for the agentic planner, the BM25 provider, and the reranker.
--   **Task**: Update the API documentation (e.g., in `docs/api/README.md`) to reflect the new authentication requirements and session management.
+### 5.1. Long-Term Memory
+-   **Task**: **Event-Driven Memory Worker**:
+    -   [ ] Trigger on session idle (30 min) or every 10 messages.
+    -   [ ] Process recent messages; extract entities; generate `long_term_summary`.
+    -   [ ] Redact PII or apply TTL.
+    -   **Acceptance**: Job < 2 s average; no impact on live Q&A.
+    -   **Tests**: Worker unit + integration tests; Firestore writes validated.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: Queue/trigger wiring, entity extraction, summary generation, privacy policy.
+    -   **Sanity checklist**:
+        -   [ ] Idempotent runs; [ ] TTL applied; [ ] Profile stays < 32 KB.
+-   **Task**: **Integrate Memory into Agent**:
+    -   [ ] `rewrite_expand` reads `long_term_summary` and biases rewrite.
+    -   **Acceptance**: Rewrite mentions user topics when relevant.
+    -   **Tests**: Snapshot tests with seeded profiles.
+    -   **Responsibilities**:
+        -   Framework: Node execution + merge.
+        -   You: Memory fetch, prompt conditioning, fallback when missing.
+    -   **Sanity checklist**:
+        -   [ ] Absent profile → no failure; [ ] No PII echoes; [ ] Deterministic at temp=0.
+
+### 5.2. Observability & Quality Gates
+-   **Task**: **LangSmith + OpenTelemetry**:
+    -   [ ] Enable `LANGCHAIN_TRACING_V2=TRUE`; attach spans per node; propagate `trace_id`.
+    -   **Acceptance**: 100% node coverage in traces; timing metrics recorded.
+    -   **Tests**: Trace presence asserted in integration tests.
+    -   **Responsibilities**:
+        -   Framework: Trace hooks in LangGraph/LangChain.
+        -   You: Env config, span attributes, redaction, dashboards.
+    -   **Sanity checklist**:
+        -   [ ] PII redaction on; [ ] Latency histograms; [ ] Errors sampled with payload hashes.
+-   **Task**: **Golden Set CI Evaluator**:
+    -   [ ] Curate 100 ZW legal queries with gold answers + sources.
+    -   [ ] CI workflow fails on correctness < 90%, citation accuracy < 95%, or latency regression > 20%.
+    -   **Acceptance**: CI gate blocks regressions.
+    -   **Tests**: PR pipeline runs evaluator; sample failures reported.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: Dataset, evaluator, CI wiring, thresholds.
+    -   **Sanity checklist**:
+        -   [ ] Seed fixed; [ ] Non-flaky thresholds; [ ] Eval artifacts saved.
+-   **Task**: **Load & Chaos Testing**:
+    -   [ ] k6/Locust: 50 RPS spikes; chaos: reranker timeout.
+    -   **Acceptance**: P95 < 4 s, error rate < 1%; degraded mode flagged.
+    -   **Tests**: Scripts and reports stored in `reports/perf/`.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: Scripts, environments, chaos toggles, alerting.
+    -   **Sanity checklist**:
+        -   [ ] Autoscaling policy noted; [ ] Timeouts tuned; [ ] Fallbacks verified.
+
+### 5.3. Security & Docs
+-   **Task**: **R2 Path Traversal Guard**:
+    -   [ ] Server-side map from `doc_key` → R2 object key; deny unexpected prefixes.
+    -   **Acceptance**: E2E test proves traversal attempts blocked.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: Mapping, validation, allow-list, tests.
+    -   **Sanity checklist**:
+        -   [ ] Rejects `..`/absolute paths; [ ] Only known prefixes; [ ] 403s logged with trace.
+-   **Task**: **Finalize Documentation**:
+    -   [ ] Sequence diagrams; `AgentState` schema; SSE event contracts; runbooks.
+    -   **Acceptance**: Docs reviewed; links referenced in README.
+    -   **Responsibilities**:
+        -   Framework: N/A
+        -   You: Authoring, diagrams export, review.
+    -   **Sanity checklist**:
+        -   [ ] Diagrams render; [ ] Links valid; [ ] Version tags present.
+
+---
+
+## Definition of Done (Phase 4–5)
+-   All tasks above have passing unit/integration tests.
+-   Golden set CI gate passes with thresholds.
+-   Latency budgets achieved: first token ≤ 1.2 s P95; full answer ≤ 4 s P95.
+-   Security checks: JWT enforced, R2 traversal guard, source allow-list.
+-   Complete LangSmith tracing for all nodes; diagrams exported to `docs/diagrams/`.
+
+---
+
+## Master Sanity Checklist (Phase 4–5)
+-   [ ] State size < 8 KB typical; only IDs/keys for heavy artifacts.
+-   [ ] Checkpointer durable in prod; replay works by `trace_id`.
+-   [ ] First token SLA ≤ 1.2 s P95; budgets enforced per node.
+-   [ ] Retrieval caps (K, M) respected; fallbacks exercised.
+-   [ ] Every paragraph cited; allow-list enforced; quote verifier sampled.
+-   [ ] SSE emits `meta`, `token`, `citation`, `warning`, `final`; errors include `trace_id`.
+-   [ ] PII redaction on traces; audit fields stored (who, when, sources, hashes).
+-   [ ] CI golden set stable; load/chaos tests pass; canary/shadow plan documented.
