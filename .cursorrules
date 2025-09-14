@@ -1,11 +1,13 @@
 # CORE PRINCIPLES
 
+- **LangChain Ecosystem First.** Leverage LangChain, LangGraph, and LangSmith as the primary frameworks for building agentic systems. Do not write from scratch any functionality (e.g., state machines, prompt templating, tool usage, tracing) that is already provided and maintained within the LangChain family of products. This is a core principle for ensuring maintainability, observability, and rapid development.
 - **Test-Driven Development (TDD) is mandatory.** Always write failing unit or integration tests before implementing any new feature, logic, or bug fix. Ensure tests are clean, readable, and cover all critical paths.
-- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures. 
+- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures.
 - **Asynchronous & Concurrent by Default.** Design all I/O-bound and long-running operations to be asynchronous using `async/await`. Employ concurrency, multithreading, and parallelism to maximize performance and ensure non-blocking execution.
 
 # ARCHITECTURE & TECHNOLOGY STACK
 
+- **LangChain Ecosystem First.** Leverage LangChain, LangGraph, and LangSmith as the primary frameworks for building agentic systems. Do not write from scratch any functionality (e.g., state machines, prompt templating, tool usage, tracing) that is already provided and maintained within the LangChain family of products. This is a core principle for ensuring maintainability, observability, and rapid development.
 - **API First with FastAPI.** All backend services will be built using FastAPI. Leverage its asynchronous capabilities, dependency injection, and automatic documentation generation.
 - **Pydantic for Data Integrity.** Use Pydantic for all data modeling, validation, and settings management. Ensure strict type enforcement and clear data contracts.
 - **AI-Native & Cloud-Native.** Design applications to be cloud-agnostic and containerized (Docker/Kubernetes). Integrate AI/ML capabilities as core components, not afterthoughts. Focus on low-latency, highly scalable, and resilient microservices.

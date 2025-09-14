@@ -190,16 +190,20 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
         -   [ ] Caps respected; [ ] On timeout, degrade to rewrite-only; [ ] No empty outputs.
 
 ### 4.3. Implement Agent Nodes: Retrieval & Synthesis
--   **Task**: **Integrate Retrieval as a Tool**:
-    -   [ ] In `retrieve_concurrent`, call `RetrievalEngine` with `[rewritten_query, *hypothetical_docs, *sub_questions]` (capped fan-out).
-    -   [ ] Update state with `candidate_chunk_ids`.
-    -   **Acceptance**: P95 retrieval ≤ 350 ms on typical queries.
-    -   **Tests**: Mock Milvus/BM25 providers and verify RRF fusion and fan-out bounds.
+-   **Task**: **Integrate Retrieval as a Tool (The LangChain Way)**:
+    -   [ ] **Refactor** the existing `RetrievalEngine` from `api/tools/retrieval_engine.py` into a composable LangChain `Runnable` (LCEL chain). This is a rewrite, not just an integration.
+    -   [ ] Wrap the Milvus and BM25 retrievers in standard `BaseRetriever` interfaces.
+    -   [ ] Use `EnsembleRetriever` to run both retrievers in parallel and fuse results with RRF.
+    -   [ ] Use `ContextualCompressionRetriever` with a `CrossEncoderReranker` to handle the reranking step.
+    -   [ ] Use a `RunnableLambda` for the final "Small-to-Big" step of fetching parent documents from R2.
+    -   [ ] In the `retrieve_concurrent` node, invoke this unified `Runnable` chain.
+    -   **Acceptance**: The entire retrieval pipeline is a single, traceable LCEL `Runnable`. P95 retrieval ≤ 350 ms. LangSmith shows a hierarchical trace for the ensemble, compression, and parent fetch steps.
+    -   **Tests**: Unit test the custom `BM25Retriever` wrapper. Integration test the full LCEL chain with mocked retrievers and rerankers.
     -   **Responsibilities**:
-        -   Framework: Node execution + merge.
-        -   You: Tool invocation, caps, exception handling, state update.
+        -   Framework: `EnsembleRetriever`, `ContextualCompressionRetriever`, `Runnable` protocols, automatic tracing.
+        -   You: Wrapping your existing logic (BM25, R2 fetch) into standard interfaces and composing them into a final LCEL chain.
     -   **Sanity checklist**:
-        -   [ ] K capped; [ ] Errors degrade to single-provider; [ ] Metrics logged.
+        -   [ ] Chain can be invoked; [ ] LangSmith trace is hierarchical; [ ] RRF fusion is correct; [ ] K capped before reranking.
 -   **Task**: **Rerank & Parent Expansion Nodes**:
     -   [ ] `rerank`: call BGE reranker; cache scores; timeout ≤ 180 ms.
     -   [ ] `expand_parents`: fetch parent docs (M=8–12); context bundler with token caps.
@@ -269,43 +273,27 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
         -   You: Env config, span attributes, redaction, dashboards.
     -   **Sanity checklist**:
         -   [ ] PII redaction on; [ ] Latency histograms; [ ] Errors sampled with payload hashes.
+-   **Task**: **Dev vs Prod Observability Notes**:
+    -   [ ] **Dev**: Use LangGraph Studio for interactive graph viz, step-through execution, and state inspection with in-memory/SQLite checkpointer.
+    -   [ ] **Prod**: Use LangSmith for run DAGs, per-node I/O, timings, errors; Redis/Firestore checkpointer for durability/replay.
+    -   **Acceptance**: Studio runs locally; LangSmith shows complete traces with `trace_id` correlation in prod.
 -   **Task**: **Golden Set CI Evaluator**:
     -   [ ] Curate 100 ZW legal queries with gold answers + sources.
     -   [ ] CI workflow fails on correctness < 90%, citation accuracy < 95%, or latency regression > 20%.
     -   **Acceptance**: CI gate blocks regressions.
     -   **Tests**: PR pipeline runs evaluator; sample failures reported.
-    -   **Responsibilities**:
-        -   Framework: N/A
-        -   You: Dataset, evaluator, CI wiring, thresholds.
-    -   **Sanity checklist**:
-        -   [ ] Seed fixed; [ ] Non-flaky thresholds; [ ] Eval artifacts saved.
 -   **Task**: **Load & Chaos Testing**:
     -   [ ] k6/Locust: 50 RPS spikes; chaos: reranker timeout.
     -   **Acceptance**: P95 < 4 s, error rate < 1%; degraded mode flagged.
     -   **Tests**: Scripts and reports stored in `reports/perf/`.
-    -   **Responsibilities**:
-        -   Framework: N/A
-        -   You: Scripts, environments, chaos toggles, alerting.
-    -   **Sanity checklist**:
-        -   [ ] Autoscaling policy noted; [ ] Timeouts tuned; [ ] Fallbacks verified.
 
 ### 5.3. Security & Docs
 -   **Task**: **R2 Path Traversal Guard**:
     -   [ ] Server-side map from `doc_key` → R2 object key; deny unexpected prefixes.
     -   **Acceptance**: E2E test proves traversal attempts blocked.
-    -   **Responsibilities**:
-        -   Framework: N/A
-        -   You: Mapping, validation, allow-list, tests.
-    -   **Sanity checklist**:
-        -   [ ] Rejects `..`/absolute paths; [ ] Only known prefixes; [ ] 403s logged with trace.
 -   **Task**: **Finalize Documentation**:
     -   [ ] Sequence diagrams; `AgentState` schema; SSE event contracts; runbooks.
     -   **Acceptance**: Docs reviewed; links referenced in README.
-    -   **Responsibilities**:
-        -   Framework: N/A
-        -   You: Authoring, diagrams export, review.
-    -   **Sanity checklist**:
-        -   [ ] Diagrams render; [ ] Links valid; [ ] Version tags present.
 
 ---
 
@@ -327,3 +315,13 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 -   [ ] SSE emits `meta`, `token`, `citation`, `warning`, `final`; errors include `trace_id`.
 -   [ ] PII redaction on traces; audit fields stored (who, when, sources, hashes).
 -   [ ] CI golden set stable; load/chaos tests pass; canary/shadow plan documented.
+
+---
+
+## Pre-flight Checklist (Final Review)
+- **TDD is Mandatory**: Is there a unit test for every node and a new entry in the Golden Set for every major capability?
+- **Clean Code**: Is the code self-documenting? Are SOLID/DRY/KISS principles followed?
+- **Async by Default**: Are all I/O operations non-blocking (`async`)?
+- **Config & Secrets**: Is all configuration loaded from the environment via Pydantic Settings? Are secrets handled securely?
+- **Dependencies**: Are all dependencies pinned in `pyproject.toml`? Have they been scanned for vulnerabilities?
+- **Observability**: Is every step of the agentic process traced in LangSmith with proper metadata?

@@ -138,6 +138,12 @@ This structure separates the "what" (schemas) from the "how" (tools, agents) and
 - **QuoteVerifier**: Sampled verbatim string checks (8–15 words) against retrieved spans.
 - **Policy rules**: No advice outside ZW; inject disclaimers; route to clarify if insufficient context.
 
+### 4.7. Developer Experience & Observability Modes
+- **Dev (LangGraph Studio)**: Use Studio for interactive graph visualization, step-through execution, and state inspection. Pair with in-memory/SQLite checkpointer for pause/resume and diffs.
+- **Prod (LangSmith)**: Enable tracing to get per-node DAG view, inputs/outputs, timings, and errors for every run. Use Redis/Firestore checkpointer for durability and replay.
+- **Docs**: Export a static SVG of the compiled graph to `docs/diagrams/agent_graph.svg` for architectural reference.
+- **Acceptance**: Studio works locally (interactive step/run); LangSmith shows complete node traces in production with `trace_id` correlation.
+
 ---
 
 ## 5. Security & Compliance
@@ -152,5 +158,13 @@ This structure separates the "what" (schemas) from the "how" (tools, agents) and
 - **Latency**: P95 end-to-end ≤ 4s; first-token ≤ 1.2s.
 - **Accuracy**: ≥ 95% answers include verifiable citations; zero uncited statutory claims.
 - **Resilience**: Any single dependency failure downgrades gracefully (no blank outputs).
-- **Observability**: 100% of nodes traced with input/output schemas and timings in LangSmith.
+- **Observability**: 100% of nodes traced with input/output schemas and timings in LangSmith; Studio usable during development.
 - **Security**: No direct R2 paths exposed; JWT validation enforced on all protected endpoints.
+
+---
+
+## 7. Final Review Notes (Pre-flight Check)
+- **Testing Strategy**: TDD is mandatory. Each node must have unit tests with mocked dependencies. The full graph will be tested via the Golden Set CI evaluator, which acts as the end-to-end integration test.
+- **Dependency Management**: All Python dependencies are managed by Poetry. Key libraries (`langchain`, `langgraph`, `fastapi`, `pydantic`) should be pinned to specific minor versions to prevent breaking changes. A regular dependency scan (e.g., `snyk`, `pip-audit`) is required.
+- **Configuration**: All secrets (API keys, tokens) must be loaded from environment variables, never hardcoded. Use Pydantic's `BaseSettings` for type-safe configuration management.
+- **Asynchronicity**: All I/O-bound operations (network calls to LLMs, R2, Milvus, Firestore) must be `async` to ensure the FastAPI server remains non-blocking.
