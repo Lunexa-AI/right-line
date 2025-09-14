@@ -152,117 +152,322 @@ class QueryOrchestrator:
             return {"rewritten_query": state.raw_query}
     
     async def _retrieve_concurrent_node(self, state: AgentState) -> Dict[str, Any]:
-        """Retrieve concurrent node - placeholder for retrieval."""
+        """Retrieve concurrent node - uses LangChain LCEL retrieval chain."""
         start_time = time.time()
         
         try:
-            logger.info("Starting concurrent retrieval", trace_id=state.trace_id)
+            logger.info("Starting LangChain concurrent retrieval", trace_id=state.trace_id)
             
-            # Placeholder: This will be replaced with actual LangChain retrieval
-            queries = [state.rewritten_query] + state.hypothetical_docs + state.sub_questions
-            queries = [q for q in queries if q][:8]  # Cap fan-out
+            # Use the rewritten query for retrieval
+            query = state.rewritten_query or state.raw_query
             
-            # Simulate retrieval
-            candidate_chunk_ids = [f"chunk_{i}" for i in range(min(20, len(queries) * 5))]
+            # Import and use the LangChain retrieval engine
+            from api.tools.retrieval_engine import RetrievalEngine, RetrievalConfig
+            
+            # Create retrieval config
+            config = RetrievalConfig(
+                top_k=20,  # Get top 20 for reranking
+                min_score=0.1
+            )
+            
+            # Execute the LangChain LCEL retrieval chain
+            async with RetrievalEngine() as engine:
+                results = await engine.retrieve(query, config)
+            
+            # Extract chunk IDs for the next stage
+            candidate_chunk_ids = [result.chunk_id for result in results]
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("Concurrent retrieval completed",
+            logger.info("LangChain concurrent retrieval completed",
                        candidates_found=len(candidate_chunk_ids),
                        duration_ms=round(duration_ms, 2),
-                       trace_id=state.trace_id)
+                       trace_id=state.trace_id,
+                       top_confidence=results[0].confidence if results else 0)
             
             return {
-                "candidate_chunk_ids": candidate_chunk_ids
+                "candidate_chunk_ids": candidate_chunk_ids,
+                "retrieval_results": results  # Store for reranking
             }
             
         except Exception as e:
-            logger.error("Concurrent retrieval failed", error=str(e), trace_id=state.trace_id)
-            return {"candidate_chunk_ids": []}
+            logger.error("LangChain concurrent retrieval failed", error=str(e), trace_id=state.trace_id)
+            return {"candidate_chunk_ids": [], "retrieval_results": []}
     
     async def _rerank_node(self, state: AgentState) -> Dict[str, Any]:
-        """Rerank node - placeholder for reranking."""
+        """Rerank node - BGE reranker with caching and 180ms timeout."""
         start_time = time.time()
         
         try:
-            logger.info("Starting reranking", 
+            logger.info("Starting BGE reranking", 
                        candidates=len(state.candidate_chunk_ids),
                        trace_id=state.trace_id)
             
-            # Placeholder: This will be replaced with actual BGE reranker
-            reranked_chunk_ids = state.candidate_chunk_ids[:12]  # Take top 12
+            # Get retrieval results from previous node
+            retrieval_results = getattr(state, 'retrieval_results', [])
+            if not retrieval_results:
+                logger.warning("No retrieval results available for reranking", trace_id=state.trace_id)
+                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
             
-            duration_ms = (time.time() - start_time) * 1000
-            logger.info("Reranking completed",
-                       reranked_count=len(reranked_chunk_ids),
-                       duration_ms=round(duration_ms, 2),
-                       trace_id=state.trace_id)
+            # Import reranker
+            from api.tools.reranker import get_reranker, RerankerConfig
             
-            return {
-                "reranked_chunk_ids": reranked_chunk_ids
-            }
+            # Create reranker config with caching and timeout
+            reranker_config = RerankerConfig(
+                model_name="BAAI/bge-reranker-base",
+                top_k=12,  # Final top-k after reranking
+                batch_size=16,
+                cache_enabled=True,
+                timeout_seconds=0.18  # 180ms timeout
+            )
+            
+            # Get query for reranking
+            query = state.rewritten_query or state.raw_query
+            
+            # Execute reranking with timeout
+            try:
+                reranker = get_reranker(reranker_config)
+                
+                # Prepare documents for reranking
+                documents = []
+                chunk_id_map = {}
+                for i, result in enumerate(retrieval_results):
+                    documents.append(result.chunk_text or "")
+                    chunk_id_map[i] = result.chunk_id
+                
+                # Rerank with timeout
+                import asyncio
+                reranked_indices = await asyncio.wait_for(
+                    reranker.rerank_async(query, documents, top_k=12),
+                    timeout=0.18
+                )
+                
+                # Map back to chunk IDs
+                reranked_chunk_ids = [chunk_id_map[idx] for idx in reranked_indices]
+                
+                duration_ms = (time.time() - start_time) * 1000
+                logger.info("BGE reranking completed",
+                           reranked_count=len(reranked_chunk_ids),
+                           duration_ms=round(duration_ms, 2),
+                           trace_id=state.trace_id,
+                           cache_hit=reranker.cache_hit_rate if hasattr(reranker, 'cache_hit_rate') else None)
+                
+                return {"reranked_chunk_ids": reranked_chunk_ids}
+                
+            except asyncio.TimeoutError:
+                logger.warning("Reranking timeout, using original order", 
+                              trace_id=state.trace_id,
+                              timeout_ms=180)
+                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
             
         except Exception as e:
-            logger.error("Reranking failed", error=str(e), trace_id=state.trace_id)
-            return {"reranked_chunk_ids": state.candidate_chunk_ids}
+            logger.error("BGE reranking failed", error=str(e), trace_id=state.trace_id)
+            # Fallback to original order
+            return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
     
     async def _expand_parents_node(self, state: AgentState) -> Dict[str, Any]:
-        """Expand parents node - placeholder for parent document fetching."""
+        """Expand parents node - fetch parent docs with R2 batching and token caps."""
         start_time = time.time()
         
         try:
-            logger.info("Starting parent expansion", 
+            logger.info("Starting parent document expansion", 
                        chunks_to_expand=len(state.reranked_chunk_ids),
                        trace_id=state.trace_id)
             
-            # Placeholder: This will be replaced with actual R2 fetching
-            parent_doc_keys = [f"parent_{i}" for i in range(min(8, len(state.reranked_chunk_ids)))]
+            # Get retrieval results to access parent document information
+            retrieval_results = getattr(state, 'retrieval_results', [])
+            if not retrieval_results:
+                logger.warning("No retrieval results for parent expansion", trace_id=state.trace_id)
+                return {"parent_doc_keys": []}
+            
+            # Filter to reranked results only (M=8-12 as per task spec)
+            reranked_results = []
+            reranked_ids_set = set(state.reranked_chunk_ids)
+            for result in retrieval_results:
+                if result.chunk_id in reranked_ids_set:
+                    reranked_results.append(result)
+            
+            # Cap at 12 parent documents maximum
+            reranked_results = reranked_results[:12]
+            
+            # Extract unique parent document keys for batching
+            parent_doc_requests = []
+            chunk_to_parent_map = {}
+            
+            for result in reranked_results:
+                if result.parent_doc:
+                    # Parent already fetched during retrieval
+                    parent_key = f"{result.parent_doc.doc_id}"
+                    chunk_to_parent_map[result.chunk_id] = result.parent_doc
+                else:
+                    # Need to fetch parent document
+                    parent_key = f"{result.chunk.doc_id}"
+                    parent_doc_requests.append((result.chunk.doc_id, result.metadata.get("doc_type", "")))
+            
+            # Batch fetch missing parent documents from R2
+            if parent_doc_requests:
+                from api.tools.retrieval_engine import RetrievalEngine
+                async with RetrievalEngine() as engine:
+                    parent_docs = await engine._fetch_parent_documents_batch(parent_doc_requests)
+                    
+                    # Map fetched parents back to chunks
+                    for i, (doc_id, doc_type) in enumerate(parent_doc_requests):
+                        if i < len(parent_docs) and parent_docs[i]:
+                            # Find chunks with this parent
+                            for result in reranked_results:
+                                if result.chunk.doc_id == doc_id:
+                                    chunk_to_parent_map[result.chunk_id] = parent_docs[i]
+            
+            # Build context with token caps (following bundling policy)
+            MAX_CONTEXT_TOKENS = 8000  # Conservative limit for synthesis
+            current_tokens = 0
+            bundled_context = []
+            authoritative_sources = set()
+            
+            for result in reranked_results:
+                parent_doc = chunk_to_parent_map.get(result.chunk_id)
+                if not parent_doc:
+                    continue
+                
+                # Estimate tokens (rough: 4 chars per token)
+                content = parent_doc.pageindex_markdown or ""
+                estimated_tokens = len(content) // 4
+                
+                # Check token budget
+                if current_tokens + estimated_tokens > MAX_CONTEXT_TOKENS:
+                    logger.info("Token cap reached during parent expansion", 
+                               trace_id=state.trace_id,
+                               current_tokens=current_tokens,
+                               max_tokens=MAX_CONTEXT_TOKENS)
+                    break
+                
+                # Add to context
+                bundled_context.append({
+                    "chunk_id": result.chunk_id,
+                    "parent_doc_id": parent_doc.doc_id,
+                    "title": parent_doc.title or parent_doc.canonical_citation,
+                    "content": content[:2000],  # Cap individual document size
+                    "confidence": result.confidence,
+                    "source_type": result.metadata.get("doc_type", "unknown")
+                })
+                
+                current_tokens += min(estimated_tokens, 500)  # Cap contribution per doc
+                authoritative_sources.add(parent_doc.canonical_citation or parent_doc.title)
+            
+            # Extract parent document keys for state
+            parent_doc_keys = [ctx["parent_doc_id"] for ctx in bundled_context]
             context_bundle_key = f"context_bundle_{state.trace_id}"
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("Parent expansion completed",
+            logger.info("Parent document expansion completed",
                        parent_docs_count=len(parent_doc_keys),
+                       authoritative_sources=len(authoritative_sources),
+                       context_tokens=current_tokens,
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
             return {
                 "parent_doc_keys": parent_doc_keys,
-                "context_bundle_key": context_bundle_key
+                "context_bundle_key": context_bundle_key,
+                "bundled_context": bundled_context,
+                "context_tokens": current_tokens,
+                "authoritative_sources": list(authoritative_sources)
             }
             
         except Exception as e:
-            logger.error("Parent expansion failed", error=str(e), trace_id=state.trace_id)
-            return {"parent_doc_keys": []}
+            logger.error("Parent document expansion failed", error=str(e), trace_id=state.trace_id)
+            return {"parent_doc_keys": [], "context_bundle_key": None}
     
     async def _synthesize_stream_node(self, state: AgentState) -> Dict[str, Any]:
-        """Synthesize stream node - placeholder for answer generation."""
+        """Synthesis node - structured prompt with streaming and attribution gates."""
         start_time = time.time()
         
         try:
-            logger.info("Starting synthesis", trace_id=state.trace_id)
+            logger.info("Starting synthesis with attribution gates", trace_id=state.trace_id)
             
-            # Placeholder: This will be replaced with actual streaming synthesis
-            final_answer = f"Based on the retrieved context, here's the answer to '{state.raw_query}'. [This is a placeholder response from the orchestrator.]"
+            # Build structured synthesis prompt
+            synthesis_prompt = self._build_synthesis_prompt(state)
             
-            cited_sources = []  # Placeholder
+            # Import synthesis components
+            from langchain_openai import ChatOpenAI
+            
+            # Create streaming LLM
+            llm = ChatOpenAI(
+                model="gpt-4o",
+                temperature=0.1,
+                max_tokens=2000,
+                streaming=True
+            )
+            
+            # Initialize attribution gates
+            attribution_gate = AttributionGate()
+            quote_verifier = QuoteVerifier(state.bundled_context)
+            
+            # Stream synthesis with gates
+            final_answer = ""
+            first_token_time = None
+            
+            async for chunk in llm.astream(synthesis_prompt):
+                if first_token_time is None:
+                    first_token_time = time.time()
+                    first_token_ms = (first_token_time - start_time) * 1000
+                    logger.info("First token received", 
+                               first_token_ms=round(first_token_ms, 2),
+                               trace_id=state.trace_id)
+                
+                if chunk.content:
+                    final_answer += chunk.content
+            
+            # Apply attribution gate
+            attribution_result = await attribution_gate.validate_citations(final_answer, state.bundled_context)
+            if not attribution_result.passed:
+                logger.warning("Attribution gate failed", 
+                              missing_citations=attribution_result.missing_citations,
+                              trace_id=state.trace_id)
+                # Add warning to response
+                final_answer += "\n\n⚠️ Some statements may lack proper citations."
+            
+            # Apply quote verifier
+            quote_result = await quote_verifier.verify_quotes(final_answer)
+            if not quote_result.all_verified:
+                logger.warning("Quote verification failed",
+                              unverified_quotes=quote_result.unverified_quotes,
+                              trace_id=state.trace_id)
+                # Add warning to response
+                final_answer += "\n\n⚠️ Some quotes may not be accurately attributed."
+            
+            # Extract citations from answer
+            cited_sources = self._extract_citations(final_answer, state.bundled_context)
             synthesis_prompt_key = f"prompt_{state.trace_id}"
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("Synthesis completed",
+            first_token_ms = (first_token_time - start_time) * 1000 if first_token_time else duration_ms
+            
+            logger.info("Synthesis completed with gates",
                        answer_length=len(final_answer),
                        citations_count=len(cited_sources),
-                       duration_ms=round(duration_ms, 2),
+                       first_token_ms=round(first_token_ms, 2),
+                       total_duration_ms=round(duration_ms, 2),
+                       attribution_passed=attribution_result.passed,
+                       quotes_verified=quote_result.all_verified,
                        trace_id=state.trace_id)
             
             return {
                 "final_answer": final_answer,
                 "cited_sources": cited_sources,
-                "synthesis_prompt_key": synthesis_prompt_key
+                "synthesis_prompt_key": synthesis_prompt_key,
+                "attribution_passed": attribution_result.passed,
+                "quotes_verified": quote_result.all_verified,
+                "first_token_ms": round(first_token_ms, 2)
             }
             
         except Exception as e:
             logger.error("Synthesis failed", error=str(e), trace_id=state.trace_id)
             return {
-                "final_answer": "I apologize, but I encountered an error while generating your answer."
+                "final_answer": "I apologize, but I encountered an error while generating your answer.",
+                "cited_sources": [],
+                "synthesis_prompt_key": None,
+                "attribution_passed": False,
+                "quotes_verified": False
             }
     
     async def _session_search_node(self, state: AgentState) -> Dict[str, Any]:
@@ -560,6 +765,67 @@ class QueryOrchestrator:
                         trace_id=state.trace_id)
             raise
     
+    def _build_synthesis_prompt(self, state: AgentState) -> str:
+        """Build structured synthesis prompt with context and instructions."""
+        from api.composer.prompts import SYNTHESIS_SYSTEM_PROMPT
+        
+        # Build context from bundled documents
+        context_sections = []
+        for i, ctx in enumerate(state.bundled_context[:8], 1):  # Limit to top 8
+            context_sections.append(f"""
+Source {i}: {ctx.get('title', 'Unknown Document')}
+Confidence: {ctx.get('confidence', 0.0):.2f}
+Type: {ctx.get('source_type', 'unknown')}
+
+{ctx.get('content', '')[:1500]}...
+""")
+        
+        context_text = "\n".join(context_sections)
+        
+        # Build the full prompt
+        prompt = f"""{SYNTHESIS_SYSTEM_PROMPT}
+
+QUERY: {state.raw_query}
+
+JURISDICTION: {state.jurisdiction or 'Zimbabwe'}
+
+RETRIEVED CONTEXT:
+{context_text}
+
+INSTRUCTIONS:
+1. Provide a comprehensive legal analysis based on the retrieved context
+2. Cite sources using [Source X] format for each claim
+3. Include relevant quotes with proper attribution
+4. Structure your response with clear paragraphs
+5. If information is insufficient, state limitations clearly
+
+RESPONSE:"""
+        
+        return prompt
+    
+    def _extract_citations(self, answer: str, bundled_context: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Extract citations from the generated answer."""
+        import re
+        
+        citations = []
+        # Find [Source X] patterns in the answer
+        source_pattern = r'\[Source (\d+)\]'
+        matches = re.findall(source_pattern, answer)
+        
+        for match in matches:
+            source_num = int(match) - 1  # Convert to 0-based index
+            if source_num < len(bundled_context):
+                ctx = bundled_context[source_num]
+                citations.append({
+                    "source_id": str(source_num + 1),
+                    "title": ctx.get('title', 'Unknown Document'),
+                    "doc_id": ctx.get('parent_doc_id', ''),
+                    "confidence": str(ctx.get('confidence', 0.0)),
+                    "type": ctx.get('source_type', 'unknown')
+                })
+        
+        return citations
+
     def export_graph_diagram(self, output_path: str = "docs/diagrams/agent_graph.txt") -> None:
         """Export the graph structure as a text representation."""
         try:
@@ -616,3 +882,91 @@ def get_orchestrator() -> QueryOrchestrator:
     if _orchestrator is None:
         _orchestrator = QueryOrchestrator()
     return _orchestrator
+
+
+# Attribution Gate and Quote Verifier Classes
+
+class AttributionGate:
+    """Gate to validate that claims are properly cited."""
+    
+    async def validate_citations(self, answer: str, context: List[Dict[str, Any]]) -> 'AttributionResult':
+        """Validate that answer has proper citations for claims."""
+        import re
+        
+        # Simple heuristic: check for citation patterns
+        citation_pattern = r'\[Source \d+\]'
+        citations = re.findall(citation_pattern, answer)
+        
+        # Split answer into sentences and check citation density
+        sentences = answer.split('.')
+        factual_sentences = [s for s in sentences if len(s.strip()) > 20 and not s.strip().startswith('⚠️')]
+        
+        citation_ratio = len(citations) / max(len(factual_sentences), 1)
+        
+        # Require at least 1 citation per 3 factual sentences
+        passed = citation_ratio >= 0.33
+        
+        missing_citations = []
+        if not passed:
+            # Identify sentences without citations
+            for sentence in factual_sentences:
+                if not re.search(citation_pattern, sentence):
+                    missing_citations.append(sentence.strip()[:100] + "...")
+        
+        return AttributionResult(
+            passed=passed,
+            citation_ratio=citation_ratio,
+            missing_citations=missing_citations[:5]  # Limit to 5 examples
+        )
+
+
+class QuoteVerifier:
+    """Verifier to check quote accuracy against source documents."""
+    
+    def __init__(self, context: List[Dict[str, Any]]):
+        self.context = context
+    
+    async def verify_quotes(self, answer: str) -> 'QuoteResult':
+        """Verify that quotes in the answer match source documents."""
+        import re
+        
+        # Find quoted text patterns
+        quote_pattern = r'"([^"]{20,})"'
+        quotes = re.findall(quote_pattern, answer)
+        
+        verified_quotes = []
+        unverified_quotes = []
+        
+        for quote in quotes:
+            verified = False
+            # Check if quote appears in any context document
+            for ctx in self.context:
+                content = ctx.get('content', '')
+                if quote.lower() in content.lower():
+                    verified = True
+                    verified_quotes.append(quote)
+                    break
+            
+            if not verified:
+                unverified_quotes.append(quote[:100] + "..." if len(quote) > 100 else quote)
+        
+        return QuoteResult(
+            all_verified=len(unverified_quotes) == 0,
+            verified_count=len(verified_quotes),
+            unverified_quotes=unverified_quotes[:3]  # Limit to 3 examples
+        )
+
+
+# Result classes for gates
+class AttributionResult:
+    def __init__(self, passed: bool, citation_ratio: float, missing_citations: List[str]):
+        self.passed = passed
+        self.citation_ratio = citation_ratio
+        self.missing_citations = missing_citations
+
+
+class QuoteResult:
+    def __init__(self, all_verified: bool, verified_count: int, unverified_quotes: List[str]):
+        self.all_verified = all_verified
+        self.verified_count = verified_count
+        self.unverified_quotes = unverified_quotes

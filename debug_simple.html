@@ -359,7 +359,7 @@
                     <div style="background: #0f172a; padding: 1rem; border-radius: 0.375rem; font-family: monospace; color: #e2e8f0;">
 # Test retrieval engine directly:<br>
 PYTHONPATH=/path/to/repo MILVUS_COLLECTION_NAME="legal_chunks_v3" \\<br>
-python -c "import asyncio; from api.retrieval import RetrievalEngine, RetrievalConfig; \\<br>
+python -c "import asyncio; from api.tools.retrieval_engine import RetrievalEngine, RetrievalConfig; \\<br>
 async def test(): \\<br>
 &nbsp;&nbsp;async with RetrievalEngine() as engine: \\<br>
 &nbsp;&nbsp;&nbsp;&nbsp;results = await engine.retrieve('your query', RetrievalConfig(top_k=3)); \\<br>

@@ -90,7 +90,7 @@ async def test_retrieval_engine_directly():
     try:
         # Import here to avoid import issues
         sys.path.insert(0, '/Users/simbarashe.timire/repos/right-line')
-        from api.retrieval import RetrievalEngine, RetrievalConfig
+        from api.tools.retrieval_engine import RetrievalEngine, RetrievalConfig
         
         test_queries = [
             "What are the requirements for art unions?",

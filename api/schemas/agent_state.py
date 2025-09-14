@@ -67,6 +67,12 @@ class AgentState(BaseModel):
     context_bundle_key: Optional[str] = Field(default=None, description="R2 key for assembled context")
     synthesis_prompt_key: Optional[str] = Field(default=None, description="R2 key for synthesis prompt")
     
+    # Extended retrieval context (for LangChain integration)
+    retrieval_results: List[Any] = Field(default_factory=list, description="Full retrieval results from LangChain engine")
+    bundled_context: List[Dict[str, Any]] = Field(default_factory=list, description="Bundled parent document context")
+    context_tokens: int = Field(default=0, description="Total tokens in bundled context")
+    authoritative_sources: List[str] = Field(default_factory=list, description="List of authoritative source citations")
+    
     # Final outputs
     final_answer: Optional[str] = Field(default=None, description="Generated answer")
     cited_sources: List[Citation] = Field(default_factory=list, description="Source citations")

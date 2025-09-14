@@ -84,7 +84,7 @@ class TestR2ContentFetching:
         mock_r2_response = Mock()
         mock_r2_response.read.return_value = json.dumps(expected_content).encode('utf-8')
         
-        with patch('api.retrieval.boto3.client') as mock_boto3:
+        with patch('api.tools.retrieval_engine.boto3.client') as mock_boto3:
             mock_r2_client = Mock()
             mock_r2_client.get_object.return_value = {'Body': mock_r2_response}
             mock_boto3.return_value = mock_r2_client
@@ -112,7 +112,7 @@ class TestR2ContentFetching:
             mock_response.read.return_value = json.dumps(content).encode('utf-8')
             mock_responses[key] = {'Body': mock_response}
         
-        with patch('api.retrieval.boto3.client') as mock_boto3:
+        with patch('api.tools.retrieval_engine.boto3.client') as mock_boto3:
             mock_r2_client = Mock()
             mock_r2_client.get_object.side_effect = lambda Bucket, Key, **kwargs: mock_responses[Key]
             mock_boto3.return_value = mock_r2_client
@@ -135,7 +135,7 @@ class TestR2ContentFetching:
         engine = RetrievalEngine()
         chunk_key = "corpus/chunks/act/nonexistent.json"
         
-        with patch('api.retrieval.boto3.client') as mock_boto3:
+        with patch('api.tools.retrieval_engine.boto3.client') as mock_boto3:
             mock_r2_client = Mock()
             mock_r2_client.get_object.side_effect = Exception("S3 NoSuchKey error")
             mock_boto3.return_value = mock_r2_client
@@ -159,7 +159,7 @@ class TestR2ContentFetching:
             else:
                 raise Exception("S3 NoSuchKey error")
         
-        with patch('api.retrieval.boto3.client') as mock_boto3:
+        with patch('api.tools.retrieval_engine.boto3.client') as mock_boto3:
             mock_r2_client = Mock()
             mock_r2_client.get_object.side_effect = mock_get_object
             mock_boto3.return_value = mock_r2_client
@@ -202,9 +202,9 @@ class TestRetrievalEngineR2Integration:
                 source="vector"
             ))
         
-        with patch('api.retrieval.MilvusClient') as MockMilvusClient, \
-             patch('api.retrieval.EmbeddingClient') as MockEmbeddingClient, \
-             patch('api.retrieval.QueryProcessor') as MockQueryProcessor:
+        with patch('api.tools.retrieval_engine.MilvusClient') as MockMilvusClient, \
+             patch('api.tools.retrieval_engine.EmbeddingClient') as MockEmbeddingClient, \
+             patch('api.tools.retrieval_engine.QueryProcessor') as MockQueryProcessor:
             
             # Mock Milvus client
             mock_milvus = MockMilvusClient.return_value
@@ -248,7 +248,7 @@ class TestRetrievalEngineR2Integration:
         query = "What is minimum wage?"
         config = RetrievalConfig(top_k=5)
         
-        with patch('api.retrieval.MilvusClient') as MockMilvusClient:
+        with patch('api.tools.retrieval_engine.MilvusClient') as MockMilvusClient:
             # Mock Milvus client
             mock_milvus = MockMilvusClient.return_value
             mock_milvus.connect = AsyncMock()
@@ -279,8 +279,8 @@ class TestPerformanceAndObservability:
         engine = RetrievalEngine()
         chunk_keys = list(sample_r2_chunks.keys())
         
-        with patch('api.retrieval.boto3.client'), \
-             patch('api.retrieval.logger') as mock_logger:
+        with patch('api.tools.retrieval_engine.boto3.client'), \
+             patch('api.tools.retrieval_engine.logger') as mock_logger:
             
             # Act
             await engine._fetch_chunk_contents_batch(chunk_keys)
@@ -300,7 +300,7 @@ class TestPerformanceAndObservability:
         # Large number of chunk keys to test concurrency limiting
         chunk_keys = [f"corpus/chunks/act/chunk_{i:03d}.json" for i in range(50)]
         
-        with patch('api.retrieval.boto3.client') as mock_boto3, \
+        with patch('api.tools.retrieval_engine.boto3.client') as mock_boto3, \
              patch('asyncio.Semaphore') as mock_semaphore:
             
             mock_r2_client = Mock()

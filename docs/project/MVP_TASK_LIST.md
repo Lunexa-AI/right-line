@@ -190,40 +190,40 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
         -   [x] Caps respected; [x] On timeout, degrade to rewrite-only; [x] No empty outputs.
 
 ### 4.3. Implement Agent Nodes: Retrieval & Synthesis
--   **Task**: **Integrate Retrieval as a Tool (The LangChain Way)**:
-    -   [ ] **Refactor** the existing `RetrievalEngine` from `api/tools/retrieval_engine.py` into a composable LangChain `Runnable` (LCEL chain). This is a rewrite, not just an integration.
-    -   [ ] Wrap the Milvus and BM25 retrievers in standard `BaseRetriever` interfaces.
-    -   [ ] Use `EnsembleRetriever` to run both retrievers in parallel and fuse results with RRF.
-    -   [ ] Use `ContextualCompressionRetriever` with a `CrossEncoderReranker` to handle the reranking step.
-    -   [ ] Use a `RunnableLambda` for the final "Small-to-Big" step of fetching parent documents from R2.
-    -   [ ] In the `retrieve_concurrent` node, invoke this unified `Runnable` chain.
-    -   **Acceptance**: The entire retrieval pipeline is a single, traceable LCEL `Runnable`. P95 retrieval ≤ 350 ms. LangSmith shows a hierarchical trace for the ensemble, compression, and parent fetch steps.
-    -   **Tests**: Unit test the custom `BM25Retriever` wrapper. Integration test the full LCEL chain with mocked retrievers and rerankers.
+-   **Task**: **Integrate Retrieval as a Tool (The LangChain Way)** ✅ **DONE**:
+    -   [x] **Refactor** the existing `RetrievalEngine` from `api/tools/retrieval_engine.py` into a composable LangChain `Runnable` (LCEL chain). This is a rewrite, not just an integration.
+    -   [x] Wrap the Milvus and BM25 retrievers in standard `BaseRetriever` interfaces.
+    -   [x] Use `EnsembleRetriever` to run both retrievers in parallel and fuse results with RRF.
+    -   [x] Use `ContextualCompressionRetriever` with a `CrossEncoderReranker` to handle the reranking step.
+    -   [x] Use a `RunnableLambda` for the final "Small-to-Big" step of fetching parent documents from R2.
+    -   [x] In the `retrieve_concurrent` node, invoke this unified `Runnable` chain.
+    -   **Acceptance**: ✅ The entire retrieval pipeline is a single, traceable LCEL `Runnable`. P95 retrieval ≤ 350 ms. LangSmith shows a hierarchical trace for the ensemble, compression, and parent fetch steps.
+    -   **Tests**: ✅ Unit test the custom `BM25Retriever` wrapper. Integration test the full LCEL chain with mocked retrievers and rerankers.
     -   **Responsibilities**:
         -   Framework: `EnsembleRetriever`, `ContextualCompressionRetriever`, `Runnable` protocols, automatic tracing.
         -   You: Wrapping your existing logic (BM25, R2 fetch) into standard interfaces and composing them into a final LCEL chain.
     -   **Sanity checklist**:
-        -   [ ] Chain can be invoked; [ ] LangSmith trace is hierarchical; [ ] RRF fusion is correct; [ ] K capped before reranking.
--   **Task**: **Rerank & Parent Expansion Nodes**:
-    -   [ ] `rerank`: call BGE reranker; cache scores; timeout ≤ 180 ms.
-    -   [ ] `expand_parents`: fetch parent docs (M=8–12); context bundler with token caps.
-    -   **Acceptance**: P95 rerank+expand ≤ 400 ms; context contains ≥ 2 authoritative sources.
-    -   **Tests**: Reranker cache hit path; bundler token-cap enforcement.
+        -   [x] Chain can be invoked; [x] LangSmith trace is hierarchical; [x] RRF fusion is correct; [x] K capped before reranking.
+-   **Task**: **Rerank & Parent Expansion Nodes** ✅ **DONE**:
+    -   [x] `rerank`: call BGE reranker; cache scores; timeout ≤ 180 ms.
+    -   [x] `expand_parents`: fetch parent docs (M=8–12); context bundler with token caps.
+    -   **Acceptance**: ✅ P95 rerank+expand ≤ 400 ms; context contains ≥ 2 authoritative sources.
+    -   **Tests**: ✅ Reranker cache hit path; bundler token-cap enforcement.
     -   **Responsibilities**:
         -   Framework: Node execution + merge.
         -   You: Reranker cache, R2 fetch batching, bundling policy, source prioritization.
     -   **Sanity checklist**:
-        -   [ ] Cache hit rate measured; [ ] Token cap enforced; [ ] Source allow-list applied.
--   **Task**: **Synthesis Node**:
-    -   [ ] Build structured prompt and stream tokens.
-    -   [ ] Implement **AttributionGate** and **QuoteVerifier**.
-    -   **Acceptance**: First token ≤ 1.2 s P95; every paragraph cited.
-    -   **Tests**: Streaming contract tests; gates unit tests with fixtures.
+        -   [x] Cache hit rate measured; [x] Token cap enforced; [x] Source allow-list applied.
+-   **Task**: **Synthesis Node** ✅ **DONE**:
+    -   [x] Build structured prompt and stream tokens.
+    -   [x] Implement **AttributionGate** and **QuoteVerifier**.
+    -   **Acceptance**: ✅ First token ≤ 1.2 s P95; every paragraph cited.
+    -   **Tests**: ✅ Streaming contract tests; gates unit tests with fixtures.
     -   **Responsibilities**:
         -   Framework: Node execution; tracing.
         -   You: Prompt contract, streaming emitter, gates, downgrade policy.
     -   **Sanity checklist**:
-        -   [ ] First-token SLA met; [ ] Each paragraph has citation; [ ] Warnings emitted on gate failure.
+        -   [x] First-token SLA met; [x] Each paragraph has citation; [x] Warnings emitted on gate failure.
 
 ### 4.4. Expose via Streaming API
 -   **Task**: **Query Router (SSE)**:

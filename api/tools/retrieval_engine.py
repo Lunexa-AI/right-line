@@ -429,11 +429,24 @@ class MilvusClient:
                                 metadata = {}
                         
                         # For v3.0 schema with enhanced metadata
-                        retrieval_results.append(RetrievalResult(
-                            chunk_id=str(hit.get("chunk_id", "")),  # v3.0 uses chunk_id field
+                        # Create ChunkV3 object for RetrievalResult
+                        from api.models import ChunkV3
+                        chunk = ChunkV3(
+                            chunk_id=str(hit.get("chunk_id", "")),
                             chunk_text="",  # Will be populated from R2 or parent expansion
-                            doc_id=hit.get("parent_doc_id", ""),   # v3.0 uses parent_doc_id
+                            doc_id=hit.get("parent_doc_id", ""),
+                            chunk_object_key=metadata.get("chunk_object_key", ""),
+                            parent_doc_id=hit.get("parent_doc_id", ""),
+                            doc_type=metadata.get("doc_type", "unknown"),
+                            metadata=metadata,
+                            entities={}
+                        )
+                        
+                        retrieval_results.append(RetrievalResult(
+                            chunk=chunk,
+                            confidence=min(1.0, float(hit.get("distance", 0.5))),
                             metadata={
+                                "source": "vector",
                                 **metadata,
                                 "tree_node_id": hit.get("tree_node_id", ""),
                                 "chapter": hit.get("chapter", ""),
@@ -448,9 +461,7 @@ class MilvusClient:
                                 "year": hit.get("year", 0),
                                 "chapter": hit.get("chapter", ""),
                                 "date_context": hit.get("date_context", "")
-                            },
-                            score=float(hit.get("distance", 0.0)),
-                            source="vector"
+                            }
                         ))
                 
                 logger.info(
@@ -634,13 +645,26 @@ class SimpleSparseProvider(SparseProvider):
         scored.sort(key=lambda x: x[0], reverse=True)
         out: List[RetrievalResult] = []
         for s, row in scored[:top_k]:
-            out.append(RetrievalResult(
+            # Create ChunkV3 object for RetrievalResult
+            from api.models import ChunkV3
+            chunk = ChunkV3(
                 chunk_id=str(row.get("chunk_id")),
                 chunk_text=row.get("chunk_text") or "",
                 doc_id=str(row.get("doc_id")),
+                chunk_object_key=row.get("chunk_object_key", ""),
+                parent_doc_id=str(row.get("doc_id")),
+                doc_type=row.get("doc_type", "unknown"),
                 metadata=row.get("metadata") or {},
-                score=float(min(1.0, s / 10.0)),
-                source="sparse",
+                entities={}
+            )
+            
+            out.append(RetrievalResult(
+                chunk=chunk,
+                confidence=float(min(1.0, s / 10.0)),
+                metadata={
+                    "source": "sparse_fallback",
+                    **row.get("metadata", {})
+                }
             ))
         return out
 
@@ -746,6 +770,10 @@ class MilvusRetriever(BaseRetriever):
     ) -> List[Document]:
         """Async retrieval from Milvus with LangSmith tracing."""
         
+        # Handle both string and dict input from LCEL chain
+        if isinstance(query, dict):
+            query = query.get("query", str(query))
+        
         # Connect to Milvus if needed
         if not self.milvus_client.connected:
             await self.milvus_client.connect()
@@ -780,7 +808,7 @@ class MilvusRetriever(BaseRetriever):
             for hit in hits:
                 # Create Document with metadata
                 doc = Document(
-                    page_content=hit.chunk_text or "",
+                    page_content=str(hit.chunk_text or ""),
                     metadata={
                         **hit.metadata,
                         "chunk_id": hit.chunk_id,
@@ -825,6 +853,10 @@ class BM25Retriever(BaseRetriever):
     ) -> List[Document]:
         """Async retrieval from BM25 with LangSmith tracing."""
         
+        # Handle both string and dict input from LCEL chain
+        if isinstance(query, dict):
+            query = query.get("query", str(query))
+        
         # Perform BM25 search
         bm25_results = await self.bm25_provider.search(query, top_k=self.top_k)
         
@@ -832,7 +864,7 @@ class BM25Retriever(BaseRetriever):
         documents = []
         for result in bm25_results:
             doc = Document(
-                page_content=result.chunk_text or "",
+                page_content=str(result.chunk_text or ""),
                 metadata={
                     **result.metadata,
                     "chunk_id": result.chunk_id,
@@ -869,6 +901,8 @@ class RetrievalEngine:
         self.milvus_client = MilvusClient()
         self.embedding_client = EmbeddingClient()
         self.query_processor = QueryProcessor()
+        self._r2_client = None  # Initialize R2 client attribute
+        self._r2_semaphore = asyncio.Semaphore(5)  # Limit concurrent R2 requests
         
         # Initialize BM25 provider
         from api.bm25_provider import ProductionBM25Provider
@@ -917,11 +951,11 @@ class RetrievalEngine:
         from langchain_core.runnables import RunnableLambda, RunnablePassthrough
         self._parent_fetcher = RunnableLambda(self._fetch_parent_documents)
         
-        # Build the complete LCEL chain
+        # Build the complete LCEL chain (temporarily disable reranker)
         self.retrieval_chain = (
             RunnablePassthrough.assign(
-                # Step 1: Get reranked documents
-                documents=self._compression_retriever
+                # Step 1: Get documents (skip reranker for now)
+                documents=self._ensemble_retriever
             )
             | RunnablePassthrough.assign(
                 # Step 2: Expand to parent documents (Small-to-Big)
@@ -1195,10 +1229,22 @@ class RetrievalEngine:
                 # Get parent document content (PageIndex markdown)
                 parent_content = parent_doc.pageindex_markdown if parent_doc else ""
                 
-                expanded_result = RetrievalResult(
+                # Create expanded ChunkV3 with parent content
+                expanded_chunk = ChunkV3(
                     chunk_id=chunk_result.chunk_id,
                     chunk_text=parent_content,  # Use PageIndex markdown content
                     doc_id=chunk_result.doc_id,
+                    chunk_object_key=chunk_result.chunk.chunk_object_key,
+                    parent_doc_id=chunk_result.chunk.parent_doc_id,
+                    doc_type=chunk_result.chunk.doc_type,
+                    metadata=chunk_result.chunk.metadata,
+                    entities=chunk_result.chunk.entities
+                )
+                
+                expanded_result = RetrievalResult(
+                    chunk=expanded_chunk,
+                    parent_doc=parent_doc,
+                    confidence=chunk_result.confidence,
                     metadata={
                         **chunk_result.metadata,
                         "expanded_to_parent": True,
@@ -1207,9 +1253,7 @@ class RetrievalEngine:
                         "title": parent_doc.title if parent_doc else "",
                         "chapter": parent_doc.chapter if parent_doc else "",
                         "canonical_citation": parent_doc.canonical_citation if parent_doc else "",
-                    },
-                    score=chunk_result.score,
-                    source=f"{chunk_result.source}_expanded"
+                    }
                 )
                 expanded_results.append(expanded_result)
             else:
@@ -1289,13 +1333,26 @@ class RetrievalEngine:
                     norm_title = self.query_processor.normalize_query(title)
                     if not any(a in norm_title for a in aliases):
                         continue
-                    matches.append(RetrievalResult(
+                    # Create ChunkV3 object for RetrievalResult
+                    from api.models import ChunkV3
+                    chunk = ChunkV3(
                         chunk_id=str(o.get("chunk_id")),
                         chunk_text=o.get("chunk_text") or "",
                         doc_id=str(o.get("doc_id")),
+                        chunk_object_key=o.get("chunk_object_key", ""),
+                        parent_doc_id=str(o.get("doc_id")),
+                        doc_type=o.get("doc_type", "unknown"),
                         metadata=md,
-                        score=0.99,
-                        source="shortcut",
+                        entities={}
+                    )
+                    
+                    matches.append(RetrievalResult(
+                        chunk=chunk,
+                        confidence=0.99,
+                        metadata={
+                            "source": "shortcut_section",
+                            **md
+                        }
                     ))
                     if len(matches) >= 6:
                         break
@@ -1340,13 +1397,26 @@ class RetrievalEngine:
                     if key in seen_sections:
                         continue
                     seen_sections.add(key)
-                    out.append(RetrievalResult(
+                    # Create ChunkV3 object for RetrievalResult
+                    from api.models import ChunkV3
+                    chunk = ChunkV3(
                         chunk_id=str(o.get("chunk_id")),
                         chunk_text=o.get("chunk_text") or "",
                         doc_id=str(o.get("doc_id")),
+                        chunk_object_key=o.get("chunk_object_key", ""),
+                        parent_doc_id=str(o.get("doc_id")),
+                        doc_type=o.get("doc_type", "unknown"),
                         metadata=md,
-                        score=0.7,
-                        source="shortcut",
+                        entities={}
+                    )
+                    
+                    out.append(RetrievalResult(
+                        chunk=chunk,
+                        confidence=0.7,
+                        metadata={
+                            "source": "shortcut_toc",
+                            **md
+                        }
                     ))
                     if len(out) >= 8:
                         break
@@ -1563,3 +1633,12 @@ async def direct_section_lookup(title_or_alias: str, section: str, top_k: int = 
         "statutes": [QueryProcessor.normalize_query(title_or_alias)],
     }
     return engine._shortcut_section_lookup(intent)[:top_k]
+
+
+# Rebuild Pydantic models to resolve forward references
+try:
+    from api.models import ChunkV3, ParentDocumentV3
+    RetrievalResult.model_rebuild()
+    logger.info("RetrievalResult model rebuilt successfully")
+except Exception as e:
+    logger.warning("RetrievalResult model rebuild failed", error=str(e))

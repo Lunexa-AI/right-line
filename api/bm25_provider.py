@@ -31,6 +31,7 @@ import structlog
 from rank_bm25 import BM25Okapi
 
 from api.tools.retrieval_engine import RetrievalResult, SparseProvider
+from api.models import ChunkV3
 
 logger = structlog.get_logger(__name__)
 
@@ -268,19 +269,26 @@ class ProductionBM25Provider(SparseProvider):
                 
                 metadata = self._chunk_metadata[idx]
                 
-                results.append(RetrievalResult(
+                # Create ChunkV3 object for RetrievalResult
+                chunk = ChunkV3(
                     chunk_id=metadata["chunk_id"],
                     chunk_text="",  # Will be fetched from R2 by RetrievalEngine
                     doc_id=metadata["parent_doc_id"],  # Use parent_doc_id as doc_id for consistency
+                    chunk_object_key=metadata["chunk_object_key"],
+                    parent_doc_id=metadata["parent_doc_id"],
+                    doc_type=metadata["doc_type"],
+                    metadata=metadata.get("metadata", {}),
+                    entities={}
+                )
+                
+                results.append(RetrievalResult(
+                    chunk=chunk,
+                    confidence=min(score, 1.0),  # Ensure confidence is <= 1.0
                     metadata={
-                        **metadata.get("metadata", {}),
-                        "chunk_object_key": metadata["chunk_object_key"],
-                        "parent_doc_id": metadata["parent_doc_id"],  # 🔧 FIX: Explicitly include parent_doc_id
-                        "doc_type": metadata["doc_type"],
-                        "bm25_score": score
-                    },
-                    score=score,
-                    source="bm25"
+                        "source": "bm25",
+                        "bm25_score": score,
+                        **metadata.get("metadata", {})
+                    }
                 ))
             
             # Log performance metrics
