@@ -26,6 +26,11 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from api.tools.reranker import get_reranker, RerankerConfig
 from api.models import ChunkV3 as Chunk, ParentDocumentV3 as ParentDocument
 
+# LangChain imports
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+
 logger = structlog.get_logger(__name__)
 
 # Milvus configuration from environment
@@ -64,14 +69,33 @@ OPENAI_RERANK_MODEL = os.environ.get("OPENAI_RERANK_MODEL", "")
 
 
 class RetrievalResult(BaseModel):
-    """Result from document retrieval (V3)."""
+    """Result from document retrieval (V3) - Enhanced for LangChain compatibility."""
     
-    chunk_id: str
-    chunk_text: str
-    doc_id: str
-    metadata: Dict[str, Any]
-    score: float
-    source: str  # "vector", "keyword", "hybrid"
+    chunk: "ChunkV3"
+    parent_doc: Optional["ParentDocumentV3"] = None
+    confidence: float = Field(ge=0.0, le=1.0, default=0.85)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Legacy compatibility fields
+    @property
+    def chunk_id(self) -> str:
+        return self.chunk.chunk_id
+    
+    @property
+    def chunk_text(self) -> str:
+        return self.chunk.chunk_text
+    
+    @property
+    def doc_id(self) -> str:
+        return self.chunk.doc_id
+    
+    @property
+    def score(self) -> float:
+        return self.confidence
+    
+    @property
+    def source(self) -> str:
+        return self.metadata.get("source", "hybrid")
 
 
 class RetrievalConfig(BaseModel):
@@ -698,16 +722,213 @@ class OpenAIReranker:
             return None
 
 
+class MilvusRetriever(BaseRetriever):
+    """LangChain BaseRetriever wrapper for Milvus vector search."""
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    def __init__(self, milvus_client, embedding_client, query_processor, top_k=20):
+        super().__init__()
+        object.__setattr__(self, 'milvus_client', milvus_client)
+        object.__setattr__(self, 'embedding_client', embedding_client)
+        object.__setattr__(self, 'query_processor', query_processor)
+        object.__setattr__(self, 'top_k', top_k)
+    
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        """Synchronous wrapper - not used in async context."""
+        raise NotImplementedError("Use aget_relevant_documents for async retrieval")
+    
+    async def _aget_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        """Async retrieval from Milvus with LangSmith tracing."""
+        
+        # Connect to Milvus if needed
+        if not self.milvus_client.connected:
+            await self.milvus_client.connect()
+        
+        # Process query and generate embeddings
+        normalized_query = self.query_processor.normalize_query(query)
+        clean_query, _ = self.query_processor.extract_date_context(normalized_query)
+        intent = self.query_processor.detect_intent(clean_query)
+        
+        # Generate query variants for better recall
+        variants = self.query_processor.generate_reformulations(
+            clean_query, intent, max_variants=4
+        )
+        
+        # Get embeddings for all variants
+        embeddings = await self.embedding_client.get_embeddings(variants)
+        if not embeddings:
+            logger.warning("No embeddings generated for Milvus retrieval")
+            return []
+        
+        # Perform multi-query vector search
+        doc_types = ["act", "ordinance", "si", "constitution"]
+        dense_hits_by_variant = await self.milvus_client.search_similar_multi(
+            query_vectors=embeddings,
+            top_k=self.top_k,
+            doc_type_filter=doc_types,
+        )
+        
+        # Convert to LangChain Documents
+        documents = []
+        for variant_idx, hits in enumerate(dense_hits_by_variant):
+            for hit in hits:
+                # Create Document with metadata
+                doc = Document(
+                    page_content=hit.chunk_text or "",
+                    metadata={
+                        **hit.metadata,
+                        "chunk_id": hit.chunk_id,
+                        "doc_id": hit.doc_id,
+                        "score": hit.score,
+                        "source": "milvus",
+                        "variant_idx": variant_idx,
+                        "retrieval_result": hit  # Store original for later use
+                    }
+                )
+                documents.append(doc)
+        
+        logger.info(
+            "Milvus retrieval completed",
+            query_variants=len(variants),
+            total_documents=len(documents),
+            top_score=documents[0].metadata["score"] if documents else 0
+        )
+        
+        return documents
+
+
+class BM25Retriever(BaseRetriever):
+    """LangChain BaseRetriever wrapper for BM25 sparse search."""
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    def __init__(self, bm25_provider, top_k=50):
+        super().__init__()
+        object.__setattr__(self, 'bm25_provider', bm25_provider)
+        object.__setattr__(self, 'top_k', top_k)
+    
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        """Synchronous wrapper - not used in async context."""
+        raise NotImplementedError("Use aget_relevant_documents for async retrieval")
+    
+    async def _aget_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        """Async retrieval from BM25 with LangSmith tracing."""
+        
+        # Perform BM25 search
+        bm25_results = await self.bm25_provider.search(query, top_k=self.top_k)
+        
+        # Convert to LangChain Documents
+        documents = []
+        for result in bm25_results:
+            doc = Document(
+                page_content=result.chunk_text or "",
+                metadata={
+                    **result.metadata,
+                    "chunk_id": result.chunk_id,
+                    "doc_id": result.doc_id,
+                    "score": result.score,
+                    "source": "bm25",
+                    "retrieval_result": result  # Store original for later use
+                }
+            )
+            documents.append(doc)
+        
+        logger.info(
+            "BM25 retrieval completed",
+            total_documents=len(documents),
+            top_score=documents[0].metadata["score"] if documents else 0
+        )
+        
+        return documents
+
+
 class RetrievalEngine:
-    """Main retrieval engine combining vector and keyword search with R2 content fetching."""
+    """
+    LangChain-based retrieval engine implementing Task 4.3.
+    
+    This class uses LangChain components for composable, traceable retrieval:
+    - EnsembleRetriever for parallel dense + sparse search with RRF
+    - ContextualCompressionRetriever with CrossEncoderReranker
+    - RunnableLambda for Small-to-Big parent document expansion
+    - Full LangSmith tracing and observability
+    """
     
     def __init__(self):
+        # Initialize core components
         self.milvus_client = MilvusClient()
         self.embedding_client = EmbeddingClient()
         self.query_processor = QueryProcessor()
-        self._preconditions_checked = False
-        self._r2_client = None
-        self._r2_semaphore = asyncio.Semaphore(R2_CONCURRENT_REQUESTS)
+        
+        # Initialize BM25 provider
+        from api.bm25_provider import ProductionBM25Provider
+        self.bm25_provider = ProductionBM25Provider()
+        
+        # Initialize LangChain retrievers
+        self.milvus_retriever = MilvusRetriever(
+            milvus_client=self.milvus_client,
+            embedding_client=self.embedding_client,
+            query_processor=self.query_processor,
+            top_k=20
+        )
+        
+        self.bm25_retriever = BM25Retriever(
+            bm25_provider=self.bm25_provider,
+            top_k=50
+        )
+        
+        # Create EnsembleRetriever for parallel execution with RRF
+        from langchain.retrievers import EnsembleRetriever
+        self._ensemble_retriever = EnsembleRetriever(
+            retrievers=[self.milvus_retriever, self.bm25_retriever],
+            weights=[0.6, 0.4],  # Favor vector search slightly
+            search_type="rrf",   # Use Reciprocal Rank Fusion
+            c=60  # RRF constant (same as original config.rrf_k)
+        )
+        
+        # Create CrossEncoder reranker
+        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+        from langchain.retrievers.document_compressors import CrossEncoderReranker
+        cross_encoder = HuggingFaceCrossEncoder(
+            model_name="cross-encoder/ms-marco-TinyBERT-L-2-v2"
+        )
+        self.reranker = CrossEncoderReranker(
+            model=cross_encoder
+        )
+        
+        # Create ContextualCompressionRetriever with reranking
+        from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+        self._compression_retriever = ContextualCompressionRetriever(
+            base_retriever=self._ensemble_retriever,
+            base_compressor=self.reranker
+        )
+        
+        # Create parent document fetcher as RunnableLambda
+        from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+        self._parent_fetcher = RunnableLambda(self._fetch_parent_documents)
+        
+        # Build the complete LCEL chain
+        self.retrieval_chain = (
+            RunnablePassthrough.assign(
+                # Step 1: Get reranked documents
+                documents=self._compression_retriever
+            )
+            | RunnablePassthrough.assign(
+                # Step 2: Expand to parent documents (Small-to-Big)
+                results=self._parent_fetcher
+            )
+            | RunnableLambda(self._format_final_results)
+        )
     
     def _get_r2_client(self):
         """Get or create R2 client for content fetching."""
@@ -1142,339 +1363,167 @@ class RetrievalEngine:
         """Async context manager exit."""
         await self.milvus_client.disconnect()
     
+    async def _fetch_parent_documents(self, input_data: Dict[str, Any]) -> List[RetrievalResult]:
+        """
+        RunnableLambda function for Small-to-Big parent document fetching.
+        
+        This implements the core Small-to-Big retrieval pattern where we:
+        1. Use small chunks for precise retrieval
+        2. Fetch their parent documents for rich context
+        """
+        documents = input_data.get("documents", [])
+        if not documents:
+            return []
+        
+        logger.info("Starting Small-to-Big parent document expansion", 
+                   chunk_count=len(documents))
+        
+        # Extract unique parent document requests
+        parent_requests = []
+        doc_to_parent_map = {}
+        
+        for i, doc in enumerate(documents):
+            retrieval_result = doc.metadata.get("retrieval_result")
+            if not retrieval_result:
+                continue
+                
+            parent_doc_id = retrieval_result.doc_id
+            doc_type = retrieval_result.metadata.get("doc_type", "")
+            
+            parent_key = (parent_doc_id, doc_type)
+            if parent_key not in doc_to_parent_map:
+                parent_requests.append(parent_key)
+                doc_to_parent_map[parent_key] = []
+            doc_to_parent_map[parent_key].append(i)
+        
+        # Fetch parent documents in parallel (reuse existing logic)
+        parent_docs = await self._fetch_parent_documents_batch(parent_requests)
+        
+        # Create RetrievalResult objects with parent documents
+        results = []
+        for i, doc in enumerate(documents):
+            retrieval_result = doc.metadata.get("retrieval_result")
+            if not retrieval_result:
+                continue
+            
+            # Find corresponding parent document
+            parent_doc_id = retrieval_result.doc_id
+            doc_type = retrieval_result.metadata.get("doc_type", "")
+            parent_key = (parent_doc_id, doc_type)
+            
+            parent_doc = None
+            if parent_key in doc_to_parent_map:
+                parent_idx = parent_requests.index(parent_key)
+                if parent_idx < len(parent_docs):
+                    parent_doc = parent_docs[parent_idx]
+            
+            # Create enhanced chunk from retrieval result
+            chunk = Chunk(
+                doc_id=retrieval_result.doc_id,
+                chunk_id=retrieval_result.chunk_id,
+                chunk_text=retrieval_result.chunk_text or doc.page_content,
+                tree_node_id=retrieval_result.metadata.get("tree_node_id", "0000")
+            )
+            
+            # Calculate confidence based on score and source
+            confidence = min(1.0, max(0.7, retrieval_result.score))
+            
+            result = RetrievalResult(
+                chunk=chunk,
+                parent_doc=parent_doc,
+                confidence=confidence,
+                metadata={
+                    **retrieval_result.metadata,
+                    "expanded_to_parent": parent_doc is not None,
+                    "source": retrieval_result.source,
+                    "langchain_processed": True
+                }
+            )
+            results.append(result)
+        
+        success_count = sum(1 for r in results if r.parent_doc is not None)
+        logger.info(
+            "Small-to-Big expansion completed",
+            total_chunks=len(documents),
+            parent_docs_fetched=success_count,
+            expansion_rate=round(success_count / len(documents), 2) if documents else 0
+        )
+        
+        return results
+    
+    async def _format_final_results(self, input_data: Dict[str, Any]) -> List[RetrievalResult]:
+        """Format the final results for return."""
+        return input_data.get("results", [])
+    
     async def retrieve(
         self,
         query: str,
         config: Optional[RetrievalConfig] = None
     ) -> List[RetrievalResult]:
-        """Retrieve relevant chunks for a query using hybrid search."""
+        """
+        Main retrieval method using the LangChain LCEL chain.
+        
+        This method orchestrates the entire retrieval pipeline:
+        1. Parallel dense + sparse retrieval (EnsembleRetriever)
+        2. Reranking (ContextualCompressionRetriever)
+        3. Parent document expansion (RunnableLambda)
+        """
         if config is None:
             config = RetrievalConfig()
         
         start_time = time.time()
         
-        # Preconditions (one-time per engine lifetime)
-        self._check_preconditions()
-
-        # Process query: normalize, detect date, intent
-        normalized_query = self.query_processor.normalize_query(query)
-        clean_query, date_context = self.query_processor.extract_date_context(normalized_query)
-        intent = self.query_processor.detect_intent(clean_query)
-
-        # Fast paths
-        if intent.get("section_lookup"):
-            fp = self._shortcut_section_lookup(intent)
-            if fp:
-                logger.info("Using direct section lookup fast-path", count=len(fp))
-                return fp[:config.top_k]
-        if intent.get("statute_lookup"):
-            toc = self._shortcut_statute_toc(intent)
-            if toc:
-                logger.info("Using statute TOC fast-path", count=len(toc))
-                return toc[:config.top_k]
-        
-        # Use date from config or extracted date
-        effective_date = config.date_filter or date_context
-        
         logger.info(
-            "Starting retrieval",
-            original_query=query[:100],
-            normalized_query=clean_query[:100],
-            date_filter=effective_date,
-            top_k=config.top_k,
-            intent=intent
+            "Starting LangChain retrieval pipeline",
+            query=query[:100],
+            top_k=config.top_k
         )
         
-        # Multi-query expansion
-        intent = intent  # already computed
-        variants = self.query_processor.generate_reformulations(clean_query, intent, max_variants=config.expansions_count)
-        # Batch embed variants
-        embeddings = await self.embedding_client.get_embeddings(variants)
-        results: List[RetrievalResult] = []
-        if embeddings:
-            # Dense retrieval
-            doc_types = ["act", "ordinance", "si", "constitution"]
-            dense_hits_by_variant = await self.milvus_client.search_similar_multi(
-                query_vectors=embeddings,
-                top_k=config.top_k_per_variant,
-                doc_type_filter=doc_types,
-            )
-            # Sparse retrieval using production BM25 (optional)
-            sparse_hits_by_variant: List[List[RetrievalResult]] = []
-            if ENABLE_SPARSE:
-                try:
-                    from api.bm25_provider import production_bm25_provider
-                    sparse_start = time.time()
-                    
-                    # Use production BM25 for all variants
-                    for v in variants:
-                        bm25_results = await production_bm25_provider.search(v, top_k=50)
-                        sparse_hits_by_variant.append(bm25_results)
-                    
-                    sparse_time = time.time() - sparse_start
-                    logger.info(
-                        "BM25 sparse search completed",
-                        variants_count=len(variants),
-                        total_results=sum(len(hits) for hits in sparse_hits_by_variant),
-                        elapsed_ms=round(sparse_time * 1000, 2)
-                    )
-                    
-                except ImportError:
-                    logger.warning("Production BM25 provider not available, falling back to SimpleSparseProvider")
-                    sparse = SimpleSparseProvider()
-                    for v in variants:
-                        sh = await sparse.search(v, top_k=50)
-                        sparse_hits_by_variant.append(sh)
-
-            # ========================================================================
-            # TASK 3.1: Optimized RRF (Reciprocal Rank Fusion) for production performance
-            # ========================================================================
-            rrf_start = time.time()
-            logger.info("Starting optimized RRF fusion", 
-                       dense_variants=len(dense_hits_by_variant),
-                       sparse_variants=len(sparse_hits_by_variant))
+        try:
+            # Execute the complete LCEL chain
+            results = await self.retrieval_chain.ainvoke({"query": query})
             
-            rrf_scores: Dict[str, float] = {}
-            rrf_details: Dict[str, Dict[str, Any]] = {}
-            K = config.rrf_k
+            # Apply top_k limit
+            if len(results) > config.top_k:
+                results = results[:config.top_k]
             
-            # Dense contributions (vector search results)
-            dense_contribution_count = 0
-            for variant_idx, hits in enumerate(dense_hits_by_variant):
-                for rank, hit in enumerate(hits, start=1):
-                    key = hit.chunk_id
-                    rrf_contribution = 1.0 / (K + rank)
-                    rrf_scores[key] = rrf_scores.get(key, 0.0) + rrf_contribution
-                    dense_contribution_count += 1
-                    
-                    # Keep track of best hit for this chunk_id
-                    existing = rrf_details.get(key)
-                    if not existing or hit.score > existing["hit"].score:
-                        rrf_details[key] = {
-                            "hit": hit, 
-                            "variant": variant_idx, 
-                            "source": "dense",
-                            "rrf_contribution": rrf_contribution
-                        }
-            
-            # Sparse contributions (BM25 results)  
-            sparse_contribution_count = 0
-            for variant_idx, hits in enumerate(sparse_hits_by_variant, start=len(dense_hits_by_variant)):
-                for rank, hit in enumerate(hits, start=1):
-                    key = hit.chunk_id
-                    rrf_contribution = 1.0 / (K + rank)
-                    rrf_scores[key] = rrf_scores.get(key, 0.0) + rrf_contribution
-                    sparse_contribution_count += 1
-                    
-                    # Prefer dense hits for ties, but allow sparse-only results
-                    existing = rrf_details.get(key)
-                    if not existing or (hit.score > existing["hit"].score and existing["source"] != "dense"):
-                        rrf_details[key] = {
-                            "hit": hit,
-                            "variant": variant_idx,
-                            "source": "sparse", 
-                            "rrf_contribution": rrf_contribution
-                        }
-
-            # Build optimized fused results with performance optimizations
-            fused: List[Tuple[str, float]] = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-            
-            # Apply diversity and quality filters
-            seen_per_doc: Dict[str, int] = {}
-            final: List[RetrievalResult] = []
-            quality_filtered = 0
-            diversity_filtered = 0
-            
-            for chunk_id, rrf_score in fused:
-                detail = rrf_details[chunk_id]
-                hit = detail["hit"]
-                
-                # Quality gate: apply minimum score filter only to vector results
-                if hit.source == "vector" and hit.score < config.min_score:
-                    quality_filtered += 1
-                    continue
-                
-                # Diversity control: limit chunks per document
-                doc_id = hit.doc_id
-                cnt = seen_per_doc.get(doc_id, 0)
-                if cnt >= config.max_per_doc:
-                    diversity_filtered += 1
-                    continue
-                
-                seen_per_doc[doc_id] = cnt + 1
-                
-                # Enrich metadata with RRF information
-                hit.metadata.update({
-                    "rrf_score": round(rrf_score, 4),
-                    "rrf_rank": len(final) + 1,
-                    "fusion_source": detail["source"]
-                })
-                
-                final.append(hit)
-                
-                if len(final) >= config.top_k:
-                    break
-            
-            rrf_time = time.time() - rrf_start
-            
-            # Log RRF performance metrics 
-            logger.info(
-                "Optimized RRF fusion completed",
-                dense_contributions=dense_contribution_count,
-                sparse_contributions=sparse_contribution_count,
-                unique_chunks=len(rrf_scores),
-                quality_filtered=quality_filtered,
-                diversity_filtered=diversity_filtered,
-                final_results=len(final),
-                rrf_time_ms=round(rrf_time * 1000, 2),
-                top_rrf_score=final[0].metadata.get("rrf_score") if final else 0
-            )
-            
-            # TASK 3.2: Reranking (MVP: disabled for <2.5s latency, Phase 4: optimize)
-            # ====================================================================
-            # Note: Reranking implemented but disabled for MVP latency requirements
-            # TODO Phase 4: Optimize with model caching, smaller models, or async loading
-            enable_reranking = os.environ.get("ENABLE_RERANKING", "false").lower() == "true"
-            if enable_reranking and final and len(final) >= 3:
-                logger.info("Starting reranking", candidates=len(final))
-                reranker = await get_reranker()
-                final = await reranker.rerank(
-                    query=clean_query,
-                    candidates=final,
-                    top_k=config.top_k
-                )
-            
-            results = final
-        else:
-            logger.warning("No embeddings generated for variants; skipping search")
-        
-        # ========================================================================
-        # TASK 3.1: Small-to-Big Retrieval - Expand chunks to parent documents
-        # ========================================================================
-        if results:
-            # Step 1: Expand small chunks to parent documents for rich synthesis context
-            logger.info("Expanding to parent documents (small-to-big)", chunk_count=len(results))
-            results = await self._expand_to_parent_documents(results)
-            
-            # Step 2: For chunks without parent docs, fetch original chunk content from R2
-            chunks_needing_content = [
-                (i, r) for i, r in enumerate(results) 
-                if not r.chunk_text and not r.metadata.get("expanded_to_parent")
-            ]
-            
-            if chunks_needing_content:
-                logger.info("Fetching chunk content from R2 for non-expanded results", 
-                           count=len(chunks_needing_content))
-                
-                chunk_keys = []
-                chunk_indices = []
-                for i, result in chunks_needing_content:
-                    chunk_key = result.metadata.get("chunk_object_key", "")
-                    if chunk_key:
-                        chunk_keys.append(chunk_key)
-                        chunk_indices.append(i)
-                
-                if chunk_keys:
-                    # Batch fetch chunk content from R2
-                    chunk_contents = await self._fetch_chunk_contents_batch(chunk_keys)
-                    
-                    # Update results with fetched content
-                    for content_idx, result_idx in enumerate(chunk_indices):
-                        if content_idx < len(chunk_contents) and chunk_contents[content_idx] is not None:
-                            chunk_data = chunk_contents[content_idx]
-                            results[result_idx].chunk_text = chunk_data.chunk_text
-                            results[result_idx].metadata.update({
-                                "section_path": chunk_data.section_path,
-                                "start_char": chunk_data.start_char,
-                                "end_char": chunk_data.end_char,
-                            })
-            
-            # Log final content status
-            expanded_count = sum(1 for r in results if r.metadata.get("expanded_to_parent"))
-            content_count = sum(1 for r in results if r.chunk_text)
+            elapsed_ms = (time.time() - start_time) * 1000
             
             logger.info(
-                "Small-to-big content retrieval completed",
-                total_results=len(results),
-                expanded_to_parents=expanded_count,
-                chunk_content_fetched=content_count - expanded_count,
-                ready_for_synthesis=content_count
-            )
-        
-        # ========================================================================
-        # TASK 3.1: Comprehensive Performance Monitoring & Observability  
-        # ========================================================================
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        
-        # Calculate detailed performance metrics
-        performance_metrics = {
-            "total_latency_ms": elapsed_ms,
-            "results_count": len(results),
-            "top_score": results[0].score if results else 0,
-            "query_variants": len(variants) if 'variants' in locals() else 1,
-            "dense_search_enabled": bool(embeddings),
-            "sparse_search_enabled": ENABLE_SPARSE and len(sparse_hits_by_variant) > 0,
-            "small_to_big_enabled": bool(results and any(r.metadata.get("expanded_to_parent") for r in results)),
-            "r2_content_fetched": bool(results and any(r.chunk_text for r in results)),
-        }
-        
-        # Add fusion metrics if available
-        if 'rrf_scores' in locals():
-            performance_metrics.update({
-                "rrf_candidates": len(rrf_scores),
-                "rrf_fusion_time_ms": round(rrf_time * 1000, 2),
-                "dense_contributions": dense_contribution_count,
-                "sparse_contributions": sparse_contribution_count,
-            })
-        
-        # Add parent document metrics if available  
-        if results:
-            parent_expanded_count = sum(1 for r in results if r.metadata.get("expanded_to_parent"))
-            performance_metrics.update({
-                "parent_docs_expanded": parent_expanded_count,
-                "parent_expansion_rate": round(parent_expanded_count / len(results), 2),
-                "avg_content_length": round(sum(len(r.chunk_text) for r in results if r.chunk_text) / max(1, len([r for r in results if r.chunk_text])), 0)
-            })
-        
-        # Log comprehensive performance metrics
-        logger.info(
-            "Production hybrid retrieval completed",
-            **performance_metrics
-        )
-        
-        # Performance alerting - warn if exceeding production thresholds
-        if elapsed_ms > 2500:  # > 2.5s P95 target
-            logger.warning(
-                "Retrieval latency exceeded target",
-                latency_ms=elapsed_ms,
-                target_ms=2500,
-                query_preview=query[:50]
-            )
-        
-        # Quality alerting - warn if low relevance
-        if results and results[0].score < 0.3:
-            logger.warning(
-                "Low relevance results detected", 
-                top_score=results[0].score,
+                "LangChain retrieval pipeline completed",
                 results_count=len(results),
-                query_preview=query[:50]
+                elapsed_ms=round(elapsed_ms, 2),
+                top_confidence=results[0].confidence if results else 0,
+                parent_expansion_rate=sum(1 for r in results if r.parent_doc) / len(results) if results else 0
             )
-        
-        return results
+            
+            return results
+            
+        except Exception as e:
+            logger.error(
+                "LangChain retrieval pipeline failed",
+                error=str(e),
+                query=query[:50]
+            )
+            raise
     
     def calculate_confidence(self, results: List[RetrievalResult]) -> float:
-        """Calculate confidence score based on retrieval results."""
+        """Calculate overall confidence score for the retrieval results."""
         if not results:
             return 0.0
-        # Use a blend of top score and average of top 5, with diversity bonus
-        top_score = results[0].score
-        top5 = results[:5]
-        avg5 = sum(r.score for r in top5) / max(1, len(top5))
-        confidence = 0.7 * top_score + 0.3 * avg5
-        doc_diversity = len({r.doc_id for r in top5})
-        if doc_diversity >= 3:
-            confidence = min(1.0, confidence + 0.05)
-        return round(confidence, 3)
+        
+        # Use confidence scores from individual results
+        confidences = [r.confidence for r in results]
+        
+        # Weighted average: top result gets more weight
+        if len(confidences) == 1:
+            return confidences[0]
+        
+        weights = [0.5, 0.3, 0.2] + [0.1] * (len(confidences) - 3)
+        weights = weights[:len(confidences)]
+        
+        weighted_confidence = sum(c * w for c, w in zip(confidences, weights)) / sum(weights)
+        return round(weighted_confidence, 3)
 
 
 # Convenience functions for direct use
@@ -1486,16 +1535,10 @@ async def search_legal_documents(
     min_score: float = 0.1
 ) -> Tuple[List[RetrievalResult], float]:
     """
-    Search legal documents and return results with confidence.
+    LangChain-based legal document search with compatibility wrapper.
     
-    Args:
-        query: User query text
-        top_k: Maximum number of results
-        date_filter: ISO date for temporal filtering
-        min_score: Minimum similarity score threshold
-    
-    Returns:
-        Tuple of (results, confidence_score)
+    This function provides the same API as the original while using
+    the new LangChain-based implementation underneath.
     """
     config = RetrievalConfig(
         top_k=top_k,
@@ -1503,10 +1546,11 @@ async def search_legal_documents(
         min_score=min_score
     )
     
-    async with RetrievalEngine() as engine:
-        results = await engine.retrieve(query, config)
-        confidence = engine.calculate_confidence(results)
-        return results, confidence
+    engine = RetrievalEngine()
+    results = await engine.retrieve(query, config)
+    confidence = engine.calculate_confidence(results)
+    
+    return results, confidence
 
 
 # Debug/utility endpoints helpers
