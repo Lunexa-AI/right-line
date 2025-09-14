@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.analytics import log_query
 from api.auth import User, get_current_user
-from api.composer import compose_legal_answer
+from api.composer.synthesis import compose_legal_answer
 from api.models import (
     Citation,
     FeedbackRequest,
@@ -15,7 +15,7 @@ from api.models import (
     QueryRequest,
     QueryResponse,
 )
-from api.retrieval import search_legal_documents
+from api.tools.retrieval_engine import search_legal_documents
 from libs.firebase.client import get_firestore_async_client
 from libs.firestore.feedback import save_feedback_to_firestore
 

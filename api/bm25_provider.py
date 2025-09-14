@@ -30,7 +30,7 @@ from typing import List, Dict, Any, Optional
 import structlog
 from rank_bm25 import BM25Okapi
 
-from api.retrieval import RetrievalResult, SparseProvider
+from api.tools.retrieval_engine import RetrievalResult, SparseProvider
 
 logger = structlog.get_logger(__name__)
 

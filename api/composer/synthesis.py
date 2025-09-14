@@ -21,7 +21,7 @@ import structlog
 from pydantic import BaseModel, Field, ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from api.retrieval import RetrievalResult
+from api.tools.retrieval_engine import RetrievalResult
 from api.models import ParentDocumentV3 as ParentDocument
 
 logger = structlog.get_logger(__name__)

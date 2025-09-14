@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 
 from libs.common.settings import get_settings
 from api.models import QueryRequest, QueryResponse
-from api.retrieval import search_legal_documents
-from api.composer import compose_legal_answer
+from api.tools.retrieval_engine import search_legal_documents
+from api.composer.synthesis import compose_legal_answer
 
 logger = structlog.get_logger(__name__)
 

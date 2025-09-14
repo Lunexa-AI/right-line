@@ -17,7 +17,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from typing import Dict, Any, List
 
-from api.retrieval import RetrievalEngine, RetrievalResult, RetrievalConfig
+from api.tools.retrieval_engine import RetrievalEngine, RetrievalResult, RetrievalConfig
 from api.models import QueryRequest
 
 
@@ -184,7 +184,7 @@ class TestRetrievalEngineR2Integration:
         config = RetrievalConfig(top_k=5)
         
         # Mock Milvus search results as RetrievalResult objects (without chunk_text)
-        from api.retrieval import RetrievalResult
+        from api.tools.retrieval_engine import RetrievalResult
         milvus_retrieval_results = []
         for result in sample_milvus_results:
             milvus_retrieval_results.append(RetrievalResult(

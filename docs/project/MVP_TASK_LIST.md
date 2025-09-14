@@ -128,66 +128,66 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
 > - **LangGraph provides**: StateGraph runtime, node execution + state merge, checkpointing interface, tracing hooks, minimal streaming support via LangChain integration.
 > - **You implement**: `AgentState` schema, node functions, routing/edges, concrete checkpointer wiring, SSE endpoint and event protocol, tool integrations (retrieval, reranker, R2 fetch), caching and guardrails, latency budgets.
 
-### 4.1. Foundational Setup: State & Orchestrator
--   **Task**: **Refactor Repo Structure**:
-    -   [ ] Create new directories: `api/schemas`, `api/orchestrators`, `api/tools`, `api/composer`.
-    -   [ ] Move `api/retrieval.py` to `api/tools/retrieval_engine.py`.
-    -   [ ] Move reranker logic to `api/tools/reranker.py`.
-    -   [ ] Move prompt logic from `api/composer.py` to `api/composer/prompts.py` and rename the file to `synthesis.py`.
-    -   **Acceptance**: App boots; imports resolve; old endpoints unchanged.
-    -   **Tests**: `pytest -k "imports and routers"` runs without failures.
+### 4.1. Foundational Setup: State & Orchestrator ✅ **COMPLETED**
+-   **Task**: **Refactor Repo Structure** ✅ **DONE**:
+    -   [x] Create new directories: `api/schemas`, `api/orchestrators`, `api/tools`, `api/composer`.
+    -   [x] Move `api/retrieval.py` to `api/tools/retrieval_engine.py`.
+    -   [x] Move reranker logic to `api/tools/reranker.py`.
+    -   [x] Move prompt logic from `api/composer.py` to `api/composer/prompts.py` and rename the file to `synthesis.py`.
+    -   **Acceptance**: ✅ App boots; imports resolve; old endpoints unchanged.
+    -   **Tests**: ✅ `pytest -k "imports and routers"` runs without failures.
     -   **Responsibilities**:
         -   Framework: N/A
         -   You: File moves, imports, path updates, CI green.
     -   **Sanity checklist**:
-        -   [ ] No circular imports; [ ] `uvicorn` starts; [ ] `/docs` loads; [ ] `/api/v1/query` still auth-protected.
--   **Task**: **Define Agent State**:
-    -   [ ] Create `api/schemas/agent_state.py`.
-    -   [ ] Implement the `AgentState` Pydantic model (v1) including `trace_id`, `raw_query`, `session_history_ids`, `jurisdiction`, `date_context`, `rewritten_query`, `hypothetical_docs`, `sub_questions`, `candidate_chunk_ids`, `reranked_chunk_ids`, `parent_doc_keys`, `final_answer`, `cited_sources`.
-    -   **Acceptance**: JSON-serializable, < 8 KB typical.
-    -   **Tests**: Round-trip schema tests; rejects oversize arrays; validates enums.
+        -   [x] No circular imports; [x] `uvicorn` starts; [x] `/docs` loads; [x] `/api/v1/query` still auth-protected.
+-   **Task**: **Define Agent State** ✅ **DONE**:
+    -   [x] Create `api/schemas/agent_state.py`.
+    -   [x] Implement the `AgentState` Pydantic model (v1) including `trace_id`, `raw_query`, `session_history_ids`, `jurisdiction`, `date_context`, `rewritten_query`, `hypothetical_docs`, `sub_questions`, `candidate_chunk_ids`, `reranked_chunk_ids`, `parent_doc_keys`, `final_answer`, `cited_sources`.
+    -   **Acceptance**: ✅ JSON-serializable, < 8 KB typical.
+    -   **Tests**: ✅ Round-trip schema tests; rejects oversize arrays; validates enums.
     -   **Responsibilities**:
         -   Framework: State merge mechanics, validation at runtime.
         -   You: Schema design, versioning, validators, migrations when evolving.
     -   **Sanity checklist**:
-        -   [ ] State dumps to JSON; [ ] Enum fields validated; [ ] Oversized inputs rejected.
--   **Task**: **Implement LangGraph Orchestrator**:
-    -   [ ] Create `api/orchestrators/query_orchestrator.py`.
-    -   [ ] Define `StateGraph` with `AgentState`.
-    -   [ ] Implement placeholder nodes: `route_intent`, `rewrite_expand`, `retrieve_concurrent`, `rerank`, `expand_parents`, `synthesize_stream`.
-    -   [ ] Add edges and conditional routing logic.
-    -   [ ] Integrate `MemorySaver` checkpointer (in-memory for now).
-    -   [ ] Add `graph.draw_svg()` export script to `docs/diagrams/`.
-    -   **Acceptance**: Graph compiles and can run a no-op flow.
-    -   **Tests**: Node stubs unit-tested; compile-time test ensures edges consistent.
+        -   [x] State dumps to JSON; [x] Enum fields validated; [x] Oversized inputs rejected.
+-   **Task**: **Implement LangGraph Orchestrator** ✅ **DONE**:
+    -   [x] Create `api/orchestrators/query_orchestrator.py`.
+    -   [x] Define `StateGraph` with `AgentState`.
+    -   [x] Implement placeholder nodes: `route_intent`, `rewrite_expand`, `retrieve_concurrent`, `rerank`, `expand_parents`, `synthesize_stream`.
+    -   [x] Add edges and conditional routing logic.
+    -   [x] Integrate `MemorySaver` checkpointer (in-memory for now).
+    -   [x] Add `graph.draw_svg()` export script to `docs/diagrams/`.
+    -   **Acceptance**: ✅ Graph compiles and can run a no-op flow.
+    -   **Tests**: ✅ Node stubs unit-tested; compile-time test ensures edges consistent.
     -   **Responsibilities**:
         -   Framework: Graph runtime, node scheduling, state update merge.
         -   You: Node functions, edges, checkpointer selection and wiring, SVG export.
     -   **Sanity checklist**:
-        -   [ ] Entry node set; [ ] All nodes reachable; [ ] Conditional routes covered; [ ] SVG exported.
+        -   [x] Entry node set; [x] All nodes reachable; [x] Conditional routes covered; [x] SVG exported.
 
-### 4.2. Implement Agent Nodes: Pre-Processing
--   **Task**: **Intent Router Node**:
-    -   [ ] Implement heuristics for `summarize`, `conversational`, `qa`, jurisdiction/date detection.
-    -   [ ] Fallback to mini-LLM (≤ 200 tokens, temp 0.0) when ambiguous.
-    -   **Acceptance**: P50 < 70 ms heuristics; P95 < 250 ms with mini-LLM.
-    -   **Tests**: Heuristic unit tests; LLM stubbed with fixtures.
+### 4.2. Implement Agent Nodes: Pre-Processing ✅ **COMPLETED**
+-   **Task**: **Intent Router Node** ✅ **DONE**:
+    -   [x] Implement heuristics for `summarize`, `conversational`, `qa`, jurisdiction/date detection.
+    -   [x] Fallback to mini-LLM (≤ 200 tokens, temp 0.0) when ambiguous.
+    -   **Acceptance**: ✅ P50 < 70 ms heuristics; P95 < 250 ms with mini-LLM.
+    -   **Tests**: ✅ Heuristic unit tests; LLM stubbed with fixtures.
     -   **Responsibilities**:
         -   Framework: Node execution + merge.
         -   You: Heuristics, LLM call, timeouts, outputs (`intent`, `jurisdiction`, `date_context`).
     -   **Sanity checklist**:
-        -   [ ] Ambiguous inputs route to fallback; [ ] Deterministic at temp=0; [ ] Timeouts enforced.
--   **Task**: **Rewrite & Expand Node**:
-    -   [ ] Implement history-aware rewrite.
-    -   [ ] Implement **Multi-HyDE** (3–5 hypotheticals, ≤ 120 tokens each) in parallel with timeouts.
-    -   [ ] Optional sub-question decomposition (cap 3) behind heuristics.
-    -   **Acceptance**: Produces rewrite + ≥ 2 hypotheticals under 450 ms P95.
-    -   **Tests**: Async timeout tests; determinism at temp 0; schema constraints.
+        -   [x] Ambiguous inputs route to fallback; [x] Deterministic at temp=0; [x] Timeouts enforced.
+-   **Task**: **Rewrite & Expand Node** ✅ **DONE**:
+    -   [x] Implement history-aware rewrite.
+    -   [x] Implement **Multi-HyDE** (3–5 hypotheticals, ≤ 120 tokens each) in parallel with timeouts.
+    -   [x] Optional sub-question decomposition (cap 3) behind heuristics.
+    -   **Acceptance**: ✅ Produces rewrite + ≥ 2 hypotheticals under 450 ms P95.
+    -   **Tests**: ✅ Async timeout tests; determinism at temp 0; schema constraints.
     -   **Responsibilities**:
         -   Framework: Node execution + merge.
         -   You: Rewrite prompt, parallel fan-out, caps/timeouts, output fields.
     -   **Sanity checklist**:
-        -   [ ] Caps respected; [ ] On timeout, degrade to rewrite-only; [ ] No empty outputs.
+        -   [x] Caps respected; [x] On timeout, degrade to rewrite-only; [x] No empty outputs.
 
 ### 4.3. Implement Agent Nodes: Retrieval & Synthesis
 -   **Task**: **Integrate Retrieval as a Tool (The LangChain Way)**:

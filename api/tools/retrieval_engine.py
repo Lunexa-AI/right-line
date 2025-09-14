@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import reranker for quality improvement
-from .reranker import get_reranker, RerankerConfig
+from api.tools.reranker import get_reranker, RerankerConfig
 from api.models import ChunkV3 as Chunk, ParentDocumentV3 as ParentDocument
 
 logger = structlog.get_logger(__name__)

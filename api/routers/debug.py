@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..retrieval import RetrievalEngine, RetrievalConfig
+from api.tools.retrieval_engine import RetrievalEngine, RetrievalConfig
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Debug"])

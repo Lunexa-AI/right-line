@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
-from api.composer import compose_legal_answer, ComposedAnswer
-from api.retrieval import RetrievalResult
+from api.composer.synthesis import compose_legal_answer, ComposedAnswer
+from api.tools.retrieval_engine import RetrievalResult
 
 @pytest.fixture
 def mock_retrieval_results():
@@ -25,7 +25,7 @@ def mock_retrieval_results():
     ]
 
 @pytest.mark.asyncio
-@patch('api.composer.httpx.AsyncClient')
+@patch('api.composer.synthesis.httpx.AsyncClient')
 async def test_compose_legal_answer_with_openai_success(mock_async_client_class, mock_retrieval_results):
     """
     Tests that compose_legal_answer successfully generates a response using OpenAI when enabled.
