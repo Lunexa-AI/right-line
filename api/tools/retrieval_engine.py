@@ -1488,10 +1488,15 @@ class RetrievalEngine:
                     parent_doc = parent_docs[parent_idx]
             
             # Create enhanced chunk from retrieval result
+            # Use parent document content if available (Small-to-Big strategy)
+            chunk_text = retrieval_result.chunk_text or doc.page_content
+            if parent_doc and parent_doc.pageindex_markdown:
+                chunk_text = parent_doc.pageindex_markdown  # Use full parent content
+            
             chunk = Chunk(
                 doc_id=retrieval_result.doc_id,
                 chunk_id=retrieval_result.chunk_id,
-                chunk_text=retrieval_result.chunk_text or doc.page_content,
+                chunk_text=chunk_text,
                 tree_node_id=retrieval_result.metadata.get("tree_node_id", "0000")
             )
             

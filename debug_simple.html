@@ -129,6 +129,60 @@
             overflow-y: auto;
         }
         
+        .synthesis-section {
+            background: #065f46;
+            border: 1px solid #059669;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .synthesis-section h3 {
+            color: #a7f3d0;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .tldr {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            color: #e2e8f0;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+        
+        .key-points {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            color: #e2e8f0;
+        }
+        
+        .key-points ul {
+            margin-left: 1.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .key-points li {
+            margin-bottom: 0.5rem;
+            color: #d1fae5;
+        }
+        
+        .synthesis-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #059669;
+            font-size: 0.875rem;
+            color: #a7f3d0;
+        }
+        
         .loading { text-align: center; color: #60a5fa; font-style: italic; }
         .error { background: #7f1d1d; color: #fecaca; padding: 1rem; border-radius: 0.5rem; }
         .success { background: #065f46; color: #a7f3d0; padding: 1rem; border-radius: 0.5rem; }
@@ -166,8 +220,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏛️ RightLine Debug Console</h1>
-            <p>Test PageIndex-powered legal document retrieval</p>
+            <h1>🏛️ RightLine AI Legal Assistant</h1>
+            <p>Test the complete agentic pipeline: Retrieval + AI Synthesis</p>
         </div>
         
         <div class="card">
@@ -193,9 +247,9 @@
         </div>
         
         <div class="card">
-            <h2>🔍 Query Testing</h2>
+            <h2>🤖 AI Legal Query Testing</h2>
             <p style="color: #94a3b8; margin-bottom: 1rem;">
-                Note: This tests the actual production endpoints. Authentication bypassed for debugging.
+                This tests the complete agentic pipeline: hybrid search + AI synthesis. Authentication bypassed for debugging.
             </p>
             
             <div class="input-group">
@@ -208,7 +262,7 @@
             </div>
             
             <button class="btn" onclick="executeDirectQuery()">
-                🚀 Test Retrieval Engine
+                🤖 Get AI Legal Analysis
             </button>
             
             <div id="query-results"></div>
@@ -266,7 +320,7 @@
                 return;
             }
             
-            resultsDiv.innerHTML = '<div class="loading">🔍 Executing retrieval...</div>';
+            resultsDiv.innerHTML = '<div class="loading">🤖 Processing query with AI synthesis...</div>';
             
             const startTime = Date.now();
             
@@ -301,29 +355,59 @@
         function displayResults(data) {
             const resultsDiv = document.getElementById('query-results');
             const latency = data.performance?.latency_ms || 0;
-            const performanceClass = latency < 2500 ? 'status-ok' : 'status-error';
+            const performanceClass = latency < 5000 ? 'status-ok' : 'status-error';
             
             // Update status
             document.getElementById('last-query').textContent = data.query.substring(0, 30) + '...';
             document.getElementById('performance').textContent = Math.round(latency) + 'ms';
             document.getElementById('performance').className = `status-value ${performanceClass}`;
             
-            let html = `
+            let html = '';
+            
+            // Display AI Synthesis first (most important)
+            if (data.synthesis) {
+                html += `
+                    <div class="synthesis-section">
+                        <h3>🤖 AI Legal Analysis</h3>
+                        <div class="tldr">
+                            <strong>Summary:</strong> ${data.synthesis.tldr}
+                        </div>
+                        <div class="key-points">
+                            <strong>Key Requirements:</strong>
+                            <ul>
+                                ${data.synthesis.key_points.map(point => `<li>${point}</li>`).join('')}
+                            </ul>
+                        </div>
+                        <div class="synthesis-meta">
+                            <span><strong>Confidence:</strong> ${(data.synthesis.confidence * 100).toFixed(0)}%</span>
+                            <span><strong>Citations:</strong> ${data.synthesis.citations_count}</span>
+                            <span><strong>Query Time:</strong> ${Math.round(latency)}ms</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Then show raw retrieval results (for debugging)
+            html += `
                 <div class="results">
-                    <h3>📊 Query Results</h3>
+                    <h3>📊 Raw Retrieval Results</h3>
                     <div style="margin-bottom: 1rem;">
                         <strong>Query:</strong> "${data.query}"<br>
                         <strong>Latency:</strong> <span class="${performanceClass}">${Math.round(latency)}ms</span><br>
-                        <strong>Results:</strong> ${data.results.length}
+                        <strong>Documents Found:</strong> ${data.results.length}
                     </div>
             `;
             
             if (data.results && data.results.length > 0) {
                 data.results.forEach((result, index) => {
+                    const contentPreview = result.content.length > 300 
+                        ? result.content.substring(0, 300) + '...' 
+                        : result.content;
+                    
                     html += `
                         <div class="result-item">
                             <div class="result-header">
-                                <strong>Result ${index + 1}: ${result.title}</strong>
+                                <strong>Document ${index + 1}: ${result.title || 'Legal Document'}</strong>
                                 <span class="score">${result.score.toFixed(3)}</span>
                             </div>
                             <div class="meta">
@@ -332,7 +416,7 @@
                                 <strong>Tree Node:</strong> ${result.tree_node_id} |
                                 <strong>Length:</strong> ${result.content_length} chars
                             </div>
-                            <div class="content">${result.content}</div>
+                            <div class="content">${contentPreview}</div>
                         </div>
                     `;
                 });
