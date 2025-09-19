@@ -833,42 +833,42 @@ class QueryOrchestrator:
             raise
     
     def _build_synthesis_prompt(self, state: AgentState) -> str:
-        """Build structured synthesis prompt with context and instructions."""
-        from api.composer.prompts import SYNTHESIS_SYSTEM_PROMPT
+        """Build synthesis prompt using new constitutional prompting architecture."""
+        from api.composer.prompts import get_prompt_template, build_synthesis_context
         
-        # Build context from bundled documents
-        context_sections = []
-        for i, ctx in enumerate(state.bundled_context[:8], 1):  # Limit to top 8
-            context_sections.append(f"""
-Source {i}: {ctx.get('title', 'Unknown Document')}
-Confidence: {ctx.get('confidence', 0.0):.2f}
-Type: {ctx.get('source_type', 'unknown')}
-
-{ctx.get('content', '')[:1500]}...
-""")
+        # Determine user type (default to professional for test endpoint)
+        user_type = getattr(state, 'user_type', 'professional')
+        complexity = getattr(state, 'complexity', 'moderate') 
+        reasoning_framework = getattr(state, 'reasoning_framework', 'irac')
         
-        context_text = "\n".join(context_sections)
+        # Build context using new formatter
+        context_docs = []
+        for i, ctx in enumerate(state.bundled_context[:12], 1):  # Increased from 8 to 12
+            context_docs.append({
+                "doc_key": ctx.get('parent_doc_id', f'doc_{i}'),
+                "title": ctx.get('title', 'Unknown Document'),
+                "content": ctx.get('content', '')[:2000],  # Increased from 1500 to 2000
+                "doc_type": ctx.get('source_type', 'unknown'),
+                "authority_level": "high" if ctx.get('confidence', 0) > 0.8 else "medium"
+            })
         
-        # Build the full prompt
-        prompt = f"""{SYNTHESIS_SYSTEM_PROMPT}
-
-QUERY: {state.raw_query}
-
-JURISDICTION: {state.jurisdiction or 'Zimbabwe'}
-
-RETRIEVED CONTEXT:
-{context_text}
-
-INSTRUCTIONS:
-1. Provide a comprehensive legal analysis based on the retrieved context
-2. Cite sources using [Source X] format for each claim
-3. Include relevant quotes with proper attribution
-4. Structure your response with clear paragraphs
-5. If information is insufficient, state limitations clearly
-
-RESPONSE:"""
+        # Get appropriate synthesis template
+        template_name = f"synthesis_{user_type}"
+        template = get_prompt_template(template_name)
         
-        return prompt
+        # Build comprehensive context
+        synthesis_context = build_synthesis_context(
+            query=state.raw_query,
+            context_documents=context_docs,
+            user_type=user_type,
+            complexity=complexity,
+            legal_areas=getattr(state, 'legal_areas', []),
+            reasoning_framework=reasoning_framework
+        )
+        
+        # Format the prompt
+        messages = template.format_messages(**synthesis_context)
+        return "\n".join([msg.content for msg in messages])
     
     def _extract_citations(self, answer: str, bundled_context: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Extract citations from the generated answer."""
