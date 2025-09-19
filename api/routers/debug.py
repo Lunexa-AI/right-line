@@ -27,21 +27,6 @@ class HealthResponse(BaseModel):
     services: Dict[str, Any]
 
 
-class TestQueryRequest(BaseModel):
-    """Test query request (no auth required)."""
-    query: str
-    top_k: int = 3
-
-
-class TestQueryResponse(BaseModel):
-    """Test query response with synthesis."""
-    query: str
-    results: List[Dict[str, Any]]
-    performance: Dict[str, Any]
-    timestamp: str
-    synthesis: Optional[Dict[str, Any]] = None
-
-
 @router.get("/health", response_model=HealthResponse)
 async def get_api_health() -> HealthResponse:
     """Get comprehensive API health status and configuration."""
@@ -135,82 +120,3 @@ async def get_api_health() -> HealthResponse:
         environment=env_status,
         services=services
     )
-
-
-@router.post("/test-query", response_model=TestQueryResponse)
-async def test_query_endpoint(request: TestQueryRequest) -> TestQueryResponse:
-    """Test query endpoint with full agentic pipeline (no authentication required)."""
-    
-    start_time = time.time()
-    
-    try:
-        # Step 1: Retrieve relevant chunks using the new LangChain engine
-        from api.tools.retrieval_engine import search_legal_documents
-        logger.info("Starting full agentic pipeline test", query=request.query[:100])
-        
-        retrieval_results, retrieval_confidence = await search_legal_documents(
-            query=request.query,
-            top_k=request.top_k,
-            min_score=0.1
-        )
-        
-        logger.info(
-            "Retrieval completed",
-            results_count=len(retrieval_results),
-            confidence=retrieval_confidence
-        )
-        
-        # Step 2: Compose synthesized answer
-        from api.composer.synthesis import compose_legal_answer
-        composed_answer = await compose_legal_answer(
-            results=retrieval_results,
-            query=request.query,
-            confidence=retrieval_confidence,
-            lang="en",
-            use_openai=True  # Enable OpenAI synthesis
-        )
-        
-        logger.info("Answer synthesis completed", tldr_length=len(composed_answer.tldr))
-        
-        # Step 3: Format results for debug display
-        formatted_results = []
-        for result in retrieval_results:
-            formatted_results.append({
-                "score": round(result.score, 4),
-                "source": result.source,
-                "doc_id": result.doc_id,
-                "chunk_id": result.chunk_id,
-                "title": result.metadata.get("title", "Unknown"),
-                "chapter": result.metadata.get("chapter", "N/A"),
-                "tree_node_id": result.metadata.get("tree_node_id", "N/A"),
-                "section_path": result.metadata.get("section_path", "N/A"),
-                "content": result.chunk_text[:500] + "..." if len(result.chunk_text) > 500 else result.chunk_text,
-                "content_length": len(result.chunk_text)
-            })
-        
-        end_time = time.time()
-        latency_ms = (end_time - start_time) * 1000
-        
-        # Return enhanced response with synthesis
-        return TestQueryResponse(
-            query=request.query,
-            results=formatted_results,
-            performance={
-                "latency_ms": round(latency_ms, 2),
-                "results_count": len(retrieval_results),
-                "top_score": retrieval_results[0].score if retrieval_results else 0,
-                "under_target": latency_ms < 5000  # Allow more time for synthesis
-            },
-            timestamp=time.strftime("%Y-%m-%d %H:%M:%S UTC"),
-            # Add synthesis results
-            synthesis={
-                "tldr": composed_answer.tldr,
-                "key_points": composed_answer.key_points,
-                "citations_count": len(composed_answer.citations),
-                "confidence": retrieval_confidence
-            }
-        )
-            
-    except Exception as e:
-        logger.error("Test query failed", query=request.query, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")

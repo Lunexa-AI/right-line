@@ -59,6 +59,10 @@ sentry-sdk = {extras = ["fastapi"], version = "^2.12.0"}
 firebase-admin = "^6.5.0"
 boto3 = "^1.40.23"
 aiohttp = "^3.9.5"
+langchain-core = "^0.3.76"
+rank-bm25 = "^0.2.2"
+langchain = "^0.3.27"
+langchain-community = "^0.3.29"
 
 [tool.poetry.group.dev.dependencies]
 # Testing

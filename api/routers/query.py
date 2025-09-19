@@ -4,11 +4,12 @@ import asyncio
 import json
 import time
 import uuid
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List, Dict, Any, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from api.analytics import log_query
 from api.auth import User, get_current_user
@@ -274,21 +275,23 @@ async def stream_legal_query(
         try:
             # Event 1: Meta - Query processing start
             yield f"event: meta\n"
-            yield f"data: {json.dumps({
+            meta_data = {
                 'request_id': request_id,
                 'query': query[:100] + '...' if len(query) > 100 else query,
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC'),
                 'user_id': current_user.uid,
                 'status': 'processing'
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(meta_data)}\n\n"
             
             # Event 2: Retrieval - Start document search
             yield f"event: retrieval\n"
-            yield f"data: {json.dumps({
+            retrieval_data = {
                 'status': 'searching',
                 'message': 'Searching legal documents...',
                 'progress': 0.2
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(retrieval_data)}\n\n"
             
             # Execute retrieval
             retrieval_results, retrieval_confidence = await search_legal_documents(
@@ -299,41 +302,45 @@ async def stream_legal_query(
             
             # Event 3: Retrieval - Results found
             yield f"event: retrieval\n"
-            yield f"data: {json.dumps({
+            retrieval_results_data = {
                 'status': 'completed',
                 'message': f'Found {len(retrieval_results)} relevant documents',
                 'results_count': len(retrieval_results),
                 'confidence': retrieval_confidence,
                 'progress': 0.5
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(retrieval_results_data)}\n\n"
             
             if not retrieval_results:
                 # Event: Warning - No results
                 yield f"event: warning\n"
-                yield f"data: {json.dumps({
+                warning_data = {
                     'type': 'no_results',
                     'message': 'No relevant documents found for this query'
-                })}\n\n"
+                }
+                yield f"data: {json.dumps(warning_data)}\n\n"
                 
                 # Event: Final - Fallback response
                 yield f"event: final\n"
-                yield f"data: {json.dumps({
+                final_fallback_data = {
                     'request_id': request_id,
                     'tldr': 'No specific legal information found for this query.',
                     'key_points': ['Query may be too specific or outside legal domain'],
                     'citations': [],
                     'confidence': 0.1,
                     'processing_time_ms': int((time.time() - start_time) * 1000)
-                })}\n\n"
+                }
+                yield f"data: {json.dumps(final_fallback_data)}\n\n"
                 return
             
             # Event 4: Synthesis - Start AI processing
             yield f"event: meta\n"
-            yield f"data: {json.dumps({
+            synthesis_start_data = {
                 'status': 'synthesizing',
                 'message': 'Generating AI legal analysis...',
                 'progress': 0.7
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(synthesis_start_data)}\n\n"
             
             # Execute synthesis
             composed_answer = await compose_legal_answer(
@@ -348,11 +355,12 @@ async def stream_legal_query(
             tokens = composed_answer.tldr.split()
             for i, token in enumerate(tokens):
                 yield f"event: token\n"
-                yield f"data: {json.dumps({
+                token_data = {
                     'token': token + ' ',
                     'position': i,
                     'total_tokens': len(tokens)
-                })}\n\n"
+                }
+                yield f"data: {json.dumps(token_data)}\n\n"
                 
                 # Small delay to simulate real streaming
                 await asyncio.sleep(0.05)
@@ -360,17 +368,18 @@ async def stream_legal_query(
             # Event 6: Citations
             for i, citation in enumerate(composed_answer.citations):
                 yield f"event: citation\n"
-                yield f"data: {json.dumps({
+                citation_data = {
                     'index': i + 1,
                     'title': citation.get('title', 'Legal Document'),
                     'source': citation.get('source_url', ''),
                     'relevance': citation.get('relevance', 0.8)
-                })}\n\n"
+                }
+                yield f"data: {json.dumps(citation_data)}\n\n"
             
             # Event 7: Final - Complete response
             processing_time = int((time.time() - start_time) * 1000)
             yield f"event: final\n"
-            yield f"data: {json.dumps({
+            final_data = {
                 'request_id': request_id,
                 'tldr': composed_answer.tldr,
                 'key_points': composed_answer.key_points,
@@ -378,7 +387,8 @@ async def stream_legal_query(
                 'confidence': retrieval_confidence,
                 'processing_time_ms': processing_time,
                 'status': 'completed'
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(final_data)}\n\n"
             
             # Log successful query
             try:
@@ -404,12 +414,13 @@ async def stream_legal_query(
             
             # Event: Error
             yield f"event: error\n"
-            yield f"data: {json.dumps({
+            error_data = {
                 'request_id': request_id,
                 'error': 'Query processing failed',
                 'message': 'Please try again later',
                 'processing_time_ms': int((time.time() - start_time) * 1000)
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
     
     return StreamingResponse(
         generate_sse_stream(),
@@ -461,3 +472,97 @@ async def submit_feedback(
         success=success,
         message="Feedback saved successfully" if success else "Failed to save feedback"
     )
+
+
+class TestQueryRequest(BaseModel):
+    """Test query request (no auth required)."""
+    query: str
+    top_k: int = 3
+
+
+class TestQueryResponse(BaseModel):
+    """Test query response with synthesis."""
+    query: str
+    results: List[Dict[str, Any]]
+    performance: Dict[str, Any]
+    timestamp: str
+    synthesis: Optional[Dict[str, Any]] = None
+
+
+@router.post("/v1/test-query", response_model=TestQueryResponse, tags=["Query", "Debug"])
+async def test_query_endpoint(request: TestQueryRequest) -> TestQueryResponse:
+    """Test query endpoint with full agentic pipeline (no authentication required)."""
+    
+    start_time = time.time()
+    
+    try:
+        # Step 1: Retrieve relevant chunks using the new LangChain engine
+        from api.tools.retrieval_engine import search_legal_documents
+        logger.info("Starting full agentic pipeline test", query=request.query[:100])
+        
+        retrieval_results, retrieval_confidence = await search_legal_documents(
+            query=request.query,
+            top_k=request.top_k,
+            min_score=0.1
+        )
+        
+        logger.info(
+            "Retrieval completed",
+            results_count=len(retrieval_results),
+            confidence=retrieval_confidence
+        )
+        
+        # Step 2: Compose synthesized answer
+        from api.composer.synthesis import compose_legal_answer
+        composed_answer = await compose_legal_answer(
+            results=retrieval_results,
+            query=request.query,
+            confidence=retrieval_confidence,
+            lang="en",
+            use_openai=True  # Enable OpenAI synthesis
+        )
+        
+        logger.info("Answer synthesis completed", tldr_length=len(composed_answer.tldr))
+        
+        # Step 3: Format results for debug display
+        formatted_results = []
+        for result in retrieval_results:
+            formatted_results.append({
+                "score": round(result.score, 4),
+                "source": result.source,
+                "doc_id": result.doc_id,
+                "chunk_id": result.chunk_id,
+                "title": result.metadata.get("title", "Unknown"),
+                "chapter": result.metadata.get("chapter", "N/A"),
+                "tree_node_id": result.metadata.get("tree_node_id", "N/A"),
+                "section_path": result.metadata.get("section_path", "N/A"),
+                "content": result.chunk_text[:500] + "..." if len(result.chunk_text) > 500 else result.chunk_text,
+                "content_length": len(result.chunk_text)
+            })
+        
+        end_time = time.time()
+        latency_ms = (end_time - start_time) * 1000
+        
+        # Return enhanced response with synthesis
+        return TestQueryResponse(
+            query=request.query,
+            results=formatted_results,
+            performance={
+                "latency_ms": round(latency_ms, 2),
+                "results_count": len(retrieval_results),
+                "top_score": retrieval_results[0].score if retrieval_results else 0,
+                "under_target": latency_ms < 5000  # Allow more time for synthesis
+            },
+            timestamp=time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            # Add synthesis results
+            synthesis={
+                "tldr": composed_answer.tldr,
+                "key_points": composed_answer.key_points,
+                "citations_count": len(composed_answer.citations),
+                "confidence": retrieval_confidence
+            }
+        )
+            
+    except Exception as e:
+        logger.error("Test query failed", query=request.query, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")

@@ -55,12 +55,7 @@ OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embeddin
 # Cache configuration
 CACHE_TTL_SECONDS = 3600  # 1 hour
 
-# Data paths (for alias map and preconditions)
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-DATA_PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
-DOCS_JSONL_PATH = os.path.join(DATA_PROCESSED_DIR, "docs.jsonl")
-CHUNKS_WITH_EMB_PATH = os.path.join(DATA_PROCESSED_DIR, "chunks_with_embeddings.jsonl")
-CHUNKS_JSONL_PATH = os.path.join(DATA_PROCESSED_DIR, "chunks.jsonl")
+# Legacy data paths removed - now using R2 cloud storage
 
 # Feature flags
 ENABLE_SPARSE = os.environ.get("ENABLE_SPARSE", "1") == "1"
@@ -159,68 +154,11 @@ class QueryProcessor:
     
     @classmethod
     def _load_alias_map(cls) -> Dict[str, Set[str]]:
-        """Load or rebuild a statute alias map from docs.jsonl.
-
-        Keys are normalized canonical titles; values include short titles, common names,
-        and chapter references (if present).
+        """Simplified alias map - vector similarity handles document matching better.
+        
+        Returns empty dict since modern retrieval uses semantic similarity.
         """
-        now = time.time()
-        if cls._alias_cache and cls._alias_cache_loaded_at and (now - cls._alias_cache_loaded_at) < CACHE_TTL_SECONDS:
-            return cls._alias_cache
-
-        alias_map: Dict[str, Set[str]] = {}
-        try:
-            with open(DOCS_JSONL_PATH, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    title = (obj.get('title') or '').strip()
-                    if not title:
-                        continue
-                    extra = obj.get('extra', {}) or {}
-                    chapter = (extra.get('chapter') or '').strip()
-                    # Build aliases
-                    aliases: Set[str] = set()
-                    canon = QueryProcessor.normalize_query(title)
-                    aliases.add(canon)
-                    # Remove bracketed and parenthesized segments
-                    no_brackets = re.sub(r"\[.*?\]", " ", title)
-                    no_paren = re.sub(r"\(.*?\)", " ", no_brackets)
-                    # Remove trailing years
-                    no_year = re.sub(r"\b(19|20)\d{2}\b", " ", no_paren)
-                    base = QueryProcessor.normalize_query(no_year)
-                    if base:
-                        aliases.add(base)
-                    # Preserve legal type tokens; ensure 'act' kept
-                    m = re.search(r"\b(act|ordinance|statutory instrument|constitution)\b", base, re.IGNORECASE)
-                    if m:
-                        legal_type = m.group(1)
-                        # Keep '[Name] legal_type' form if present
-                        name_part = base.split(legal_type)[0].strip()
-                        if name_part:
-                            aliases.add(f"{name_part} {legal_type}".strip())
-                    # Constitution special aliases
-                    if 'constitution' in base:
-                        aliases.add('constitution')
-                        if 'zimbabwe' in base:
-                            aliases.add('constitution of zimbabwe')
-                    # Chapter alias
-                    if chapter:
-                        aliases.add(f"chapter {chapter.lower()}")
-                    # Record under canonical key
-                    alias_map[canon] = alias_map.get(canon, set()) | aliases
-        except FileNotFoundError:
-            logger.warning("docs.jsonl not found for alias map", path=DOCS_JSONL_PATH)
-        except Exception as e:
-            logger.warning("alias map load error", error=str(e))
-
-        cls._alias_cache = alias_map
-        cls._alias_cache_loaded_at = now
-        return alias_map
+        return {}
 
     @classmethod
     def find_statute_candidates(cls, text: str) -> List[str]:
@@ -381,6 +319,11 @@ class MilvusClient:
                 "collectionName": MILVUS_COLLECTION_NAME,
                 "data": [query_vector],
                 "limit": top_k,
+                "searchParams": {
+                    "anns_field": "embedding",
+                    "metric_type": "COSINE",
+                    "params": {"radius": 0.0, "range_filter": 1.0}  # Return all results within cosine range
+                },
                 "outputFields": [
                     "chunk_id",           # v3.0 primary key
                     "parent_doc_id",      # For small-to-big expansion
@@ -414,6 +357,11 @@ class MilvusClient:
                     return []
                 
                 data = response.json()
+                logger.info("Milvus search response", 
+                           status=response.status_code,
+                           data_keys=list(data.keys()) if data else None,
+                           results_count=len(data.get("data", [])) if data else 0,
+                           raw_response=data if len(str(data)) < 500 else "Response too large")
                 
                 # Convert to RetrievalResult objects
                 retrieval_results = []
@@ -579,94 +527,7 @@ class SparseProvider:
         raise NotImplementedError
 
 
-class SimpleSparseProvider(SparseProvider):
-    """Fallback sparse search scanning titles/section titles quickly.
-
-    Loads a lightweight in-memory view of chunks.jsonl on first use.
-    Scoring: title match (x3), section_title (x2), chunk_text prefix (x1),
-    with small bonuses for exact token matches.
-    """
-    _loaded = False
-    _rows: List[Dict[str, Any]] = []
-
-    def _ensure_loaded(self):
-        if self._loaded:
-            return
-        rows = []
-        try:
-            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    rows.append({
-                        "chunk_id": o.get("chunk_id"),
-                        "doc_id": o.get("doc_id"),
-                        "chunk_text": (o.get("chunk_text") or "")[:400].lower(),
-                        "metadata": o.get("metadata") or {},
-                    })
-        except FileNotFoundError:
-            logger.warning("chunks.jsonl not found for sparse provider", path=CHUNKS_JSONL_PATH)
-        self._rows = rows
-        self._loaded = True
-
-    @staticmethod
-    def _tokens(text: str) -> List[str]:
-        t = re.sub(r"[^\w\s]", " ", text.lower())
-        t = re.sub(r"\s+", " ", t).strip()
-        return [w for w in t.split() if len(w) > 2]
-
-    async def search(self, query: str, top_k: int = 50) -> List[RetrievalResult]:
-        self._ensure_loaded()
-        if not self._rows:
-            return []
-        qtokens = set(self._tokens(query))
-        if not qtokens:
-            return []
-        scored: List[Tuple[float, Dict[str, Any]]] = []
-        for row in self._rows:
-            md = row.get("metadata") or {}
-            title = (md.get("title") or "").lower()
-            sect = (md.get("section_title") or "").lower()
-            text = row.get("chunk_text") or ""
-            score = 0.0
-            for t in qtokens:
-                if t in title:
-                    score += 3.0
-                if t in sect:
-                    score += 2.0
-                if t in text:
-                    score += 1.0
-            if score > 0:
-                scored.append((score, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        out: List[RetrievalResult] = []
-        for s, row in scored[:top_k]:
-            # Create ChunkV3 object for RetrievalResult
-            from api.models import ChunkV3
-            chunk = ChunkV3(
-                chunk_id=str(row.get("chunk_id")),
-                chunk_text=row.get("chunk_text") or "",
-                doc_id=str(row.get("doc_id")),
-                chunk_object_key=row.get("chunk_object_key", ""),
-                parent_doc_id=str(row.get("doc_id")),
-                doc_type=row.get("doc_type", "unknown"),
-                metadata=row.get("metadata") or {},
-                entities={}
-            )
-            
-            out.append(RetrievalResult(
-                chunk=chunk,
-                confidence=float(min(1.0, s / 10.0)),
-                metadata={
-                    "source": "sparse_fallback",
-                    **row.get("metadata", {})
-                }
-            ))
-        return out
+# Legacy SimpleSparseProvider removed - using ProductionBM25Provider from R2
 
 
 class OpenAIReranker:
@@ -1276,153 +1137,21 @@ class RetrievalEngine:
         return expanded_results
 
     def _check_preconditions(self) -> None:
-        """Validate Milvus and data availability once per engine instance."""
+        """Validate cloud services configuration."""
         if self._preconditions_checked:
             return
         problems = []
         if not MILVUS_ENDPOINT or not MILVUS_TOKEN:
             problems.append("MILVUS env not configured")
-        if not os.path.exists(DOCS_JSONL_PATH):
-            problems.append(f"missing {DOCS_JSONL_PATH}")
-        if not os.path.exists(CHUNKS_WITH_EMB_PATH):
-            problems.append(f"missing {CHUNKS_WITH_EMB_PATH}")
+        if not OPENAI_API_KEY:
+            problems.append("OPENAI_API_KEY not configured")
         if problems:
             logger.warning("retrieval preconditions", problems=problems)
         else:
             logger.info("retrieval preconditions ok")
-        # Always mark to avoid repeated checks per request
         self._preconditions_checked = True
 
-    def _shortcut_section_lookup(self, intent: Dict[str, Any]) -> List[RetrievalResult]:
-        """Direct lookup path when query names a statute and a specific section.
-        Scans chunks.jsonl for matching doc aliases and section number, returns pseudo-results.
-        """
-        section = (intent.get("section") or "").upper()
-        statutes = intent.get("statutes") or []
-        if not section or not statutes:
-            return []
-        aliases = set()
-        alias_map = self.query_processor._load_alias_map()
-        for canon in statutes:
-            # Merge all aliases for candidate canon keys
-            aliases |= alias_map.get(canon, set())
-            aliases.add(canon)
-        matches: List[RetrievalResult] = []
-        try:
-            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    md = o.get("metadata") or {}
-                    title = (md.get("title") or "").lower()
-                    # Determine section number: prefer explicit number; else parse from md['section'] prefix like "12C. ..."
-                    sect_num = (md.get("section_number") or "").strip().upper()
-                    if not sect_num:
-                        sec_field = (md.get("section") or md.get("section_title") or "").strip()
-                        m = re.match(r"^(\d+[A-Za-z]?)\.", sec_field)
-                        if not m:
-                            m = re.search(r"\b(\d+[A-Za-z]?)\b", sec_field)
-                        if m:
-                            sect_num = m.group(1).upper()
-                    if sect_num != section:
-                        continue
-                    norm_title = self.query_processor.normalize_query(title)
-                    if not any(a in norm_title for a in aliases):
-                        continue
-                    # Create ChunkV3 object for RetrievalResult
-                    from api.models import ChunkV3
-                    chunk = ChunkV3(
-                        chunk_id=str(o.get("chunk_id")),
-                        chunk_text=o.get("chunk_text") or "",
-                        doc_id=str(o.get("doc_id")),
-                        chunk_object_key=o.get("chunk_object_key", ""),
-                        parent_doc_id=str(o.get("doc_id")),
-                        doc_type=o.get("doc_type", "unknown"),
-                        metadata=md,
-                        entities={}
-                    )
-                    
-                    matches.append(RetrievalResult(
-                        chunk=chunk,
-                        confidence=0.99,
-                        metadata={
-                            "source": "shortcut_section",
-                            **md
-                        }
-                    ))
-                    if len(matches) >= 6:
-                        break
-        except FileNotFoundError:
-            return []
-        return matches
-
-    def _shortcut_statute_toc(self, intent: Dict[str, Any]) -> List[RetrievalResult]:
-        """If statute-only: return representative sections from the statute to guide narrowing."""
-        statutes = intent.get("statutes") or []
-        if not statutes:
-            return []
-        aliases = set()
-        alias_map = self.query_processor._load_alias_map()
-        for canon in statutes:
-            aliases |= alias_map.get(canon, set())
-            aliases.add(canon)
-        out: List[RetrievalResult] = []
-        seen_sections = set()
-        try:
-            with open(CHUNKS_JSONL_PATH, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    md = o.get("metadata") or {}
-                    title = (md.get("title") or "").lower()
-                    norm_title = self.query_processor.normalize_query(title)
-                    if not any(a in norm_title for a in aliases):
-                        continue
-                    # Prefer sections; if missing, take first chunks per doc as overview
-                    sect_title = md.get("section_title") or md.get("section") or ""
-                    sect_num = (md.get("section_number") or "").upper()
-                    if not sect_num and sect_title:
-                        m = re.match(r"^(\d+[A-Za-z]?)\.", sect_title)
-                        if m:
-                            sect_num = m.group(1).upper()
-                    key = (o.get("doc_id"), sect_num or sect_title or md.get("chunk_index", 0))
-                    if key in seen_sections:
-                        continue
-                    seen_sections.add(key)
-                    # Create ChunkV3 object for RetrievalResult
-                    from api.models import ChunkV3
-                    chunk = ChunkV3(
-                        chunk_id=str(o.get("chunk_id")),
-                        chunk_text=o.get("chunk_text") or "",
-                        doc_id=str(o.get("doc_id")),
-                        chunk_object_key=o.get("chunk_object_key", ""),
-                        parent_doc_id=str(o.get("doc_id")),
-                        doc_type=o.get("doc_type", "unknown"),
-                        metadata=md,
-                        entities={}
-                    )
-                    
-                    out.append(RetrievalResult(
-                        chunk=chunk,
-                        confidence=0.7,
-                        metadata={
-                            "source": "shortcut_toc",
-                            **md
-                        }
-                    ))
-                    if len(out) >= 8:
-                        break
-        except FileNotFoundError:
-            return []
-        return out
+    # Legacy shortcut methods removed - using modern vector + BM25 retrieval only
     
     async def __aenter__(self):
         """Async context manager entry."""
