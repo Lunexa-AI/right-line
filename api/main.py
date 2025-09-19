@@ -28,6 +28,13 @@ from api.routers import (
     whatsapp as whatsapp_router,
     debug as debug_router,
 )
+
+# Import observability components
+try:
+    from api.observability.tracing import initialize_observability
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
 from libs.firebase.client import initialize_firebase_app
 
 # Vercel Serverless environment requires initialization on startup
@@ -58,10 +65,22 @@ def create_app() -> FastAPI:
     """Create and configure FastAPI application for serverless deployment."""
     settings = get_settings()
     
+    # Initialize observability components
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability_components = initialize_observability()
+            logger.info(
+                "Observability initialized",
+                langsmith_enabled=observability_components.get("langsmith_handler") is not None,
+                opentelemetry_enabled=observability_components.get("otel_tracer") is not None
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize observability", error=str(e))
+    
     app = FastAPI(
-        title="Gweta API",
-        description="WhatsApp-first legal copilot for Zimbabwe (Serverless)",
-        version="0.1.0",
+        title="RightLine Legal Assistant API",
+        description="AI-powered legal assistant for Zimbabwe with LangGraph observability",
+        version="1.0.0",
         default_response_class=ORJSONResponse,
         debug=settings.debug,
         # No lifespan for serverless - connections created per request
@@ -136,8 +155,7 @@ app.include_router(analytics_router.router, prefix="/api", tags=["Analytics"])
 app.include_router(whatsapp_router.router, prefix="/api", tags=["WhatsApp"])
 
 # Debug endpoints (development only)
-if os.getenv("DEBUG_MODE", "false").lower() == "true":
-    app.include_router(debug_router.router, prefix="/api/v1", tags=["Debug"])
+app.include_router(debug_router.router, prefix="/api/v1/debug", tags=["Debug"])
 
 
 @app.get("/debug", include_in_schema=False)

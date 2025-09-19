@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "legal_query_orchestrator": "./api/agents/query_orchestrator.py:get_orchestrator"
+  },
+  "env": ".env.local"
+}

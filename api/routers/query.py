@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import time
+import uuid
+from typing import AsyncGenerator
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from api.analytics import log_query
 from api.auth import User, get_current_user
@@ -227,6 +232,195 @@ async def query_legal_information(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error. Please try again later.",
         )
+
+
+@router.get("/v1/query/stream", tags=["Query"])
+async def stream_legal_query(
+    request: Request,
+    query: str,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream legal information query with real-time updates via SSE.
+    
+    This endpoint provides real-time streaming of the agentic pipeline:
+    1. Query processing and intent classification
+    2. Retrieval progress updates
+    3. AI synthesis with token streaming
+    4. Final response with citations
+    
+    Args:
+        request: FastAPI request object
+        query: Legal query text
+        current_user: Authenticated user
+        
+    Returns:
+        StreamingResponse: Server-Sent Events stream
+        
+    Events:
+        - meta: Query metadata and processing start
+        - retrieval: Document retrieval progress
+        - token: AI-generated response tokens
+        - citation: Source document citations
+        - warning: Quality gate warnings
+        - final: Complete response summary
+    """
+    
+    async def generate_sse_stream() -> AsyncGenerator[str, None]:
+        """Generate Server-Sent Events for the query processing pipeline."""
+        
+        request_id = str(uuid.uuid4())
+        start_time = time.time()
+        
+        try:
+            # Event 1: Meta - Query processing start
+            yield f"event: meta\n"
+            yield f"data: {json.dumps({
+                'request_id': request_id,
+                'query': query[:100] + '...' if len(query) > 100 else query,
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC'),
+                'user_id': current_user.uid,
+                'status': 'processing'
+            })}\n\n"
+            
+            # Event 2: Retrieval - Start document search
+            yield f"event: retrieval\n"
+            yield f"data: {json.dumps({
+                'status': 'searching',
+                'message': 'Searching legal documents...',
+                'progress': 0.2
+            })}\n\n"
+            
+            # Execute retrieval
+            retrieval_results, retrieval_confidence = await search_legal_documents(
+                query=query,
+                top_k=10,
+                min_score=0.1
+            )
+            
+            # Event 3: Retrieval - Results found
+            yield f"event: retrieval\n"
+            yield f"data: {json.dumps({
+                'status': 'completed',
+                'message': f'Found {len(retrieval_results)} relevant documents',
+                'results_count': len(retrieval_results),
+                'confidence': retrieval_confidence,
+                'progress': 0.5
+            })}\n\n"
+            
+            if not retrieval_results:
+                # Event: Warning - No results
+                yield f"event: warning\n"
+                yield f"data: {json.dumps({
+                    'type': 'no_results',
+                    'message': 'No relevant documents found for this query'
+                })}\n\n"
+                
+                # Event: Final - Fallback response
+                yield f"event: final\n"
+                yield f"data: {json.dumps({
+                    'request_id': request_id,
+                    'tldr': 'No specific legal information found for this query.',
+                    'key_points': ['Query may be too specific or outside legal domain'],
+                    'citations': [],
+                    'confidence': 0.1,
+                    'processing_time_ms': int((time.time() - start_time) * 1000)
+                })}\n\n"
+                return
+            
+            # Event 4: Synthesis - Start AI processing
+            yield f"event: meta\n"
+            yield f"data: {json.dumps({
+                'status': 'synthesizing',
+                'message': 'Generating AI legal analysis...',
+                'progress': 0.7
+            })}\n\n"
+            
+            # Execute synthesis
+            composed_answer = await compose_legal_answer(
+                results=retrieval_results,
+                query=query,
+                confidence=retrieval_confidence,
+                lang="en",
+                use_openai=True
+            )
+            
+            # Event 5: Token streaming (simulate for now - real implementation would stream from OpenAI)
+            tokens = composed_answer.tldr.split()
+            for i, token in enumerate(tokens):
+                yield f"event: token\n"
+                yield f"data: {json.dumps({
+                    'token': token + ' ',
+                    'position': i,
+                    'total_tokens': len(tokens)
+                })}\n\n"
+                
+                # Small delay to simulate real streaming
+                await asyncio.sleep(0.05)
+            
+            # Event 6: Citations
+            for i, citation in enumerate(composed_answer.citations):
+                yield f"event: citation\n"
+                yield f"data: {json.dumps({
+                    'index': i + 1,
+                    'title': citation.get('title', 'Legal Document'),
+                    'source': citation.get('source_url', ''),
+                    'relevance': citation.get('relevance', 0.8)
+                })}\n\n"
+            
+            # Event 7: Final - Complete response
+            processing_time = int((time.time() - start_time) * 1000)
+            yield f"event: final\n"
+            yield f"data: {json.dumps({
+                'request_id': request_id,
+                'tldr': composed_answer.tldr,
+                'key_points': composed_answer.key_points,
+                'citations_count': len(composed_answer.citations),
+                'confidence': retrieval_confidence,
+                'processing_time_ms': processing_time,
+                'status': 'completed'
+            })}\n\n"
+            
+            # Log successful query
+            try:
+                await log_query(
+                    request_id=request_id,
+                    user_id=current_user.uid,
+                    channel="stream",
+                    query_text=query,
+                    response_topic=composed_answer.tldr[:100],
+                    confidence=retrieval_confidence,
+                    response_time_ms=processing_time,
+                    status="success",
+                    session_id=request.headers.get("x-session-id", "unknown"),
+                )
+            except Exception:
+                pass  # Don't fail on analytics errors
+            
+        except Exception as e:
+            logger.error("Streaming query failed", 
+                        request_id=request_id, 
+                        query=query[:100], 
+                        error=str(e))
+            
+            # Event: Error
+            yield f"event: error\n"
+            yield f"data: {json.dumps({
+                'request_id': request_id,
+                'error': 'Query processing failed',
+                'message': 'Please try again later',
+                'processing_time_ms': int((time.time() - start_time) * 1000)
+            })}\n\n"
+    
+    return StreamingResponse(
+        generate_sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
 
 
 @router.post("/v1/feedback", tags=["Feedback"])

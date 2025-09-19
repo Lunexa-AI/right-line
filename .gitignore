@@ -109,6 +109,9 @@ celerybeat.pid
 # Environments
 .env
 .venv
+venv-studio/
+venv-lgstudio/
+venv-lgstudio-clean/
 env/
 venv/
 ENV/

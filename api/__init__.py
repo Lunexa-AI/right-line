@@ -12,13 +12,7 @@ Main components:
 - analytics.py: Analytics and feedback system
 """
 
-from api.main import app, create_app
-from api.models import QueryRequest, QueryResponse, HealthResponse
-
-__all__ = [
-    "app",
-    "create_app", 
-    "QueryRequest",
-    "QueryResponse",
-    "HealthResponse",
-]
+# Avoid importing heavy modules (e.g., FastAPI app) at package import time to
+# prevent side effects when tools (like LangGraph Studio) import `api.*`.
+# Intentionally do not re-export runtime objects here.
+__all__ = []

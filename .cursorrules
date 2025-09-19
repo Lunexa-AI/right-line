@@ -1,32 +1,195 @@
-# CORE PRINCIPLES
+# Engineering Rules
 
-- **LangChain Ecosystem First.** Leverage LangChain, LangGraph, and LangSmith as the primary frameworks for building agentic systems. Do not write from scratch any functionality (e.g., state machines, prompt templating, tool usage, tracing) that is already provided and maintained within the LangChain family of products. This is a core principle for ensuring maintainability, observability, and rapid development.
-- **Test-Driven Development (TDD) is mandatory.** Always write failing unit or integration tests before implementing any new feature, logic, or bug fix. Ensure tests are clean, readable, and cover all critical paths.
-- **Clean Code is non-negotiable.** Adhere strictly to SOLID, DRY, and KISS principles. Code must be self-documenting, with clear variable names, and logical function/class structures.
-- **Asynchronous & Concurrent by Default.** Design all I/O-bound and long-running operations to be asynchronous using `async/await`. Employ concurrency, multithreading, and parallelism to maximize performance and ensure non-blocking execution.
+## 0) Non-Negotiables (TL;DR)
 
-# ARCHITECTURE & TECHNOLOGY STACK
+* **Write the test first.** If there’s no failing test, you’re not ready to code.
+* **Never delete or weaken a failing test to make CI green.** Fix the code or *document a spec change* in the PR and adjust tests with justification.
+* **One function, one purpose.** Small, pure, side-effect-clear.
+* **Async by default.** I/O is `async` + concurrent; CPU-bound goes to a worker.
+* **LangChain/Graph/Smith first.** Don’t re-invent state machines, prompts, tools, or tracing.
+* **No dead code.** Refactors must remove bloat + migrate all call sites.
+* **Observability on day one.** Structured logs, traces, metrics or it doesn’t ship.
+* **Security by default.** No secrets in code, least privilege everywhere.
+* **PRs stay small.** If it’s not reviewable in \~20 min, split it.
 
-- **LangChain Ecosystem First.** Leverage LangChain, LangGraph, and LangSmith as the primary frameworks for building agentic systems. Do not write from scratch any functionality (e.g., state machines, prompt templating, tool usage, tracing) that is already provided and maintained within the LangChain family of products. This is a core principle for ensuring maintainability, observability, and rapid development.
-- **API First with FastAPI.** All backend services will be built using FastAPI. Leverage its asynchronous capabilities, dependency injection, and automatic documentation generation.
-- **Pydantic for Data Integrity.** Use Pydantic for all data modeling, validation, and settings management. Ensure strict type enforcement and clear data contracts.
-- **AI-Native & Cloud-Native.** Design applications to be cloud-agnostic and containerized (Docker/Kubernetes). Integrate AI/ML capabilities as core components, not afterthoughts. Focus on low-latency, highly scalable, and resilient microservices.
-- **Infrastructure as Code (IaC).** All cloud infrastructure must be defined and managed as code (e.g., Terraform, Pulumi) and version-controlled in the repository.
-- **Firebase for Authentication.** Use Firebase Authentication for all user management and security. Implement secure, token-based access control for all protected endpoints.
+---
 
-# OPERATIONS & SECURITY
+## 1) LangChain Ecosystem
 
-- **Comprehensive Observability.** Implement structured logging, distributed tracing, and metrics for all services. Ensure dashboards are in place to monitor application health, performance, and key business metrics.
-- **Security by Design.** Conduct regular dependency scans and security audits. All secrets and sensitive configurations must be managed via a secure vault (e.g., cloud provider's secret manager). Apply the principle of least privilege throughout the system.
+* **Use before build:** LCEL, LangGraph for orchestration/state, LangChain tools, LangSmith for tracing/evals.
+* **Graph over spaghetti:** Long flows become **LangGraph** nodes with explicit state; no hand-rolled FSMs.
+* **Prompts are artifacts:** Template with LangChain; version prompts; trace with LangSmith; add evals for regressions.
+* **Tools are typed:** Define tools with Pydantic schemas; never pass raw dicts around.
 
-# PERFORMANCE & UI
+---
 
-- **High Efficiency & Low Latency.** Optimize every layer of the application for speed. Profile and benchmark critical code paths. Minimize database queries and network overhead.
-- **Minimal & Modern UI.** User interfaces should be clean, intuitive, and responsive. Focus on core functionality and a seamless user experience. Avoid unnecessary visual clutter.
+## 2) Test-Driven Development (TDD)
 
-# DEVELOPMENT WORKFLOW
+* **Order:** (a) write failing test ➜ (b) implement minimal code ➜ (c) refactor.
+* **Coverage:** Line ≥ **90%**, branch ≥ **80%** on changed files. New public APIs must have **property-based** or **table-driven** tests.
+* **Types as tests:** `mypy --strict` is enforced; type gaps block merge.
+* **LLM code:** Add **deterministic evals** (LangSmith) + **golden answers** where feasible; treat eval drift as regression.
+* **No network in unit tests.** Use fakes; integration tests can hit sandboxes behind a flag.
+* **Bug first?** Reproduce with a failing test, then fix.
 
-- **Always work on a separate branch.**
-- **A descriptive pull request must be created for every feature or fix.**
-- **All tests must pass, and code must be linted before merging.**
-- **Maintain up-to-date documentation.** Keep API documentation current (FastAPI helps) and maintain a concise architectural overview.
+---
+
+## 3) Clean Code (SOLID/DRY/KISS)
+
+* **Function rules:** ≤ 40 LOC, ≤ 3 params (favor dataclasses/Pydantic models), clear verb-noun names, one responsibility.
+* **Module rules:** Cohesive modules; no cyclic deps; public surface intentionally small (`__all__`).
+* **Refactor hygiene:** Remove unused code; rename consistently; migrate call sites; delete commented-out code.
+* **Docs:** Public functions/classes: one-line summary + args/returns/raises. Examples only when non-obvious.
+
+---
+
+## 4) Async, Concurrency & Performance
+
+* **I/O = `async`.** Use `async with` clients; batch and parallelize with `asyncio.gather` (bounded).
+* **Bound concurrency.** Use semaphores/connection pools; no unbounded fan-out.
+* **CPU-bound = off-loop.** Thread/process pool or task queue (e.g., Celery/RQ).
+* **Timeouts & retries.** Every external call has timeouts, jittered backoff, and circuit breaking.
+* **Budgets:** P95 API latency targets set per endpoint and enforced in perf tests; fail CI if budgets regress.
+* **N+1 kills.** Profile critical paths; cache where safe; never loop over network calls.
+
+---
+
+## 5) FastAPI & API Design
+
+* **Strict models:** Pydantic models for request/response; `ConfigDict(extra='forbid')`.
+* **Validation at edges:** Validate on input; never trust client or tool payloads.
+* **Errors are contracts:** Meaningful HTTP codes; structured error body with stable `code`.
+* **Idempotency:** For mutating endpoints where applicable (keys or safe upserts).
+* **Versioning:** URI or header version; never break clients without deprecation path.
+
+---
+
+## 6) Data Modeling & Settings
+
+* **Pydantic everywhere:** DTOs, settings, and tool schemas; no loose dicts beyond boundary adapters.
+* **Immutable configs:** Settings via env/secret manager, not hardcoded.
+* **Schema evolution:** Migrations tested; backward-compatible by default.
+
+---
+
+## 7) Observability
+
+* **Structured logs:** JSON logs with request IDs, user/tenant (if applicable), and span IDs.
+* **Trace everything:** LangSmith traces for LLM flows + OpenTelemetry for services.
+* **Metrics:** RED (Rate/Errors/Duration) for APIs; SLIs/alerts for budgets.
+* **PII discipline:** No PII in logs/traces; use redaction.
+
+---
+
+## 8) Security
+
+* **Secrets:** Managed via cloud secret manager; never in code or `.env` committed.
+* **AuthN:** Firebase Auth tokens verified server-side; RBAC/ABAC enforced in handlers.
+* **Least privilege:** IAM roles scoped to minimum rights; short-lived creds.
+* **Supply chain:** Pin deps; `pip-audit`/`poetry audit`; renovate updates weekly.
+* **Input handling:** Validate, sanitize, and limit size; guard against prompt injection in tool inputs.
+
+---
+
+## 9) Git, Branching & CI
+
+* **Branches:** `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`.
+* **Commits:** Conventional commits (`feat:`, `fix:`…), small and meaningful.
+* **CI gates (blocking):**
+
+  * `ruff` (lint), `black` (format), `mypy --strict`, `pytest -q`, coverage thresholds,
+  * security scan, `bandit` (where relevant),
+  * **LangSmith evals** must meet thresholds for affected pipelines.
+* **Pre-commit hooks:** Enforced locally; CI re-runs to prevent “works on my machine”.
+
+---
+
+## 10) Refactoring & Deprecation
+
+* **No dual stacks:** Migrate fully; do not keep old and new paths in parallel without clear kill switch + deadline.
+* **Deprecations:** Mark with warnings + changelog; remove on schedule.
+* **API changes:** Provide shim or version bump; add regression tests for old behavior until EOL.
+
+---
+
+## 11) Review Checklist (use in every PR)
+
+* [ ] Failing test existed first; tests now pass and cover edge cases.
+* [ ] Code is async where I/O happens; concurrency is bounded.
+* [ ] Function/module responsibilities are single and clear.
+* [ ] No dead/commented code; names are precise.
+* [ ] Pydantic models at boundaries; `extra='forbid'`.
+* [ ] Logging/tracing/metrics added or updated; no PII leaks.
+* [ ] Security: secrets, auth, RBAC, input validation verified.
+* [ ] Performance budgets met; no N+1/network loops.
+* [ ] LangChain/Graph/Smith used where applicable; no wheel-reinvention.
+* [ ] Docs & changelog updated; migration notes if needed.
+
+---
+
+## 12) Definition of Done
+
+* Tests (unit/integration/evals) **pass** and **prove behavior**.
+* Observability in place; dashboards updated if new SLO/metrics.
+* Security posture verified; secrets managed; permissions minimal.
+* Performance budgets met; load/perf tests run for hot paths.
+* CI green; PR reviewed by at least one maintainer; small PRs only.
+
+---
+
+## 13) Tooling Defaults (opinionated)
+
+* **Python 3.11+**, `poetry` or `uv`.
+* **Lint/Format/Type:** `ruff`, `black`, `mypy --strict`, `isort`.
+* **Tests:** `pytest`, `pytest-asyncio`, `coverage`.
+* **Security:** `pip-audit`, `bandit`.
+* **Pre-commit:** run all of the above before push.
+* **Docs:** `mkdocs` or `pdocs`; ADRs for key decisions.
+
+---
+
+## 14) LLM-Specific Guardrails
+
+* **Prompt sources are code.** Templates live in repo, versioned, and traced.
+* **Determinism where possible:** Use test fixtures/mocked LLMs for unit tests; eval real models in CI with budgets.
+* **PII & compliance:** Redact inputs; log hashes, not content.
+* **Safety:** Refuse or sandbox tools that can mutate state without checks.
+
+---
+
+## 15) Infrastructure as Code
+
+* **Terraform/Pulumi only.** No click-ops. Every resource reviewed and tagged.
+* **Environments:** Dev/Stage/Prod isolation; no prod creds in dev.
+* **Rollouts:** Blue/green or canary for risky changes; rollback plan documented.
+
+---
+
+### Quick Examples
+
+**Test first**
+
+```py
+# tests/test_sum.py
+def test_sum_handles_empty_iterable():
+    assert safe_sum([]) == 0  # failing first
+```
+
+```py
+# src/mathx.py
+def safe_sum(xs: list[int]) -> int:
+    return sum(xs or [0])
+```
+
+**LangGraph node skeleton**
+
+```py
+class RetrieveState(TypedDict):
+    query: str
+    docs: list[Document]
+
+@tool
+def retrieve(state: RetrieveState) -> RetrieveState:
+    # use LC retriever + reranker; no custom FSM
+    ...
+```

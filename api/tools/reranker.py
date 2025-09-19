@@ -18,7 +18,12 @@ import time
 from typing import List, Optional, Tuple
 
 import structlog
-from sentence_transformers import CrossEncoder
+
+# Optional dependency: sentence-transformers
+try:
+    from sentence_transformers import CrossEncoder  # type: ignore
+except Exception:  # pragma: no cover - optional in some environments (e.g., Studio)
+    CrossEncoder = None  # type: ignore
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +41,7 @@ class BGEReranker:
         self.model: Optional[CrossEncoder] = None
         self._loading = False
         self._model_cache = {}  # Cache loaded models
+        self._lib_available = CrossEncoder is not None
         
     async def _load_model(self) -> None:
         """Load the reranker model (async to avoid blocking)."""
@@ -44,6 +50,12 @@ class BGEReranker:
             
         self._loading = True
         try:
+            if not self._lib_available:
+                logger.warning(
+                    "sentence-transformers not installed; skipping reranker load",
+                    model=self.model_name,
+                )
+                return
             logger.info("Loading BGE reranker model", model=self.model_name)
             start_time = time.time()
             

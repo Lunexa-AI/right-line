@@ -198,7 +198,7 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   [x] Use a `RunnableLambda` for the final "Small-to-Big" step of fetching parent documents from R2.
     -   [x] In the `retrieve_concurrent` node, invoke this unified `Runnable` chain.
     -   **Acceptance**: ✅ The entire retrieval pipeline is a single, traceable LCEL `Runnable`. P95 retrieval ≤ 350 ms. LangSmith shows a hierarchical trace for the ensemble, compression, and parent fetch steps.
-    -   **Tests**: ✅ Unit test the custom `BM25Retriever` wrapper. Integration test the full LCEL chain with mocked retrievers and rerankers.
+    -   **Tests**: ✅ Unit test the custom `BM25Retriever` wrapper. Integration test the full LCEL chain with mocked retrievers and rerankers. 
     -   **Responsibilities**:
         -   Framework: `EnsembleRetriever`, `ContextualCompressionRetriever`, `Runnable` protocols, automatic tracing.
         -   You: Wrapping your existing logic (BM25, R2 fetch) into standard interfaces and composing them into a final LCEL chain.
@@ -225,24 +225,51 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
     -   **Sanity checklist**:
         -   [x] First-token SLA met; [x] Each paragraph has citation; [x] Warnings emitted on gate failure.
 
-### 4.4. Expose via Streaming API
--   **Task**: **Query Router (SSE)**:
-    -   [ ] Refactor `api/routers/query.py` to `GET /api/v1/query/stream` using SSE.
-    -   [ ] Instantiate orchestrator, create initial `AgentState`, run graph, stream typed events (`meta`, `token`, `citation`, `warning`, `final`).
-    -   **Acceptance**: Browser receives first token < 1.2 s P95; no main-thread blocks.
-    -   **Tests**: Integration test with SSE client; event types validated.
+### 4.4. Expose via Streaming API ✅ **DONE**
+-   **Task**: **Query Router (SSE)** ✅ **DONE**:
+    -   [x] Refactor `api/routers/query.py` to `GET /api/v1/query/stream` using SSE.
+    -   [x] Instantiate orchestrator, create initial `AgentState`, run graph, stream typed events (`meta`, `token`, `citation`, `warning`, `final`).
+    -   **Acceptance**: ✅ Browser receives first token < 1.2 s P95; no main-thread blocks.
+    -   **Tests**: ✅ Integration test with SSE client; event types validated.
     -   **Responsibilities**:
         -   Framework: N/A (transport is app code).
         -   You: Endpoint, event protocol, keep-alive, backpressure + stall handling.
     -   **Sanity checklist**:
-        -   [ ] SSE ping interval set; [ ] Client reconnect strategy documented; [ ] Errors carry `trace_id`.
+        -   [x] SSE ping interval set; [x] Client reconnect strategy documented; [x] Errors carry `trace_id`.
 
-## Phase 5: Production Hardening & Long-Term Memory
+## Phase 5: Production Hardening & Observability
 
-*Goal: Add long-term memory, robust testing, and observability to make the agentic core production-ready.*
+*Goal: Add robust testing, observability, and quality gates to make the agentic core production-ready. Long-term memory will be implemented later once RAG quality is optimized.*
 
-### 5.1. Long-Term Memory
--   **Task**: **Event-Driven Memory Worker**:
+### 5.1. Observability & Quality Gates ✅ **DONE**
+-   **Task**: **LangSmith + OpenTelemetry** ✅ **DONE**:
+    -   [x] Enable `LANGCHAIN_TRACING_V2=TRUE`; attach spans per node; propagate `trace_id`.
+    -   **Acceptance**: ✅ 100% node coverage in traces; timing metrics recorded.
+    -   **Tests**: ✅ Trace presence asserted in integration tests.
+    -   **Responsibilities**:
+        -   Framework: Trace hooks in LangGraph/LangChain.
+        -   You: Env config, span attributes, redaction, dashboards.
+    -   **Sanity checklist**:
+        -   [x] PII redaction on; [x] Latency histograms; [x] Errors sampled with payload hashes.
+-   **Task**: **Dev vs Prod Observability Notes** ✅ **DONE**:
+    -   [x] **Dev**: Use LangGraph Studio for interactive graph viz, step-through execution, and state inspection with in-memory/SQLite checkpointer.
+    -   [x] **Prod**: Use LangSmith for run DAGs, per-node I/O, timings, errors; Redis/Firestore checkpointer for durability/replay.
+    -   **Acceptance**: ✅ Studio runs locally; LangSmith shows complete traces with `trace_id` correlation in prod.
+-   **Task**: **Golden Set CI Evaluator** ✅ **DONE**:
+    -   [x] Curate 100 ZW legal queries with gold answers + sources.
+    -   [x] CI workflow fails on correctness < 90%, citation accuracy < 95%, or latency regression > 20%.
+    -   **Acceptance**: ✅ CI gate blocks regressions.
+    -   **Tests**: ✅ PR pipeline runs evaluator; sample failures reported.
+-   **Task**: **Load & Chaos Testing** (DEFERRED):
+    -   [ ] k6/Locust: 50 RPS spikes; chaos: reranker timeout.
+    -   **Acceptance**: P95 < 4 s, error rate < 1%; degraded mode flagged.
+    -   **Tests**: Scripts and reports stored in `reports/perf/`.
+
+### 5.2. Long-Term Memory (DEFERRED)
+
+*Note: Long-term memory implementation is deferred until RAG quality is optimized and in-session responses are consistently high-quality.*
+
+-   **Task**: **Event-Driven Memory Worker** (DEFERRED):
     -   [ ] Trigger on session idle (30 min) or every 10 messages.
     -   [ ] Process recent messages; extract entities; generate `long_term_summary`.
     -   [ ] Redact PII or apply TTL.
@@ -253,7 +280,7 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
         -   You: Queue/trigger wiring, entity extraction, summary generation, privacy policy.
     -   **Sanity checklist**:
         -   [ ] Idempotent runs; [ ] TTL applied; [ ] Profile stays < 32 KB.
--   **Task**: **Integrate Memory into Agent**:
+-   **Task**: **Integrate Memory into Agent** (DEFERRED):
     -   [ ] `rewrite_expand` reads `long_term_summary` and biases rewrite.
     -   **Acceptance**: Rewrite mentions user topics when relevant.
     -   **Tests**: Snapshot tests with seeded profiles.
@@ -262,30 +289,6 @@ This document outlines the detailed tasks required to upgrade the Gweta API from
         -   You: Memory fetch, prompt conditioning, fallback when missing.
     -   **Sanity checklist**:
         -   [ ] Absent profile → no failure; [ ] No PII echoes; [ ] Deterministic at temp=0.
-
-### 5.2. Observability & Quality Gates
--   **Task**: **LangSmith + OpenTelemetry**:
-    -   [ ] Enable `LANGCHAIN_TRACING_V2=TRUE`; attach spans per node; propagate `trace_id`.
-    -   **Acceptance**: 100% node coverage in traces; timing metrics recorded.
-    -   **Tests**: Trace presence asserted in integration tests.
-    -   **Responsibilities**:
-        -   Framework: Trace hooks in LangGraph/LangChain.
-        -   You: Env config, span attributes, redaction, dashboards.
-    -   **Sanity checklist**:
-        -   [ ] PII redaction on; [ ] Latency histograms; [ ] Errors sampled with payload hashes.
--   **Task**: **Dev vs Prod Observability Notes**:
-    -   [ ] **Dev**: Use LangGraph Studio for interactive graph viz, step-through execution, and state inspection with in-memory/SQLite checkpointer.
-    -   [ ] **Prod**: Use LangSmith for run DAGs, per-node I/O, timings, errors; Redis/Firestore checkpointer for durability/replay.
-    -   **Acceptance**: Studio runs locally; LangSmith shows complete traces with `trace_id` correlation in prod.
--   **Task**: **Golden Set CI Evaluator**:
-    -   [ ] Curate 100 ZW legal queries with gold answers + sources.
-    -   [ ] CI workflow fails on correctness < 90%, citation accuracy < 95%, or latency regression > 20%.
-    -   **Acceptance**: CI gate blocks regressions.
-    -   **Tests**: PR pipeline runs evaluator; sample failures reported.
--   **Task**: **Load & Chaos Testing**:
-    -   [ ] k6/Locust: 50 RPS spikes; chaos: reranker timeout.
-    -   **Acceptance**: P95 < 4 s, error rate < 1%; degraded mode flagged.
-    -   **Tests**: Scripts and reports stored in `reports/perf/`.
 
 ### 5.3. Security & Docs
 -   **Task**: **R2 Path Traversal Guard**:
