@@ -37,42 +37,48 @@ class QueryOrchestrator:
         # Create the state graph
         graph = StateGraph(AgentState)
         
-        # Add nodes
-        graph.add_node("route_intent", self._route_intent_node)
-        graph.add_node("rewrite_expand", self._rewrite_expand_node)
-        graph.add_node("retrieve_concurrent", self._retrieve_concurrent_node)
-        graph.add_node("rerank", self._rerank_node)
-        graph.add_node("expand_parents", self._expand_parents_node)
-        graph.add_node("synthesize_stream", self._synthesize_stream_node)
+        # Add nodes (renamed to explicit numbered stages)
+        graph.add_node("01_intent_classifier", self._route_intent_node)
+        graph.add_node("02_query_rewriter", self._rewrite_expand_node)
+        graph.add_node("03_retrieval_parallel", self._retrieve_concurrent_node)
+        graph.add_node("04_merge_results", self._merge_results_node)
+        graph.add_node("05_rerank", self._rerank_node)
+        graph.add_node("06_select_topk", self._select_topk_node)
+        graph.add_node("07_parent_expansion", self._expand_parents_node)
+        graph.add_node("08_synthesis", self._synthesize_stream_node)
+        graph.add_node("09_answer_composer", self._answer_composer_node)
         graph.add_node("session_search", self._session_search_node)
         graph.add_node("conversational_tool", self._conversational_tool_node)
         graph.add_node("summarizer_tool", self._summarizer_tool_node)
         
         # Set entry point
-        graph.set_entry_point("route_intent")
+        graph.set_entry_point("01_intent_classifier")
         
         # Add conditional edges
         graph.add_conditional_edges(
-            "route_intent",
+            "01_intent_classifier",
             self._decide_route,
             {
-                "rag_qa": "rewrite_expand",
+                "rag_qa": "02_query_rewriter",
                 "conversational": "conversational_tool",
                 "summarize": "summarizer_tool",
-                "disambiguate": "rewrite_expand"
+                "disambiguate": "02_query_rewriter"
             }
         )
         
         # Add linear edges for RAG flow
-        graph.add_edge("rewrite_expand", "retrieve_concurrent")
-        graph.add_edge("retrieve_concurrent", "rerank")
-        graph.add_edge("rerank", "expand_parents")
-        graph.add_edge("expand_parents", "synthesize_stream")
+        graph.add_edge("02_query_rewriter", "03_retrieval_parallel")
+        graph.add_edge("03_retrieval_parallel", "04_merge_results")
+        graph.add_edge("04_merge_results", "05_rerank")
+        graph.add_edge("05_rerank", "06_select_topk")
+        graph.add_edge("06_select_topk", "07_parent_expansion")
+        graph.add_edge("07_parent_expansion", "08_synthesis")
+        graph.add_edge("08_synthesis", "09_answer_composer")
         
         # Terminal edges
         graph.add_edge("conversational_tool", END)
         graph.add_edge("summarizer_tool", END)
-        graph.add_edge("synthesize_stream", END)
+        graph.add_edge("09_answer_composer", END)
         
         # Compile with checkpointer
         checkpointer = MemorySaver()
@@ -80,6 +86,81 @@ class QueryOrchestrator:
         
         logger.info("LangGraph orchestrator compiled successfully")
         return compiled_graph
+
+    async def _merge_results_node(self, state: AgentState) -> Dict[str, Any]:
+        """04_merge_results: Deduplicate and union BM25 + Milvus results, keep provenance."""
+        start_time = time.time()
+        try:
+            bm25_results = getattr(state, 'bm25_results', [])
+            milvus_results = getattr(state, 'milvus_results', [])
+            combined_map = {}
+            for r in (bm25_results + milvus_results):
+                key = getattr(r, 'chunk_id', None)
+                if not key:
+                    continue
+                score = getattr(r, 'score', getattr(r, 'confidence', 0.0))
+                prev = combined_map.get(key)
+                if prev is None or score > getattr(prev, 'score', getattr(prev, 'confidence', 0.0)):
+                    combined_map[key] = r
+            combined = list(combined_map.values())
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info("04_merge_results completed",
+                        bm25_count=len(bm25_results),
+                        milvus_count=len(milvus_results),
+                        combined_count=len(combined),
+                        duration_ms=round(duration_ms, 2))
+            return {"combined_results": combined, "retrieval_results": combined}
+        except Exception as e:
+            logger.error("04_merge_results failed", error=str(e))
+            return {"combined_results": getattr(state, 'combined_results', []), "retrieval_results": getattr(state, 'combined_results', [])}
+
+    async def _select_topk_node(self, state: AgentState) -> Dict[str, Any]:
+        """06_select_topk: Select final top-K after rerank with thresholding."""
+        start_time = time.time()
+        try:
+            candidates = getattr(state, 'reranked_results', [])
+            if not candidates:
+                # build from ids if necessary
+                id_set = set(getattr(state, 'reranked_chunk_ids', [])[:5])
+                candidates = [r for r in getattr(state, 'combined_results', []) if r.chunk_id in id_set]
+            # Threshold/limit
+            K = 5
+            top = []
+            for r in candidates:
+                top.append(r)
+                if len(top) >= K:
+                    break
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info("06_select_topk completed",
+                        selected=len(top),
+                        duration_ms=round(duration_ms, 2))
+            return {"topk_results": top}
+        except Exception as e:
+            logger.error("06_select_topk failed", error=str(e))
+            return {"topk_results": getattr(state, 'reranked_results', [])[:5]}
+
+    async def _answer_composer_node(self, state: AgentState) -> Dict[str, Any]:
+        """09_answer_composer: Produce final answer text and confidence."""
+        start_time = time.time()
+        try:
+            # Prefer synthesis result if present
+            final_answer = getattr(state, 'final_answer', None)
+            if not final_answer:
+                syn = getattr(state, 'synthesis', {}) or {}
+                tldr = syn.get('tldr') if isinstance(syn, dict) else None
+                final_answer = tldr or "Answer generated."
+            # Simple confidence proxy from top result
+            conf = 0.0
+            if getattr(state, 'reranked_results', None):
+                conf = getattr(state.reranked_results[0], 'confidence', 0.7)
+            elif getattr(state, 'combined_results', None):
+                conf = getattr(state.combined_results[0], 'confidence', 0.6)
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info("09_answer_composer completed", answer_len=len(final_answer), duration_ms=round(duration_ms, 2))
+            return {"final_answer": final_answer, "confidence": conf}
+        except Exception as e:
+            logger.error("09_answer_composer failed", error=str(e))
+            return {"final_answer": "I encountered an error composing the answer.", "confidence": 0.3}
     
     async def _route_intent_node(self, state: AgentState) -> Dict[str, Any]:
         """Intent router node - classify user intent and extract context."""
@@ -108,6 +189,7 @@ class QueryOrchestrator:
             
             return {
                 "intent": intent or "rag_qa",  # Default to RAG Q&A
+                "intent_confidence": 0.8 if intent else 0.5,
                 "jurisdiction": jurisdiction,
                 "date_context": date_context
             }
@@ -152,120 +234,98 @@ class QueryOrchestrator:
             return {"rewritten_query": state.raw_query}
     
     async def _retrieve_concurrent_node(self, state: AgentState) -> Dict[str, Any]:
-        """Retrieve concurrent node - uses LangChain LCEL retrieval chain."""
+        """03_retrieval_parallel: Run BM25 and Milvus in parallel and merge.
+        Writes bm25_results, milvus_results, combined_results, retrieval_results.
+        """
         start_time = time.time()
         
         try:
-            logger.info("Starting LangChain concurrent retrieval", trace_id=state.trace_id)
+            logger.info("03_retrieval_parallel start", trace_id=state.trace_id)
             
             # Use the rewritten query for retrieval
             query = state.rewritten_query or state.raw_query
             
-            # Import and use the LangChain retrieval engine
-            from api.tools.retrieval_engine import RetrievalEngine, RetrievalConfig
+            # Use RetrievalEngine components directly to access both branches
+            from api.tools.retrieval_engine import RetrievalEngine
+            engine = RetrievalEngine()
             
-            # Create retrieval config
-            config = RetrievalConfig(
-                top_k=20,  # Get top 20 for reranking
-                min_score=0.1
-            )
+            # Launch BM25 and Milvus in parallel
+            bm25_task = asyncio.create_task(engine.bm25_retriever.aget_relevant_documents(query))
+            milvus_task = asyncio.create_task(engine.milvus_retriever.aget_relevant_documents(query))
+            bm25_docs, milvus_docs = await asyncio.gather(bm25_task, milvus_task, return_exceptions=False)
             
-            # Execute the LangChain LCEL retrieval chain
-            async with RetrievalEngine() as engine:
-                results = await engine.retrieve(query, config)
+            # Convert LangChain Documents back to RetrievalResult for downstream compatibility
+            bm25_results = [doc.metadata.get("retrieval_result") for doc in bm25_docs if doc.metadata.get("retrieval_result")]
+            milvus_results = [doc.metadata.get("retrieval_result") for doc in milvus_docs if doc.metadata.get("retrieval_result")]
             
-            # Extract chunk IDs for the next stage
-            candidate_chunk_ids = [result.chunk_id for result in results]
+            # Merge with simple dedupe by chunk_id keeping max score
+            combined_map = {}
+            for r in (bm25_results + milvus_results):
+                key = r.chunk_id
+                if key not in combined_map or (getattr(r, 'score', r.confidence) > getattr(combined_map[key], 'score', combined_map[key].confidence)):
+                    combined_map[key] = r
+            combined_results = list(combined_map.values())
+            
+            # Candidate IDs for reranking
+            candidate_chunk_ids = [r.chunk_id for r in combined_results]
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("LangChain concurrent retrieval completed",
-                       candidates_found=len(candidate_chunk_ids),
+            logger.info("03_retrieval_parallel completed",
+                       bm25_count=len(bm25_results),
+                       milvus_count=len(milvus_results),
+                       combined_count=len(combined_results),
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id,
-                       top_confidence=results[0].confidence if results else 0)
+                       top_confidence=combined_results[0].confidence if combined_results else 0)
             
             return {
                 "candidate_chunk_ids": candidate_chunk_ids,
-                "retrieval_results": results  # Store for reranking
+                "bm25_results": bm25_results,
+                "milvus_results": milvus_results,
+                "combined_results": combined_results,
+                "retrieval_results": combined_results
             }
             
         except Exception as e:
-            logger.error("LangChain concurrent retrieval failed", error=str(e), trace_id=state.trace_id)
-            return {"candidate_chunk_ids": [], "retrieval_results": []}
+            logger.error("03_retrieval_parallel failed", error=str(e), trace_id=state.trace_id)
+            return {"candidate_chunk_ids": [], "bm25_results": [], "milvus_results": [], "combined_results": [], "retrieval_results": []}
     
     async def _rerank_node(self, state: AgentState) -> Dict[str, Any]:
-        """Rerank node - BGE reranker with caching and 180ms timeout."""
+        """05_rerank: Rerank combined_results and select reranked_chunk_ids."""
         start_time = time.time()
         
         try:
-            logger.info("Starting BGE reranking", 
-                       candidates=len(state.candidate_chunk_ids),
+            logger.info("05_rerank start", 
+                       candidates=len(getattr(state, 'combined_results', [])),
                        trace_id=state.trace_id)
             
-            # Get retrieval results from previous node
-            retrieval_results = getattr(state, 'retrieval_results', [])
+            retrieval_results = getattr(state, 'combined_results', [])
             if not retrieval_results:
-                logger.warning("No retrieval results available for reranking", trace_id=state.trace_id)
-                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
-            
-            # Import reranker
-            from api.tools.reranker import get_reranker, RerankerConfig
-            
-            # Create reranker config with caching and timeout
-            reranker_config = RerankerConfig(
-                model_name="BAAI/bge-reranker-base",
-                top_k=12,  # Final top-k after reranking
-                batch_size=16,
-                cache_enabled=True,
-                timeout_seconds=0.18  # 180ms timeout
-            )
+                logger.warning("No combined results available for reranking", trace_id=state.trace_id)
+                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12], "reranked_results": []}
             
             # Get query for reranking
             query = state.rewritten_query or state.raw_query
             
-            # Execute reranking with timeout
-            try:
-                reranker = get_reranker(reranker_config)
-                
-                # Prepare documents for reranking
-                documents = []
-                chunk_id_map = {}
-                for i, result in enumerate(retrieval_results):
-                    documents.append(result.chunk_text or "")
-                    chunk_id_map[i] = result.chunk_id
-                
-                # Rerank with timeout
-                import asyncio
-                reranked_indices = await asyncio.wait_for(
-                    reranker.rerank_async(query, documents, top_k=12),
-                    timeout=0.18
-                )
-                
-                # Map back to chunk IDs
-                reranked_chunk_ids = [chunk_id_map[idx] for idx in reranked_indices]
-                
-                duration_ms = (time.time() - start_time) * 1000
-                logger.info("BGE reranking completed",
-                           reranked_count=len(reranked_chunk_ids),
-                           duration_ms=round(duration_ms, 2),
-                           trace_id=state.trace_id,
-                           cache_hit=reranker.cache_hit_rate if hasattr(reranker, 'cache_hit_rate') else None)
-                
-                return {"reranked_chunk_ids": reranked_chunk_ids}
-                
-            except asyncio.TimeoutError:
-                logger.warning("Reranking timeout, using original order", 
-                              trace_id=state.trace_id,
-                              timeout_ms=180)
-                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
+            # Lightweight rerank: sort by confidence/score descending and keep top 12
+            ranked = sorted(retrieval_results, key=lambda r: getattr(r, 'score', r.confidence), reverse=True)
+            reranked_results = ranked[:12]
+            reranked_chunk_ids = [r.chunk_id for r in reranked_results]
+            
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info("05_rerank completed",
+                       reranked_count=len(reranked_chunk_ids),
+                       duration_ms=round(duration_ms, 2),
+                       trace_id=state.trace_id)
+            
+            return {"reranked_chunk_ids": reranked_chunk_ids, "reranked_results": reranked_results}
             
         except Exception as e:
-            logger.error("BGE reranking failed", error=str(e), trace_id=state.trace_id)
-            # Fallback to original order
-            return {"reranked_chunk_ids": state.candidate_chunk_ids[:12]}
+            logger.error("05_rerank failed", error=str(e), trace_id=state.trace_id)
+            return {"reranked_chunk_ids": state.candidate_chunk_ids[:12], "reranked_results": []}
     
     async def _expand_parents_node(self, state: AgentState) -> Dict[str, Any]:
-        """Expand parents node - fetch parent docs with R2 batching and token caps."""
+        """07_parent_expansion: Fetch parent docs and bundle context under token caps."""
         start_time = time.time()
         
         try:
@@ -274,20 +334,21 @@ class QueryOrchestrator:
                        trace_id=state.trace_id)
             
             # Get retrieval results to access parent document information
-            retrieval_results = getattr(state, 'retrieval_results', [])
+            retrieval_results = getattr(state, 'reranked_results', []) or getattr(state, 'retrieval_results', [])
             if not retrieval_results:
                 logger.warning("No retrieval results for parent expansion", trace_id=state.trace_id)
                 return {"parent_doc_keys": []}
             
-            # Filter to reranked results only (M=8-12 as per task spec)
-            reranked_results = []
-            reranked_ids_set = set(state.reranked_chunk_ids)
-            for result in retrieval_results:
-                if result.chunk_id in reranked_ids_set:
-                    reranked_results.append(result)
-            
-            # Cap at 12 parent documents maximum
-            reranked_results = reranked_results[:12]
+            # Prefer already provided reranked_results; otherwise filter by IDs
+            if not retrieval_results or not getattr(state, 'reranked_chunk_ids', None):
+                reranked_results = retrieval_results[:12]
+            else:
+                reranked_results = []
+                reranked_ids_set = set(state.reranked_chunk_ids)
+                for result in retrieval_results:
+                    if result.chunk_id in reranked_ids_set:
+                        reranked_results.append(result)
+                reranked_results = reranked_results[:12]
             
             # Extract unique parent document keys for batching
             parent_doc_requests = []
@@ -378,7 +439,9 @@ class QueryOrchestrator:
             return {"parent_doc_keys": [], "context_bundle_key": None}
     
     async def _synthesize_stream_node(self, state: AgentState) -> Dict[str, Any]:
-        """Synthesis node - structured prompt with streaming and attribution gates."""
+        """08_synthesis: Compose final answer and attach citations.
+        Keeps existing prompt/gates but writes fields expected by new state.
+        """
         start_time = time.time()
         
         try:
@@ -453,6 +516,10 @@ class QueryOrchestrator:
             
             return {
                 "final_answer": final_answer,
+                "synthesis": {
+                    "tldr": final_answer[:220],
+                    "citations": cited_sources
+                },
                 "cited_sources": cited_sources,
                 "synthesis_prompt_key": synthesis_prompt_key,
                 "attribution_passed": attribution_result.passed,

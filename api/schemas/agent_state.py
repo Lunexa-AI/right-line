@@ -37,6 +37,7 @@ class AgentState(BaseModel):
     state_version: Literal["v1"] = Field(default="v1", description="State schema version")
     trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex, description="Unique trace identifier")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="State creation timestamp")
+    request_id: Optional[str] = Field(default=None, description="Per-request identifier")
     
     # User context
     user_id: str = Field(description="Firebase user ID")
@@ -44,6 +45,7 @@ class AgentState(BaseModel):
     
     # Initial input
     raw_query: str = Field(description="Original user query")
+    deadline_ms: Optional[int] = Field(default=None, description="Soft deadline budget in milliseconds")
     session_history_ids: List[str] = Field(default_factory=list, description="Recent message IDs for context")
     user_profile_key: Optional[str] = Field(default=None, description="R2 key for user's long-term profile")
     jurisdiction: Optional[str] = Field(default=None, description="Legal jurisdiction (e.g., 'ZW')")
@@ -53,6 +55,7 @@ class AgentState(BaseModel):
     intent: Optional[Literal["rag_qa", "conversational", "summarize", "disambiguate"]] = Field(
         default=None, description="Classified user intent"
     )
+    intent_confidence: Optional[float] = Field(default=None, description="Confidence score for intent classification")
     
     # Query processing
     rewritten_query: Optional[str] = Field(default=None, description="History-aware rewritten query")
@@ -61,8 +64,13 @@ class AgentState(BaseModel):
     retrieval_strategy: Optional[str] = Field(default=None, description="Selected retrieval strategy")
     
     # Retrieval results
+    bm25_results: List[Any] = Field(default_factory=list, description="Raw BM25 retrieval results")
+    milvus_results: List[Any] = Field(default_factory=list, description="Raw Milvus retrieval results")
+    combined_results: List[Any] = Field(default_factory=list, description="Merged retrieval results (deduped)")
     candidate_chunk_ids: List[str] = Field(default_factory=list, description="Initial retrieval candidate IDs")
     reranked_chunk_ids: List[str] = Field(default_factory=list, description="Reranked chunk IDs")
+    reranked_results: List[Any] = Field(default_factory=list, description="Reranked results objects")
+    topk_results: List[Any] = Field(default_factory=list, description="Top-K results after selection")
     parent_doc_keys: List[str] = Field(default_factory=list, description="Parent document R2 keys")
     context_bundle_key: Optional[str] = Field(default=None, description="R2 key for assembled context")
     synthesis_prompt_key: Optional[str] = Field(default=None, description="R2 key for synthesis prompt")
@@ -74,6 +82,7 @@ class AgentState(BaseModel):
     authoritative_sources: List[str] = Field(default_factory=list, description="List of authoritative source citations")
     
     # Final outputs
+    synthesis: Optional[Dict[str, Any]] = Field(default=None, description="Structured synthesis object")
     final_answer: Optional[str] = Field(default=None, description="Generated answer")
     cited_sources: List[Citation] = Field(default_factory=list, description="Source citations")
     safety_flags: Dict[str, bool] = Field(default_factory=dict, description="Safety and quality flags")
@@ -81,6 +90,8 @@ class AgentState(BaseModel):
     # Performance metadata
     node_timings: Dict[str, float] = Field(default_factory=dict, description="Per-node execution times (ms)")
     total_tokens_used: Optional[int] = Field(default=None, description="Total LLM tokens consumed")
+    costs: Dict[str, float] = Field(default_factory=dict, description="Per-node or model cost in USD")
+    errors: List[str] = Field(default_factory=list, description="Non-fatal errors encountered during processing")
     
     class Config:
         """Pydantic configuration."""
