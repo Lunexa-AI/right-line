@@ -61,6 +61,7 @@ LEGISLATION_PREFIXES = [
     "corpus/sources/legislation/acts/",
     "corpus/sources/legislation/ordinances/",
     "corpus/sources/legislation/statutory_instruments/",
+    "corpus/sources/legislation/constitution/",  # Add Constitution documents
 ]
 
 
@@ -220,25 +221,55 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
         "subject_category": None
     }
     
-    # Determine doc_type from R2 path structure first
-    if "/acts/" in filename:
-        metadata["doc_type"] = "act"
-        metadata["subject_category"] = "legislation"
-    elif "/ordinances/" in filename:
-        metadata["doc_type"] = "ordinance"  
-        metadata["subject_category"] = "legislation"
-    elif "/statutory_instruments/" in filename:
-        metadata["doc_type"] = "si"
-        metadata["subject_category"] = "legislation"
-    elif "/judgments/" in filename:
-        metadata["doc_type"] = "judgment"
-        metadata["subject_category"] = "case_law"
-    elif "/case_law/" in filename:
-        metadata["doc_type"] = "case"
-        metadata["subject_category"] = "case_law"
-    else:
-        metadata["doc_type"] = "unknown"
-        metadata["subject_category"] = "unknown"
+    # Enhanced doc_type detection: Path + Content Analysis
+    def detect_document_type(filepath: str, content_text: str) -> Tuple[str, str]:
+        """Detect document type using both path and content analysis."""
+        
+        # Primary: Path-based detection
+        if "/constitution/" in filepath.lower():
+            return "constitution", "constitutional_law"
+        elif "/acts/" in filepath:
+            return "act", "legislation"
+        elif "/ordinances/" in filepath:
+            return "ordinance", "legislation"
+        elif "/statutory_instruments/" in filepath:
+            return "si", "legislation"
+        elif "/judgments/" in filepath:
+            return "judgment", "case_law"
+        elif "/case_law/" in filepath:
+            return "case", "case_law"
+        
+        # Secondary: Content-based detection (crucial for misplaced files)
+        if content_text:
+            content_lower = content_text.lower()
+            
+            # Constitution detection by content
+            constitution_indicators = [
+                "constitution of zimbabwe",
+                "constitutional provisions",
+                "chapter 1: founding provisions",
+                "chapter 2: citizenship",
+                "chapter 4: human rights",
+                "supreme law of zimbabwe"
+            ]
+            if any(indicator in content_lower for indicator in constitution_indicators):
+                return "constitution", "constitutional_law"
+            
+            # Statutory Instrument detection
+            if "statutory instrument" in content_lower and "act" not in content_lower[:200]:
+                return "si", "legislation"
+                
+            # Ordinance detection  
+            if "ordinance" in content_lower and "act" not in content_lower[:200]:
+                return "ordinance", "legislation"
+        
+        # Default fallback
+        return "act", "legislation"
+    
+    # Apply enhanced detection
+    detected_type, detected_category = detect_document_type(filename, full_markdown)
+    metadata["doc_type"] = detected_type
+    metadata["subject_category"] = detected_category
     
     # Parse AKN URI from filename: akn_zw_act_1860_28_eng_2016-12-31.pdf
     akn_pattern = r"akn_([a-z]{2})_([a-z]+)_(\d{4})_(\d+)_([a-z]{3})_(\d{4}-\d{2}-\d{2})"
@@ -276,8 +307,10 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
             title = (node.get("title") or "").strip()
             if not title:
                 continue
-            # Accept if contains key legal doc keywords
-            if re.search(r"\b(Act|Ordinance|Constitution)\b", title) or title.startswith("Statutory Instrument"):
+            # Accept if contains key legal doc keywords (enhanced for Constitution)
+            if (re.search(r"\b(Act|Ordinance|Constitution)\b", title) or 
+                title.startswith("Statutory Instrument") or
+                "constitution of zimbabwe" in title.lower()):
                 return _clean_title(title)
         return None
 
@@ -295,10 +328,15 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
                 if not line_clean:
                     continue
                 if not metadata["title"]:
-                    m_line = re.match(r"^([A-Z][A-Za-z'\- ]+?(?:Act|Ordinance|Constitution))\b", line_clean)
-                    if m_line:
-                        metadata["title"] = _clean_title(m_line.group(1))
+                    # Enhanced Constitution detection
+                    if "constitution of zimbabwe" in line_clean.lower():
+                        metadata["title"] = "Constitution of Zimbabwe"
                         # no break; still look for chapter
+                    else:
+                        m_line = re.match(r"^([A-Z][A-Za-z'\- ]+?(?:Act|Ordinance|Constitution))\b", line_clean)
+                        if m_line:
+                            metadata["title"] = _clean_title(m_line.group(1))
+                            # no break; still look for chapter
                 if not metadata["chapter"]:
                     m_ch = re.search(r"Chapter\s+(\d+:\d+)", line_clean, flags=re.IGNORECASE)
                     if m_ch:
@@ -322,6 +360,11 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
             line_clean = line.strip()
             if not line_clean:
                 continue
+            # Constitution detection (highest priority)
+            if "constitution of zimbabwe" in line_clean.lower():
+                extracted_title = "Constitution of Zimbabwe"
+                break
+            
             # Acts / Ordinances / Constitutions
             m_line = re.match(r"^([A-Z][A-Za-z'\- ]+?(?:Act|Ordinance|Constitution))\b", line_clean)
             if m_line:
@@ -333,29 +376,44 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
                 extracted_title = m_si.group(1).strip()
                 break
 
-        # If still not found, try broader search (may span whitespace but we'll post-trim to last 'Act' word)
+        # If still not found, try broader search (Constitution gets priority)
         if not extracted_title:
-            title_patterns = [
-                r"([A-Z][A-Za-z'\-\s]+Act)\b",
-                r"([A-Z][A-Za-z'\-\s]+Ordinance)\b",
-                r"(Statutory\s+Instrument\s+No\.?\s*\d+\s*of\s*\d{4})\b",
-                r"([A-Z][A-Za-z'\-\s]+Constitution)\b",
+            # Constitution-specific patterns (highest priority)
+            constitution_patterns = [
+                r"(Constitution\s+of\s+Zimbabwe)",
+                r"(Zimbabwe\s+Constitution)",
+                r"([A-Z][A-Za-z'\-\s]*Constitution\s+of\s+Zimbabwe)",
             ]
-            for pattern in title_patterns:
-                m = re.search(pattern, full_markdown)
+            
+            for pattern in constitution_patterns:
+                m = re.search(pattern, full_markdown, re.IGNORECASE)
                 if m:
-                    candidate = m.group(1).strip()
-                    # If candidate spans multiple words including newlines (e.g., 'Zimbabwe ... Act'),
-                    # reduce to the shortest suffix ending with the key word
-                    parts = re.split(r"\s+", candidate)
-                    if "Act" in parts:
-                        # Take from the last capitalized word before 'Act'
-                        act_idx = len(parts) - 1 - parts[::-1].index("Act")
-                        reduced = " ".join(parts[: act_idx + 1])
-                        candidate = reduced
-                    if len(candidate) >= 6:
-                        extracted_title = candidate
-                        break
+                    extracted_title = "Constitution of Zimbabwe"
+                    break
+            
+            # Other document patterns
+            if not extracted_title:
+                title_patterns = [
+                    r"([A-Z][A-Za-z'\-\s]+Act)\b",
+                    r"([A-Z][A-Za-z'\-\s]+Ordinance)\b", 
+                    r"(Statutory\s+Instrument\s+No\.?\s*\d+\s*of\s*\d{4})\b",
+                    r"([A-Z][A-Za-z'\-\s]+Constitution)\b",
+                ]
+                for pattern in title_patterns:
+                    m = re.search(pattern, full_markdown)
+                    if m:
+                        candidate = m.group(1).strip()
+                        # If candidate spans multiple words including newlines (e.g., 'Zimbabwe ... Act'),
+                        # reduce to the shortest suffix ending with the key word
+                        parts = re.split(r"\s+", candidate)
+                        if "Act" in parts:
+                            # Take from the last capitalized word before 'Act'
+                            act_idx = len(parts) - 1 - parts[::-1].index("Act")
+                            reduced = " ".join(parts[: act_idx + 1])
+                            candidate = reduced
+                        if len(candidate) >= 6:
+                            extracted_title = candidate
+                            break
 
         if extracted_title and (_is_placeholder_title(metadata["title"]) or extracted_title != metadata["title"]):
             metadata["title"] = extracted_title
@@ -381,9 +439,29 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
         if title and title != "Untitled" and not title.startswith("1."):
             metadata["title"] = title
     
-    # Build canonical citation
-    if metadata["title"] and metadata["chapter"]:
-        metadata["canonical_citation"] = f"{metadata['title']} [Chapter {metadata['chapter']}]"
+    # Build canonical citation with Constitution handling
+    if metadata["title"]:
+        if metadata["doc_type"] == "constitution":
+            # Constitution doesn't use Chapter numbers
+            metadata["canonical_citation"] = metadata["title"]
+        elif metadata["chapter"]:
+            metadata["canonical_citation"] = f"{metadata['title']} [Chapter {metadata['chapter']}]"
+        else:
+            metadata["canonical_citation"] = metadata["title"]
+    
+    # Add constitutional authority metadata
+    if metadata["doc_type"] == "constitution":
+        metadata["authority_level"] = "supreme"
+        metadata["binding_scope"] = "all_courts"
+        metadata["hierarchy_rank"] = 1
+    elif metadata["doc_type"] == "act":
+        metadata["authority_level"] = "high"
+        metadata["binding_scope"] = "general"
+        metadata["hierarchy_rank"] = 2
+    elif metadata["doc_type"] in ["ordinance", "si"]:
+        metadata["authority_level"] = "medium"
+        metadata["binding_scope"] = "specific"
+        metadata["hierarchy_rank"] = 3
     
     return metadata
 
@@ -774,33 +852,59 @@ def main():
             logger.warning("No documents parsed successfully.")
         return
 
-    # Build manifest with R2 metadata
+    # APPEND to existing manifest instead of overwriting
     manifest_key = "corpus/processed/legislation_docs.jsonl"
-    content = "\n".join(json.dumps(d) for d in parsed)
     
-    # Aggregate statistics for manifest metadata
+    # Load existing manifest if it exists
+    existing_docs = []
+    try:
+        response = r2.get_object(Bucket=bucket, Key=manifest_key)
+        existing_content = response['Body'].read().decode('utf-8')
+        for line in existing_content.strip().split('\n'):
+            if line.strip():
+                existing_docs.append(json.loads(line))
+        logger.info("Loaded existing manifest with %d documents", len(existing_docs))
+    except r2.exceptions.NoSuchKey:
+        logger.info("No existing manifest found, creating new one")
+    except Exception as e:
+        logger.warning("Error loading existing manifest: %s", e)
+    
+    # Combine existing + new documents (dedupe by doc_id)
+    existing_doc_ids = set(doc.get("doc_id") for doc in existing_docs)
+    new_docs = [doc for doc in parsed if doc.get("doc_id") not in existing_doc_ids]
+    
+    all_docs = existing_docs + new_docs
+    logger.info("Manifest will contain %d total documents (%d existing + %d new)", 
+               len(all_docs), len(existing_docs), len(new_docs))
+    
+    # Build complete manifest content
+    content = "\n".join(json.dumps(d, default=str) for d in all_docs)
+    
+    # Aggregate statistics for ALL documents
     doc_types = {}
     jurisdictions = set()
     total_nodes = 0
     total_markdown_chars = 0
     
-    for doc in parsed:
+    for doc in all_docs:
         doc_type = doc.get("doc_type", "unknown")
         doc_types[doc_type] = doc_types.get(doc_type, 0) + 1
         jurisdictions.add(doc.get("jurisdiction", "unknown"))
-        total_nodes += doc["extra"]["tree_nodes_count"]
-        total_markdown_chars += doc["extra"]["markdown_length"]
+        total_nodes += doc.get("extra", {}).get("tree_nodes_count", 0)
+        total_markdown_chars += doc.get("extra", {}).get("markdown_length", 0)
     
     manifest_metadata = {
         "content_type": "application/jsonl",
-        "description": "Parsed legislation documents manifest",
-        "document_count": str(len(parsed)),
+        "description": "Complete processed legislation documents manifest (append-safe)",
+        "document_count": str(len(all_docs)),
+        "new_documents_added": str(len(new_docs)),
         "total_tree_nodes": str(total_nodes),
         "total_markdown_chars": str(total_markdown_chars),
         "doc_types": ",".join(f"{k}:{v}" for k, v in doc_types.items()),
         "jurisdictions": ",".join(jurisdictions),
         "processing_timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "pageindex_integration": "enabled"
+        "pageindex_integration": "enabled",
+        "append_safe": "true"
     }
     
     r2.put_object(
@@ -810,7 +914,7 @@ def main():
         ContentType="application/json",
         Metadata=manifest_metadata
     )
-    logger.info("Uploaded manifest with %d documents", len(parsed))
+    logger.info("Updated manifest: %d total documents (%d new added)", len(all_docs), len(new_docs))
 
 
 if __name__ == "__main__":

@@ -98,7 +98,7 @@ CITIZEN_ADAPTER = """**CITIZEN MODE ACTIVATED**
 # ADVANCED INTENT CLASSIFICATION
 # ==============================================================================
 
-ADVANCED_INTENT_CLASSIFIER_SYSTEM = f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
+ADVANCED_INTENT_CLASSIFIER_SYSTEM = GWETA_MASTER_CONSTITUTIONAL_PROMPT + """
 
 **INTENT CLASSIFICATION SYSTEM**
 
@@ -141,7 +141,7 @@ ADVANCED_INTENT_TEMPLATE = ChatPromptTemplate.from_messages([
 # ADVANCED QUERY PROCESSING
 # ==============================================================================
 
-ADVANCED_QUERY_REWRITER_SYSTEM = f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
+ADVANCED_QUERY_REWRITER_SYSTEM = GWETA_MASTER_CONSTITUTIONAL_PROMPT + """
 
 **ADVANCED QUERY REWRITING FOR LEGAL PRECISION**
 
@@ -215,11 +215,9 @@ SUB_QUESTION_TEMPLATE = ChatPromptTemplate.from_messages([
 # ==============================================================================
 
 PROFESSIONAL_SYNTHESIS_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
+    ("system", GWETA_MASTER_CONSTITUTIONAL_PROMPT + "\n\n" + PROFESSIONAL_ADAPTER + """
 
-{PROFESSIONAL_ADAPTER}
-
-**REASONING FRAMEWORK**: Apply {{reasoning_framework}} as appropriate.
+**REASONING FRAMEWORK**: Apply {reasoning_framework} as appropriate.
 
 **STRUCTURE**:
 1. ISSUE: Precise legal question
@@ -251,9 +249,7 @@ Provide comprehensive legal analysis following {reasoning_framework} framework."
 ])
 
 CITIZEN_SYNTHESIS_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
-
-{CITIZEN_ADAPTER}
+    ("system", GWETA_MASTER_CONSTITUTIONAL_PROMPT + "\n\n" + CITIZEN_ADAPTER + """
 
 **EXPLANATION APPROACH**:
 - Start with simple, clear summary of main legal point

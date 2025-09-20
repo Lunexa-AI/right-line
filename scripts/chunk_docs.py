@@ -29,8 +29,9 @@ try:
     from botocore.client import Config
     from pydantic import BaseModel, Field, field_validator, model_validator
     from tqdm import tqdm
+    from dotenv import load_dotenv
 except ImportError as e:
-    print(f"❌ Error: Missing dependency. Run: poetry add boto3 pydantic tqdm")
+    print(f"❌ Error: Missing dependency. Run: poetry add boto3 pydantic tqdm python-dotenv")
     print(f"   Specific error: {e}")
     sys.exit(1)
 
@@ -142,6 +143,11 @@ def upload_chunk_to_r2(r2_client, bucket: str, chunk: Dict[str, Any]) -> None:
             "section_path": str(chunk.get("section_path", "")),
             "num_tokens": str(chunk.get("num_tokens", 0)),
             "nature": str(chunk.get("nature", "")),
+            # Constitutional hierarchy metadata (critical for legal AI)
+            "authority_level": str(chunk.get("authority_level", "")),
+            "hierarchy_rank": str(chunk.get("hierarchy_rank", "")),
+            "binding_scope": str(chunk.get("binding_scope", "")),
+            "subject_category": str(chunk.get("subject_category", "")),
             "year": str(chunk.get("year", "")),
             "chapter": str(chunk.get("chapter", ""))
         }
@@ -479,6 +485,12 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Di
     version_date = doc.get("version_date")
     source_url = doc.get("source_url", "")
     
+    # Extract constitutional hierarchy metadata (critical for legal AI)
+    authority_level = doc.get("authority_level")
+    hierarchy_rank = doc.get("hierarchy_rank") 
+    binding_scope = doc.get("binding_scope")
+    subject_category = doc.get("subject_category")
+    
     # Get PageIndex tree and markdown
     content_tree = doc.get("content_tree", [])
     pageindex_markdown = doc.get("pageindex_markdown", "")
@@ -536,6 +548,11 @@ def chunk_from_pageindex_tree(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Di
                     nature=nature,
                     year=int(year) if year and str(year).isdigit() else None,
                     chapter=chapter,
+                    # Constitutional hierarchy fields (critical for legal AI authority ranking)
+                    authority_level=authority_level,
+                    hierarchy_rank=hierarchy_rank,
+                    binding_scope=binding_scope,
+                    subject_category=subject_category,
                     metadata={
                         "title": doc.get("title", ""),
                         "jurisdiction": doc.get("jurisdiction", "ZW"),
@@ -589,6 +606,12 @@ def chunk_legislation(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, 
     nature = extra.get("nature")
     year = extra.get("year")
     chapter = extra.get("chapter")
+    
+    # Extract constitutional hierarchy metadata (critical for legal AI)
+    authority_level = doc.get("authority_level")
+    hierarchy_rank = doc.get("hierarchy_rank") 
+    binding_scope = doc.get("binding_scope")
+    subject_category = doc.get("subject_category")
 
     # Normalize doc_type for legislation based on nature and existing value
     doc_type_raw = (doc.get("doc_type") or "").lower()
@@ -713,6 +736,11 @@ def chunk_legislation(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, 
                             nature=nature,
                             year=year,
                             chapter=chapter,
+                            # Constitutional hierarchy fields (critical for legal AI authority ranking)
+                            authority_level=authority_level,
+                            hierarchy_rank=hierarchy_rank,
+                            binding_scope=binding_scope,
+                            subject_category=subject_category,
                             metadata={
                                 "title": title,
                                 "sections": merged_sections,
@@ -760,6 +788,11 @@ def chunk_legislation(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, 
                         nature=nature,
                         year=year,
                         chapter=chapter,
+                        # Constitutional hierarchy fields (critical for legal AI authority ranking)
+                        authority_level=authority_level,
+                        hierarchy_rank=hierarchy_rank,
+                        binding_scope=binding_scope,
+                        subject_category=subject_category,
                         metadata={
                             "title": title,
                             "sections": merged_sections,
@@ -819,6 +852,11 @@ def chunk_legislation(doc: Dict[str, Any]) -> Tuple[List[Chunk], List[Dict[str, 
                             nature=nature,
                             year=year,
                             chapter=chapter,
+                            # Constitutional hierarchy fields (critical for legal AI authority ranking)
+                            authority_level=authority_level,
+                            hierarchy_rank=hierarchy_rank,
+                            binding_scope=binding_scope,
+                            subject_category=subject_category,
                             metadata={
                                 "title": title,
                                 "section": section_title,
@@ -1400,6 +1438,9 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force reprocessing of already chunked documents")
     
     args = parser.parse_args()
+    
+    # Load environment variables from .env.local
+    load_dotenv(".env.local")
     
     # Set log level
     if args.verbose:

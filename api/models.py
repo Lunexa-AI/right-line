@@ -430,6 +430,12 @@ class ChunkV3(BaseModel):
     year: int | None = Field(None, description="Year of the document")
     chapter: str | None = Field(None, description="Chapter identifier")
 
+    # Constitutional hierarchy metadata (critical for legal AI)
+    authority_level: str | None = Field(None, description="Legal authority level (supreme, high, medium, low)")
+    hierarchy_rank: int | None = Field(None, description="Hierarchical rank (1=Constitution, 2=Act, 3=SI, etc.)")
+    binding_scope: str | None = Field(None, description="Binding scope (national, specific, limited)")
+    subject_category: str | None = Field(None, description="Subject category (legislation, case_law, etc.)")
+
     # Entity extraction
     entities: dict[str, List[str]] | None = Field(
         default_factory=dict, description="Extracted entities (dates, statute_refs, etc.)"

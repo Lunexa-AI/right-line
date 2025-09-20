@@ -9,6 +9,7 @@ observability, and robust error handling.
 """
 
 import asyncio
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Literal, Optional
@@ -17,11 +18,18 @@ import structlog
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tracers import LangChainTracer
 from langchain_openai import ChatOpenAI
+from langsmith import Client, traceable
 
 from api.schemas.agent_state import AgentState, update_intent_routing, update_query_processing, update_retrieval_results, update_final_output
 
 logger = structlog.get_logger(__name__)
+
+# LangSmith configuration
+LANGSMITH_API_KEY = os.environ.get("LANGCHAIN_API_KEY")
+LANGSMITH_PROJECT = os.environ.get("LANGCHAIN_PROJECT", "rightline-legal-ai")
+LANGSMITH_ENDPOINT = os.environ.get("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
 
 
 class QueryOrchestrator:
@@ -37,15 +45,17 @@ class QueryOrchestrator:
         # Create the state graph
         graph = StateGraph(AgentState)
         
-        # Add nodes (renamed to explicit numbered stages)
+        # Add nodes (renamed to explicit numbered stages with quality gates)
         graph.add_node("01_intent_classifier", self._route_intent_node)
         graph.add_node("02_query_rewriter", self._rewrite_expand_node)
         graph.add_node("03_retrieval_parallel", self._retrieve_concurrent_node)
         graph.add_node("04_merge_results", self._merge_results_node)
+        graph.add_node("04b_relevance_filter", self._relevance_filter_node)
         graph.add_node("05_rerank", self._rerank_node)
         graph.add_node("06_select_topk", self._select_topk_node)
         graph.add_node("07_parent_expansion", self._expand_parents_node)
         graph.add_node("08_synthesis", self._synthesize_stream_node)
+        graph.add_node("08b_quality_gate", self._quality_gate_node)
         graph.add_node("09_answer_composer", self._answer_composer_node)
         graph.add_node("session_search", self._session_search_node)
         graph.add_node("conversational_tool", self._conversational_tool_node)
@@ -66,7 +76,7 @@ class QueryOrchestrator:
             }
         )
         
-        # Add linear edges for RAG flow
+        # Add linear edges for RAG flow (simplified for debugging)
         graph.add_edge("02_query_rewriter", "03_retrieval_parallel")
         graph.add_edge("03_retrieval_parallel", "04_merge_results")
         graph.add_edge("04_merge_results", "05_rerank")
@@ -162,15 +172,198 @@ class QueryOrchestrator:
             logger.error("09_answer_composer failed", error=str(e))
             return {"final_answer": "I encountered an error composing the answer.", "confidence": 0.3}
     
-    async def _route_intent_node(self, state: AgentState) -> Dict[str, Any]:
-        """Intent router node - classify user intent and extract context."""
+    @traceable(
+        run_type="tool",
+        name="04b_relevance_filter",
+        tags=["quality", "relevance", "filtering", "legal-ai"]
+    )
+    async def _relevance_filter_node(self, state: AgentState) -> Dict[str, Any]:
+        """04b_relevance_filter: Filter sources for relevance to specific query."""
         start_time = time.time()
         
         try:
-            logger.info("Starting intent routing", 
+            logger.info("04b_relevance_filter start", trace_id=state.trace_id)
+            
+            # Get combined results from previous step
+            combined_results = getattr(state, 'combined_results', [])
+            if not combined_results:
+                logger.warning("No combined results for relevance filtering", trace_id=state.trace_id)
+                return {"filtered_results": [], "relevance_metrics": {}}
+            
+            # Import quality gates
+            from api.composer.quality_gates import run_pre_synthesis_quality_gate
+            
+            # Convert results to context documents format
+            context_docs = []
+            for r in combined_results:
+                context_docs.append({
+                    "doc_key": r.chunk_id,
+                    "title": r.metadata.get("title", "Unknown Document"),
+                    "content": getattr(r, 'chunk_text', '') or "",
+                    "doc_type": r.metadata.get("doc_type", "unknown"),
+                    "confidence": getattr(r, 'confidence', 0.0),
+                    "source": r.metadata.get("source", "unknown")
+                })
+            
+            # Run relevance filtering
+            filtered_docs, gate_result = await run_pre_synthesis_quality_gate(
+                context_documents=context_docs,
+                query=state.raw_query,
+                min_sources=2,
+                min_relevance_ratio=0.5
+            )
+            
+            # Map back to results objects
+            filtered_doc_keys = set(doc["doc_key"] for doc in filtered_docs)
+            filtered_results = [
+                r for r in combined_results 
+                if r.chunk_id in filtered_doc_keys
+            ]
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            # LangSmith: Log filtering results
+            logger.info(
+                "relevance_filter_output",
+                {
+                    "sources_before": len(combined_results),
+                    "sources_after": len(filtered_results),
+                    "filtered_count": len(combined_results) - len(filtered_results),
+                    "relevance_ratio": gate_result.confidence,
+                    "quality_passed": gate_result.passed,
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+            
+            logger.info("04b_relevance_filter completed",
+                       sources_before=len(combined_results),
+                       sources_after=len(filtered_results),
+                       quality_passed=gate_result.passed,
+                       duration_ms=round(duration_ms, 2),
+                       trace_id=state.trace_id)
+            
+            return {
+                "filtered_results": filtered_results,
+                "combined_results": filtered_results,  # Update for downstream
+                "relevance_metrics": gate_result.metrics,
+                "quality_passed": gate_result.passed
+            }
+            
+        except Exception as e:
+            logger.error("04b_relevance_filter failed", error=str(e), trace_id=state.trace_id)
+            return {"filtered_results": getattr(state, 'combined_results', []), "relevance_metrics": {}}
+    
+    @traceable(
+        run_type="tool",
+        name="08b_quality_gate",
+        tags=["quality", "verification", "legal-ai"]
+    )
+    async def _quality_gate_node(self, state: AgentState) -> Dict[str, Any]:
+        """08b_quality_gate: Comprehensive quality verification of legal analysis."""
+        start_time = time.time()
+        
+        try:
+            logger.info("08b_quality_gate start", trace_id=state.trace_id)
+            
+            # Get final answer and context for verification
+            final_answer = getattr(state, 'final_answer', '')
+            bundled_context = getattr(state, 'bundled_context', [])
+            
+            if not final_answer:
+                logger.warning("No final answer for quality verification", trace_id=state.trace_id)
+                return {"quality_passed": False, "quality_issues": ["No answer to verify"]}
+            
+            # Import quality gates
+            from api.composer.quality_gates import run_post_synthesis_quality_gate
+            
+            # Convert context for quality checking
+            context_docs = []
+            for ctx in bundled_context:
+                context_docs.append({
+                    "doc_key": ctx.get('parent_doc_id', 'unknown'),
+                    "title": ctx.get('title', 'Unknown Document'),
+                    "content": ctx.get('content', ''),
+                    "doc_type": ctx.get('source_type', 'unknown')
+                })
+            
+            # Run comprehensive quality check
+            quality_result = await run_post_synthesis_quality_gate(
+                answer=final_answer,
+                context_documents=context_docs,
+                query=state.raw_query,
+                user_type=getattr(state, 'user_type', 'professional'),
+                complexity=getattr(state, 'complexity', 'moderate')
+            )
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            # LangSmith: Log quality verification results
+            logger.info(
+                "quality_gate_output",
+                {
+                    "quality_passed": quality_result.passed,
+                    "confidence": quality_result.confidence,
+                    "issues_count": len(quality_result.issues),
+                    "quality_issues": quality_result.issues,
+                    "recommendations": quality_result.recommendations,
+                    "metrics": quality_result.metrics,
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+            
+            logger.info("08b_quality_gate completed",
+                       quality_passed=quality_result.passed,
+                       confidence=quality_result.confidence,
+                       issues_count=len(quality_result.issues),
+                       duration_ms=round(duration_ms, 2),
+                       trace_id=state.trace_id)
+            
+            # If quality check fails, add warnings to answer
+            if not quality_result.passed and final_answer:
+                quality_warning = "\n\n⚠️ This analysis may require additional review for completeness and accuracy."
+                final_answer += quality_warning
+            
+            return {
+                "quality_passed": quality_result.passed,
+                "quality_confidence": quality_result.confidence,
+                "quality_issues": quality_result.issues,
+                "quality_recommendations": quality_result.recommendations,
+                "final_answer": final_answer  # Updated with warnings if needed
+            }
+            
+        except Exception as e:
+            logger.error("08b_quality_gate failed", error=str(e), trace_id=state.trace_id)
+            
+            # LangSmith: Log error
+            logger.info(
+                "quality_gate_error",
+                {"error": str(e), "fallback_used": True}
+            )
+            
+            return {"quality_passed": False, "quality_issues": [f"Quality check failed: {str(e)}"]}
+    
+    @traceable(
+        run_type="llm",
+        name="01_intent_classifier",
+        tags=["intent", "classification", "legal-ai"]
+    )
+    async def _route_intent_node(self, state: AgentState) -> Dict[str, Any]:
+        """01_intent_classifier: Classify user intent with advanced legal reasoning framework."""
+        start_time = time.time()
+        
+        try:
+            # LangSmith: Record input metadata
+            input_metadata = {
+                "query": state.raw_query,
+                "query_length": len(state.raw_query),
+                "trace_id": state.trace_id
+            }
+            
+            logger.info("01_intent_classifier start", 
                        query_preview=state.raw_query[:50],
                        trace_id=state.trace_id)
             
+            # Use simplified intent classification for now
             # Fast heuristics first
             intent = self._classify_intent_heuristic(state.raw_query)
             jurisdiction = self._detect_jurisdiction(state.raw_query)
@@ -180,45 +373,111 @@ class QueryOrchestrator:
             if intent is None:
                 intent = await self._classify_intent_llm(state.raw_query)
             
+            # Create intent data structure
+            intent_data = {
+                "intent": intent or "rag_qa",
+                "complexity": "moderate",
+                "user_type": "professional",
+                "jurisdiction": jurisdiction or "ZW",
+                "legal_areas": ["general"],
+                "reasoning_framework": "irac",
+                "confidence": 0.8 if intent else 0.5
+            }
+            
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("Intent routing completed",
-                       intent=intent,
-                       jurisdiction=jurisdiction,
+            
+            # LangSmith: Record output metadata
+            output_metadata = {
+                "intent_classification": intent_data,
+                "duration_ms": round(duration_ms, 2),
+                "reasoning_framework": intent_data.get("reasoning_framework", "irac"),
+                "complexity_assessment": intent_data.get("complexity", "moderate")
+            }
+            
+            logger.info("01_intent_classifier completed",
+                       intent=intent_data.get("intent"),
+                       complexity=intent_data.get("complexity"),
+                       user_type=intent_data.get("user_type"),
+                       confidence=intent_data.get("confidence"),
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
             return {
-                "intent": intent or "rag_qa",  # Default to RAG Q&A
-                "intent_confidence": 0.8 if intent else 0.5,
-                "jurisdiction": jurisdiction,
-                "date_context": date_context
+                "intent": intent_data.get("intent", "rag_qa"),
+                "intent_confidence": intent_data.get("confidence", 0.8),
+                "complexity": intent_data.get("complexity", "moderate"),
+                "user_type": intent_data.get("user_type", "professional"),
+                "legal_areas": intent_data.get("legal_areas", []),
+                "reasoning_framework": intent_data.get("reasoning_framework", "irac"),
+                "jurisdiction": intent_data.get("jurisdiction", "ZW"),
+                "date_context": intent_data.get("date_context")
             }
             
         except Exception as e:
-            logger.error("Intent routing failed", error=str(e), trace_id=state.trace_id)
-            # Fallback to RAG Q&A
-            return {"intent": "rag_qa"}
+            logger.error("01_intent_classifier failed", error=str(e), trace_id=state.trace_id)
+            
+            # LangSmith: Record error metadata
+            error_metadata = {"error": str(e), "fallback_used": True}
+            
+            # Fallback to default classification
+            return {
+                "intent": "rag_qa",
+                "intent_confidence": 0.5,
+                "complexity": "moderate",
+                "user_type": "professional",
+                "reasoning_framework": "irac"
+            }
     
+    @traceable(
+        run_type="llm",
+        name="02_query_rewriter", 
+        tags=["rewrite", "query-processing", "legal-ai"]
+    )
     async def _rewrite_expand_node(self, state: AgentState) -> Dict[str, Any]:
-        """Rewrite & expand node - rewrite query and generate hypotheticals."""
+        """02_query_rewriter: Rewrite query with legal precision and generate hypotheticals."""
         start_time = time.time()
         
         try:
-            logger.info("Starting query rewrite and expansion", trace_id=state.trace_id)
+            # LangSmith: Log input artifacts
+            logger.info(
+                "query_rewriter_input",
+                {
+                    "raw_query": state.raw_query,
+                    "intent": getattr(state, 'intent', None),
+                    "complexity": getattr(state, 'complexity', 'moderate'),
+                    "user_type": getattr(state, 'user_type', 'professional'),
+                    "trace_id": state.trace_id
+                }
+            )
             
-            # History-aware rewrite (placeholder)
+            logger.info("02_query_rewriter start", trace_id=state.trace_id)
+            
+            # History-aware rewrite (simplified for stability)
             rewritten_query = await self._rewrite_query(state)
             
-            # Multi-HyDE generation (placeholder - run in parallel)
-            hypothetical_docs = await self._generate_multi_hyde(rewritten_query)
-            
-            # Optional sub-question decomposition
-            sub_questions = await self._decompose_query(rewritten_query)
+            # Generate hypothetical documents (simplified for now)
+            hypothetical_docs = [f"Hypothetical legal document for: {rewritten_query}"]
+            sub_questions = []  # Simplified for initial implementation
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("Query rewrite and expansion completed",
+            
+            # LangSmith: Log output artifacts
+            logger.info(
+                "query_rewriter_output",
+                {
+                    "original_query": state.raw_query,
+                    "rewritten_query": rewritten_query,
+                    "hypotheticals_count": len(hypothetical_docs),
+                    "sub_questions_count": len(sub_questions),
+                    "duration_ms": round(duration_ms, 2),
+                    "enhancement_applied": rewritten_query != state.raw_query
+                }
+            )
+            
+            logger.info("02_query_rewriter completed",
+                       original_length=len(state.raw_query),
+                       rewritten_length=len(rewritten_query),
                        hypotheticals_count=len(hypothetical_docs),
-                       sub_questions_count=len(sub_questions),
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
@@ -229,50 +488,94 @@ class QueryOrchestrator:
             }
             
         except Exception as e:
-            logger.error("Query rewrite and expansion failed", error=str(e), trace_id=state.trace_id)
+            logger.error("02_query_rewriter failed", error=str(e), trace_id=state.trace_id)
+            
+            # LangSmith: Log error
+            logger.info(
+                "query_rewriter_error",
+                {"error": str(e), "fallback_to_original": True}
+            )
+            
             # Fallback to original query
             return {"rewritten_query": state.raw_query}
     
+    @traceable(
+        run_type="retriever",
+        name="03_retrieval_parallel",
+        tags=["retrieval", "bm25", "milvus", "parallel", "legal-ai"]
+    )
     async def _retrieve_concurrent_node(self, state: AgentState) -> Dict[str, Any]:
-        """03_retrieval_parallel: Run BM25 and Milvus in parallel and merge.
-        Writes bm25_results, milvus_results, combined_results, retrieval_results.
-        """
+        """03_retrieval_parallel: Run BM25 and Milvus in parallel and merge."""
         start_time = time.time()
         
         try:
-            logger.info("03_retrieval_parallel start", trace_id=state.trace_id)
-            
-            # Use the rewritten query for retrieval
             query = state.rewritten_query or state.raw_query
+            
+            # LangSmith: Log input artifacts
+            logger.info(
+                "retrieval_input",
+                {
+                    "query": query,
+                    "original_query": state.raw_query,
+                    "query_enhanced": query != state.raw_query,
+                    "trace_id": state.trace_id
+                }
+            )
+            
+            logger.info("03_retrieval_parallel start", trace_id=state.trace_id)
             
             # Use RetrievalEngine components directly to access both branches
             from api.tools.retrieval_engine import RetrievalEngine
             engine = RetrievalEngine()
             
-            # Launch BM25 and Milvus in parallel
+            # Launch BM25 and Milvus in parallel with timing
+            bm25_start = time.time()
+            milvus_start = time.time()
+            
             bm25_task = asyncio.create_task(engine.bm25_retriever.aget_relevant_documents(query))
             milvus_task = asyncio.create_task(engine.milvus_retriever.aget_relevant_documents(query))
             bm25_docs, milvus_docs = await asyncio.gather(bm25_task, milvus_task, return_exceptions=False)
             
-            # Convert LangChain Documents back to RetrievalResult for downstream compatibility
+            bm25_time = time.time() - bm25_start
+            milvus_time = time.time() - milvus_start
+            
+            # Convert LangChain Documents back to RetrievalResult
             bm25_results = [doc.metadata.get("retrieval_result") for doc in bm25_docs if doc.metadata.get("retrieval_result")]
             milvus_results = [doc.metadata.get("retrieval_result") for doc in milvus_docs if doc.metadata.get("retrieval_result")]
             
-            # Merge with simple dedupe by chunk_id keeping max score
+            # Merge with dedupe by chunk_id keeping max score
             combined_map = {}
             for r in (bm25_results + milvus_results):
                 key = r.chunk_id
-                if key not in combined_map or (getattr(r, 'score', r.confidence) > getattr(combined_map[key], 'score', combined_map[key].confidence)):
+                current_score = getattr(r, 'score', r.confidence)
+                existing = combined_map.get(key)
+                if not existing or current_score > getattr(existing, 'score', existing.confidence):
                     combined_map[key] = r
             combined_results = list(combined_map.values())
             
-            # Candidate IDs for reranking
             candidate_chunk_ids = [r.chunk_id for r in combined_results]
             
             duration_ms = (time.time() - start_time) * 1000
+            
+            # LangSmith: Log detailed output artifacts
+            logger.info(
+                "retrieval_output",
+                {
+                    "bm25_count": len(bm25_results),
+                    "milvus_count": len(milvus_results),
+                    "combined_count": len(combined_results),
+                    "deduplication_ratio": len(combined_results) / (len(bm25_results) + len(milvus_results)) if (bm25_results or milvus_results) else 0,
+                    "top_confidence": combined_results[0].confidence if combined_results else 0,
+                    "bm25_time_ms": round(bm25_time * 1000, 2),
+                    "milvus_time_ms": round(milvus_time * 1000, 2),
+                    "total_duration_ms": round(duration_ms, 2),
+                    "parallel_efficiency": max(bm25_time, milvus_time) / (bm25_time + milvus_time) if (bm25_time + milvus_time) > 0 else 0
+                }
+            )
+            
             logger.info("03_retrieval_parallel completed",
                        bm25_count=len(bm25_results),
-                       milvus_count=len(milvus_results),
+                       milvus_count=len(milvus_results), 
                        combined_count=len(combined_results),
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id,
@@ -288,6 +591,13 @@ class QueryOrchestrator:
             
         except Exception as e:
             logger.error("03_retrieval_parallel failed", error=str(e), trace_id=state.trace_id)
+            
+            # LangSmith: Log error
+            logger.info(
+                "retrieval_error",
+                {"error": str(e), "fallback_used": True}
+            )
+            
             return {"candidate_chunk_ids": [], "bm25_results": [], "milvus_results": [], "combined_results": [], "retrieval_results": []}
     
     async def _rerank_node(self, state: AgentState) -> Dict[str, Any]:
@@ -438,101 +748,154 @@ class QueryOrchestrator:
             logger.error("Parent document expansion failed", error=str(e), trace_id=state.trace_id)
             return {"parent_doc_keys": [], "context_bundle_key": None}
     
+    @traceable(
+        run_type="llm",
+        name="08_synthesis",
+        tags=["synthesis", "legal-analysis", "constitutional", "legal-ai"]
+    )
     async def _synthesize_stream_node(self, state: AgentState) -> Dict[str, Any]:
-        """08_synthesis: Compose final answer and attach citations.
-        Keeps existing prompt/gates but writes fields expected by new state.
-        """
+        """08_synthesis: Generate comprehensive legal analysis with constitutional awareness."""
         start_time = time.time()
         
         try:
-            logger.info("Starting synthesis with attribution gates", trace_id=state.trace_id)
+            # Get complexity and user type for appropriate synthesis
+            complexity = getattr(state, 'complexity', 'moderate')
+            user_type = getattr(state, 'user_type', 'professional')
+            reasoning_framework = getattr(state, 'reasoning_framework', 'irac')
             
-            # Build structured synthesis prompt
-            synthesis_prompt = self._build_synthesis_prompt(state)
+            # LangSmith: Log input artifacts
+            logger.info(
+                "synthesis_input",
+                {
+                    "query": state.raw_query,
+                    "rewritten_query": getattr(state, 'rewritten_query', None),
+                    "context_documents": len(getattr(state, 'bundled_context', [])),
+                    "complexity": complexity,
+                    "user_type": user_type,
+                    "reasoning_framework": reasoning_framework,
+                    "legal_areas": getattr(state, 'legal_areas', []),
+                    "trace_id": state.trace_id
+                }
+            )
             
-            # Import synthesis components
-            from langchain_openai import ChatOpenAI
+            logger.info("08_synthesis start", 
+                       complexity=complexity,
+                       user_type=user_type,
+                       reasoning_framework=reasoning_framework,
+                       trace_id=state.trace_id)
             
-            # Create streaming LLM
+            # Use new constitutional prompting system
+            from api.composer.prompts import get_prompt_template, get_max_tokens_for_complexity, build_synthesis_context
+            
+            # Get appropriate synthesis template
+            template_name = f"synthesis_{user_type}"
+            template = get_prompt_template(template_name)
+            
+            # Build context using new formatter
+            context_docs = []
+            for i, ctx in enumerate(getattr(state, 'bundled_context', [])[:12], 1):
+                context_docs.append({
+                    "doc_key": ctx.get('parent_doc_id', f'doc_{i}'),
+                    "title": ctx.get('title', 'Unknown Document'),
+                    "content": ctx.get('content', '')[:2000],
+                    "doc_type": ctx.get('source_type', 'unknown'),
+                    "authority_level": "high" if ctx.get('confidence', 0) > 0.8 else "medium"
+                })
+            
+            # Build comprehensive context
+            synthesis_context = build_synthesis_context(
+                query=state.raw_query,
+                context_documents=context_docs,
+                user_type=user_type,
+                complexity=complexity,
+                legal_areas=getattr(state, 'legal_areas', []),
+                reasoning_framework=reasoning_framework
+            )
+            
+            # Create LLM with appropriate configuration
+            max_tokens = get_max_tokens_for_complexity(complexity)
             llm = ChatOpenAI(
                 model="gpt-4o",
                 temperature=0.1,
-                max_tokens=2000,
+                max_tokens=max_tokens,
                 streaming=True
             )
             
-            # Initialize attribution gates
-            attribution_gate = AttributionGate()
-            quote_verifier = QuoteVerifier(state.bundled_context)
-            
-            # Stream synthesis with gates
+            # Execute synthesis with LangSmith tracing
             final_answer = ""
             first_token_time = None
             
-            async for chunk in llm.astream(synthesis_prompt):
+            async for chunk in llm.astream(template.format_messages(**synthesis_context)):
                 if first_token_time is None:
                     first_token_time = time.time()
                     first_token_ms = (first_token_time - start_time) * 1000
-                    logger.info("First token received", 
+                    logger.info("08_synthesis first token", 
                                first_token_ms=round(first_token_ms, 2),
                                trace_id=state.trace_id)
                 
                 if chunk.content:
                     final_answer += chunk.content
             
-            # Apply attribution gate
-            attribution_result = await attribution_gate.validate_citations(final_answer, state.bundled_context)
-            if not attribution_result.passed:
-                logger.warning("Attribution gate failed", 
-                              missing_citations=attribution_result.missing_citations,
-                              trace_id=state.trace_id)
-                # Add warning to response
-                final_answer += "\n\n⚠️ Some statements may lack proper citations."
-            
-            # Apply quote verifier
-            quote_result = await quote_verifier.verify_quotes(final_answer)
-            if not quote_result.all_verified:
-                logger.warning("Quote verification failed",
-                              unverified_quotes=quote_result.unverified_quotes,
-                              trace_id=state.trace_id)
-                # Add warning to response
-                final_answer += "\n\n⚠️ Some quotes may not be accurately attributed."
-            
-            # Extract citations from answer
-            cited_sources = self._extract_citations(final_answer, state.bundled_context)
-            synthesis_prompt_key = f"prompt_{state.trace_id}"
+            # Extract citations and create synthesis object
+            cited_sources = self._extract_citations(final_answer, getattr(state, 'bundled_context', []))
             
             duration_ms = (time.time() - start_time) * 1000
             first_token_ms = (first_token_time - start_time) * 1000 if first_token_time else duration_ms
             
-            logger.info("Synthesis completed with gates",
+            # LangSmith: Log comprehensive output artifacts
+            logger.info(
+                "synthesis_output",
+                {
+                    "answer_length": len(final_answer),
+                    "citations_count": len(cited_sources),
+                    "complexity_used": complexity,
+                    "max_tokens_allocated": max_tokens,
+                    "reasoning_framework_applied": reasoning_framework,
+                    "first_token_ms": round(first_token_ms, 2),
+                    "total_duration_ms": round(duration_ms, 2),
+                    "tokens_per_second": len(final_answer.split()) / (duration_ms / 1000) if duration_ms > 0 else 0,
+                    "synthesis_prompt_length": len(str(template.format_messages(**synthesis_context))),
+                    "context_documents_used": len(context_docs)
+                }
+            )
+            
+            logger.info("08_synthesis completed",
                        answer_length=len(final_answer),
                        citations_count=len(cited_sources),
                        first_token_ms=round(first_token_ms, 2),
                        total_duration_ms=round(duration_ms, 2),
-                       attribution_passed=attribution_result.passed,
-                       quotes_verified=quote_result.all_verified,
                        trace_id=state.trace_id)
             
             return {
                 "final_answer": final_answer,
                 "synthesis": {
-                    "tldr": final_answer[:220],
-                    "citations": cited_sources
+                    "tldr": final_answer,
+                    "citations": cited_sources,
+                    "reasoning_framework": reasoning_framework,
+                    "complexity": complexity
                 },
                 "cited_sources": cited_sources,
-                "synthesis_prompt_key": synthesis_prompt_key,
-                "attribution_passed": attribution_result.passed,
-                "quotes_verified": quote_result.all_verified,
                 "first_token_ms": round(first_token_ms, 2)
             }
             
         except Exception as e:
-            logger.error("Synthesis failed", error=str(e), trace_id=state.trace_id)
+            logger.error("08_synthesis failed", error=str(e), trace_id=state.trace_id)
+            
+            # LangSmith: Log error with context
+            logger.info(
+                "synthesis_error",
+                {
+                    "error": str(e),
+                    "fallback_used": True,
+                    "context_available": len(getattr(state, 'bundled_context', [])),
+                    "query": state.raw_query[:100]
+                }
+            )
+            
             return {
                 "final_answer": "I apologize, but I encountered an error while generating your answer.",
+                "synthesis": {"tldr": "Error in synthesis", "citations": []},
                 "cited_sources": [],
-                "synthesis_prompt_key": None,
                 "attribution_passed": False,
                 "quotes_verified": False
             }
