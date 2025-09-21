@@ -71,7 +71,7 @@ def get_config() -> Dict[str, Any]:
         # Milvus
         "milvus_endpoint": os.getenv("MILVUS_ENDPOINT"),
         "milvus_token": os.getenv("MILVUS_TOKEN"),
-        "milvus_collection_name": os.getenv("MILVUS_COLLECTION_NAME", "legal_chunks_v2"),
+        "milvus_collection_name": os.getenv("MILVUS_COLLECTION_NAME", "legal_chunks_v3"),
         
         # R2
         "r2_endpoint": os.getenv("R2_ENDPOINT") or os.getenv("CLOUDFLARE_R2_S3_ENDPOINT"),
@@ -230,6 +230,12 @@ def transform_chunk_for_milvus_v2(chunk: Dict[str, Any]) -> Dict[str, Any]:
         "year": chunk.get('year', 0) or 0,
         "chapter": (chunk.get('chapter', '') or '')[:16],  # Truncate to max length
         "date_context": (chunk.get('date_context', '') or '')[:32],  # Truncate to max length
+        
+        # Constitutional hierarchy metadata (critical for legal AI)
+        "authority_level": (chunk.get('authority_level', '') or '')[:20],  # Truncate to max length
+        "hierarchy_rank": chunk.get('hierarchy_rank', 0) or 0,
+        "binding_scope": (chunk.get('binding_scope', '') or '')[:20],  # Truncate to max length
+        "subject_category": (chunk.get('subject_category', '') or '')[:30],  # Truncate to max length
     }
     
     # Ensure all required fields have valid values
@@ -294,6 +300,11 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
         years = []
         chapters = []
         date_contexts = []
+        # Constitutional hierarchy field lists
+        authority_levels = []
+        hierarchy_ranks = []
+        binding_scopes = []
+        subject_categories = []
         
         for item in batch:
             chunk_ids.append(item["chunk_id"])
@@ -309,6 +320,11 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
             years.append(item["year"])
             chapters.append(item["chapter"])
             date_contexts.append(item["date_context"])
+            # Constitutional hierarchy fields
+            authority_levels.append(item["authority_level"])
+            hierarchy_ranks.append(item["hierarchy_rank"])
+            binding_scopes.append(item["binding_scope"])
+            subject_categories.append(item["subject_category"])
         
         # Insert batch with correct field order matching schema
         try:
@@ -325,7 +341,12 @@ def upload_to_milvus_v2(collection: Collection, data: List[Dict[str, Any]], batc
                 natures,
                 years,
                 chapters,
-                date_contexts
+                date_contexts,
+                # Constitutional hierarchy field lists
+                authority_levels,
+                hierarchy_ranks,
+                binding_scopes,
+                subject_categories
             ])
             
             if verbose:
@@ -396,18 +417,48 @@ def main():
             logger.error("No chunks loaded. Exiting.")
             sys.exit(1)
         
-        # Generate embeddings in batches
+        # Pre-filter chunks to remove those exceeding token limits
+        TOKEN_LIMIT = 8192
+        valid_chunks = []
+        oversized_chunks = []
+        
+        for chunk in chunks:
+            num_tokens = chunk.get('num_tokens', 0)
+            if num_tokens > TOKEN_LIMIT:
+                oversized_chunks.append({
+                    'chunk_id': chunk.get('chunk_id'),
+                    'tokens': num_tokens,
+                    'title': chunk.get('metadata', {}).get('title', 'Unknown')[:50]
+                })
+            else:
+                valid_chunks.append(chunk)
+        
+        if oversized_chunks:
+            logger.warning(f"Skipping {len(oversized_chunks)} oversized chunks (>{TOKEN_LIMIT} tokens):")
+            for oc in oversized_chunks[:5]:  # Show first 5
+                logger.warning(f"  - {oc['chunk_id']}: {oc['tokens']:,} tokens from '{oc['title']}...'")
+        
+        logger.info(f"Processing {len(valid_chunks)} valid chunks (skipped {len(oversized_chunks)} oversized)")
+        
+        # Generate embeddings in batches for valid chunks only
         logger.info("Generating embeddings...")
         
-        # Extract texts for embedding
-        texts = [chunk['chunk_text'] for chunk in chunks]
+        # Extract texts for embedding (only valid chunks)
+        texts = [chunk['chunk_text'] for chunk in valid_chunks]
         all_embeddings = []
         
         # Process in batches to avoid API limits
         for i in tqdm(range(0, len(texts), EMBEDDING_BATCH_SIZE), desc="Generating embeddings"):
             batch_texts = texts[i:i + EMBEDDING_BATCH_SIZE]
-            batch_embeddings = generate_embeddings_batch(batch_texts, config["openai_embedding_model"])
-            all_embeddings.extend(batch_embeddings)
+            try:
+                batch_embeddings = generate_embeddings_batch(batch_texts, config["openai_embedding_model"])
+                all_embeddings.extend(batch_embeddings)
+            except Exception as e:
+                logger.error(f"Batch {i//EMBEDDING_BATCH_SIZE + 1} failed: {e}")
+                # Add placeholder embeddings for failed batch to keep indices aligned
+                placeholder_embeddings = [[0.0] * 3072] * len(batch_texts)
+                all_embeddings.extend(placeholder_embeddings)
+                logger.warning(f"Added {len(placeholder_embeddings)} placeholder embeddings for failed batch")
         
         logger.info(f"Generated {len(all_embeddings)} embeddings")
         
@@ -415,7 +466,7 @@ def main():
         logger.info("Transforming chunks for Milvus v2.0...")
         milvus_chunks = []
         
-        for chunk_dict, embedding in zip(chunks, all_embeddings):
+        for chunk_dict, embedding in zip(valid_chunks, all_embeddings):
             try:
                 # Add embedding to chunk data
                 chunk_dict['embedding'] = embedding

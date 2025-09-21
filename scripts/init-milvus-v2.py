@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Initialize Milvus Cloud collection for RightLine v2.0 (Small-to-Big Architecture).
+"""Initialize Milvus Cloud collection for RightLine v3.0 (Constitutional Hierarchy + Small-to-Big Architecture).
 
-This script creates the NEW v2.0 collection schema optimized for small-to-big retrieval,
-where small chunks are indexed for search but full parent documents are retrieved for context.
+This script creates the NEW v3.0 collection schema optimized for small-to-big retrieval
+with constitutional hierarchy awareness for legal AI authority ranking.
 
-Key changes from v1:
+Key features in v3.0:
 - chunk_id as primary key (not auto-generated int)  
 - chunk_object_key to reference R2 storage location
 - parent_doc_id for expanding to full parent documents
+- Constitutional hierarchy fields (authority_level, hierarchy_rank, binding_scope, subject_category)
+- Enhanced temporal metadata (year, date_context, nature)
 - Only lightweight metadata stored (text content retrieved from R2)
 
 Usage:
@@ -32,8 +34,9 @@ try:
         DataType,
         utility
     )
+    from dotenv import load_dotenv
 except ImportError:
-    print("❌ Error: pymilvus not installed. Run: pip install pymilvus")
+    print("❌ Error: pymilvus or python-dotenv not installed. Run: pip install pymilvus python-dotenv")
     sys.exit(1)
 
 
@@ -42,7 +45,7 @@ def get_config() -> Dict[str, Any]:
     config = {
         "endpoint": os.getenv("MILVUS_ENDPOINT"),
         "token": os.getenv("MILVUS_TOKEN"),
-        "collection_name": os.getenv("MILVUS_COLLECTION_NAME", "legal_chunks_v2"),
+        "collection_name": os.getenv("MILVUS_COLLECTION_NAME", "legal_chunks_v3"),
     }
     
     if not config["endpoint"]:
@@ -58,8 +61,8 @@ def get_config() -> Dict[str, Any]:
     return config
 
 
-def create_collection_schema_v2() -> CollectionSchema:
-    """Create the v2.0 collection schema for small-to-big retrieval."""
+def create_collection_schema_v3() -> CollectionSchema:
+    """Create the v3.0 collection schema for small-to-big retrieval with constitutional hierarchy."""
     fields = [
         # Primary key - chunk_id (deterministic, stable)
         FieldSchema(
@@ -148,11 +151,36 @@ def create_collection_schema_v2() -> CollectionSchema:
             max_length=32,
             description="Date context (YYYY-MM-DD) for filtering"
         ),
+        
+        # Constitutional hierarchy metadata (critical for legal AI)
+        FieldSchema(
+            name="authority_level",
+            dtype=DataType.VARCHAR,
+            max_length=20,
+            description="Legal authority level: supreme | high | medium | low"
+        ),
+        FieldSchema(
+            name="hierarchy_rank",
+            dtype=DataType.INT64,
+            description="Constitutional hierarchy rank: 1=Constitution, 2=Act, 3=SI/Ordinance"
+        ),
+        FieldSchema(
+            name="binding_scope",
+            dtype=DataType.VARCHAR,
+            max_length=20,
+            description="Binding scope: all_courts | national | specific | limited"
+        ),
+        FieldSchema(
+            name="subject_category",
+            dtype=DataType.VARCHAR,
+            max_length=30,
+            description="Subject category: constitutional_law | legislation | case_law"
+        ),
     ]
     
     schema = CollectionSchema(
         fields=fields,
-        description="Legal document chunks v2.0 - Small-to-Big architecture with R2 storage",
+        description="Legal document chunks v3.0 - Small-to-Big architecture with constitutional hierarchy and R2 storage",
         enable_dynamic_field=False
     )
     
@@ -160,8 +188,11 @@ def create_collection_schema_v2() -> CollectionSchema:
 
 
 def main():
-    """Initialize Milvus v2.0 collection."""
-    print("🚀 Initializing Milvus Cloud collection for RightLine v2.0...")
+    """Initialize Milvus v3.0 collection with constitutional hierarchy."""
+    print("🚀 Initializing Milvus Cloud collection for RightLine v3.0 with constitutional hierarchy...")
+    
+    # Load environment variables
+    load_dotenv(".env.local")
     
     # Get configuration
     config = get_config()
@@ -191,8 +222,8 @@ def main():
                 return
         
         # Create collection schema
-        print("📋 Creating v2.0 collection schema...")
-        schema = create_collection_schema_v2()
+        print("📋 Creating v3.0 collection schema with constitutional hierarchy...")
+        schema = create_collection_schema_v3()
         
         # Create collection
         print(f"🏗️  Creating collection '{collection_name}'...")
@@ -217,7 +248,8 @@ def main():
         # Create inverted indexes for scalar filter fields
         try:
             print("🧭 Creating INVERTED indexes for scalar fields...")
-            scalar_fields = ["doc_type", "language", "nature", "year", "chapter", "date_context"]
+            scalar_fields = ["doc_type", "language", "nature", "year", "chapter", "date_context", 
+                            "authority_level", "hierarchy_rank", "binding_scope", "subject_category"]
             for field_name in scalar_fields:
                 collection.create_index(
                     field_name=field_name,
@@ -231,13 +263,13 @@ def main():
         collection.load()
         
         # Display collection info
-        print("\n✅ v2.0 Collection created successfully!")
+        print("\n✅ v3.0 Collection created successfully!")
         print(f"   Name: {collection_name}")
         print(f"   Schema: {len(schema.fields)} fields")
         print(f"   Primary key: chunk_id (user-provided)")
         print(f"   Vector field: embedding (3072 dimensions)")
         print(f"   Index: HNSW with COSINE similarity")
-        print(f"   Architecture: Small-to-Big with R2 content retrieval")
+        print(f"   Architecture: Small-to-Big with constitutional hierarchy and R2 content retrieval")
         
         # Display schema details
         print("\n📋 Schema fields:")
