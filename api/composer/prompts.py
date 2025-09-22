@@ -281,7 +281,7 @@ Explain this legal information in simple terms that any Zimbabwean citizen can u
 # ==============================================================================
 
 ATTRIBUTION_VERIFICATION_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
+    ("system", GWETA_MASTER_CONSTITUTIONAL_PROMPT + """
 
 **ATTRIBUTION VERIFICATION SYSTEM**
 
@@ -310,7 +310,7 @@ Verify citation completeness, accuracy, and grounding.""")
 ])
 
 SOURCE_RELEVANCE_FILTER_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", f"""{GWETA_MASTER_CONSTITUTIONAL_PROMPT}
+    ("system", GWETA_MASTER_CONSTITUTIONAL_PROMPT + """
 
 **SOURCE RELEVANCE FILTER**
 
