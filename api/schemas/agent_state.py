@@ -107,6 +107,10 @@ class AgentState(BaseModel):
     retrieval_top_k: Optional[int] = Field(default=None, description="Adaptive retrieval top_k parameter")
     rerank_top_k: Optional[int] = Field(default=None, description="Adaptive rerank top_k parameter")
     
+    # Speculative prefetch cache (internal use)
+    parent_doc_cache: Dict[str, Any] = Field(default_factory=dict, description="Speculatively prefetched parent documents")
+    prefetch_count: Optional[int] = Field(default=None, description="Number of documents prefetched")
+    
     class Config:
         """Pydantic configuration."""
         # Enable JSON serialization of datetime

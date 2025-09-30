@@ -109,13 +109,22 @@ class QueryOrchestrator:
             }
         )
         
-        # Add linear edges for RAG flow (simplified for debugging)
+        # Add nodes for speculative execution
+        graph.add_node("07a_parent_prefetch", self._parent_prefetch_speculative)
+        graph.add_node("07b_parent_select", self._parent_final_select)
+        
+        # Add linear edges for RAG flow with speculative execution
         graph.add_edge("02_query_rewriter", "03_retrieval_parallel")
         graph.add_edge("03_retrieval_parallel", "04_merge_results")
         graph.add_edge("04_merge_results", "05_rerank")
         graph.add_edge("05_rerank", "06_select_topk")
-        graph.add_edge("06_select_topk", "07_parent_expansion")
-        graph.add_edge("07_parent_expansion", "08_synthesis")
+        
+        # Speculative execution path: prefetch → select
+        graph.add_edge("06_select_topk", "07a_parent_prefetch")
+        graph.add_edge("07a_parent_prefetch", "07b_parent_select")
+        
+        # Continue to synthesis
+        graph.add_edge("07b_parent_select", "08_synthesis")
         graph.add_edge("08_synthesis", "09_answer_composer")
         
         # Terminal edges
@@ -864,6 +873,165 @@ class QueryOrchestrator:
                 "reranked_results": fallback_results,
                 "rerank_method": "fallback_score_sort"
             }
+    
+    async def _parent_prefetch_speculative(self, state: AgentState) -> Dict[str, Any]:
+        """
+        07a_parent_prefetch_speculative: Speculatively prefetch parent docs for top 15 results.
+        
+        This fetches more parent documents than we'll ultimately use, so the final
+        selection can be very fast (just reads from cache, no R2 fetches).
+        """
+        start_time = time.time()
+        
+        try:
+            reranked_results = getattr(state, 'reranked_results', [])
+            
+            if not reranked_results:
+                logger.warning("No reranked results for speculative prefetch", trace_id=state.trace_id)
+                return {"parent_doc_cache": {}}
+            
+            # Speculative prefetch: get top 15 docs (will use 5-12 based on final selection)
+            prefetch_count = min(15, len(reranked_results))
+            prefetch_results = reranked_results[:prefetch_count]
+            
+            logger.info("Starting speculative parent prefetch",
+                       prefetch_count=prefetch_count,
+                       total_results=len(reranked_results),
+                       trace_id=state.trace_id)
+            
+            # Extract unique parent doc IDs for batching
+            parent_doc_requests = []
+            seen_parents = set()
+            
+            for result in prefetch_results:
+                if result.parent_doc:
+                    # Parent already attached
+                    parent_id = result.parent_doc.doc_id
+                else:
+                    # Need to fetch parent
+                    parent_id = result.chunk.doc_id
+                
+                if parent_id not in seen_parents:
+                    seen_parents.add(parent_id)
+                    doc_type = result.metadata.get("doc_type", "")
+                    parent_doc_requests.append((parent_id, doc_type))
+            
+            # Batch fetch from R2 with high parallelism (speculative = aggressive)
+            parent_doc_cache = {}
+            
+            if parent_doc_requests:
+                from api.tools.retrieval_engine import RetrievalEngine
+                async with RetrievalEngine() as engine:
+                    parent_docs = await engine._fetch_parent_documents_batch(parent_doc_requests)
+                    
+                    # Build cache dict
+                    for (doc_id, _), parent_doc in zip(parent_doc_requests, parent_docs):
+                        if parent_doc:
+                            parent_doc_cache[doc_id] = parent_doc
+            
+            # Also add already-attached parents to cache
+            for result in prefetch_results:
+                if result.parent_doc:
+                    parent_doc_cache[result.parent_doc.doc_id] = result.parent_doc
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            logger.info("Speculative parent prefetch completed",
+                       prefetched=len(parent_doc_cache),
+                       unique_parents=len(parent_doc_requests),
+                       cache_size=len(parent_doc_cache),
+                       duration_ms=round(duration_ms, 2),
+                       trace_id=state.trace_id)
+            
+            return {
+                "parent_doc_cache": parent_doc_cache,
+                "prefetch_count": prefetch_count
+            }
+            
+        except Exception as e:
+            logger.error("Speculative prefetch failed", error=str(e), trace_id=state.trace_id)
+            return {"_parent_doc_cache": {}}
+    
+    async def _parent_final_select(self, state: AgentState) -> Dict[str, Any]:
+        """
+        07b_parent_final_select: Final selection using prefetched parent docs (near-zero latency).
+        
+        Uses the speculatively prefetched parent documents from cache, avoiding R2 fetches.
+        """
+        start_time = time.time()
+        
+        try:
+            parent_doc_cache = getattr(state, 'parent_doc_cache', {})
+            topk_results = getattr(state, 'topk_results', [])
+            
+            logger.info("Starting parent final selection from cache",
+                       cached_parents=len(parent_doc_cache),
+                       topk_count=len(topk_results),
+                       trace_id=state.trace_id)
+            
+            # Build context from cache (no R2 fetch needed!)
+            bundled_context = []
+            authoritative_sources = set()
+            current_tokens = 0
+            MAX_CONTEXT_TOKENS = 8000
+            
+            for result in topk_results:
+                parent_id = result.parent_doc.doc_id if result.parent_doc else result.chunk.doc_id
+                parent_doc = parent_doc_cache.get(parent_id)
+                
+                if not parent_doc:
+                    logger.warning("Cache miss for parent doc (fetching directly)",
+                                 parent_id=parent_id,
+                                 trace_id=state.trace_id)
+                    # Fallback: use attached parent if available
+                    parent_doc = result.parent_doc
+                    
+                if not parent_doc:
+                    continue
+                
+                # Estimate tokens
+                content = parent_doc.pageindex_markdown or ""
+                estimated_tokens = len(content) // 4
+                
+                # Check token budget
+                if current_tokens + estimated_tokens > MAX_CONTEXT_TOKENS:
+                    logger.info("Token cap reached during parent selection",
+                               trace_id=state.trace_id,
+                               current_tokens=current_tokens)
+                    break
+                
+                # Add to context
+                bundled_context.append({
+                    "chunk_id": result.chunk_id,
+                    "parent_doc_id": parent_doc.doc_id,
+                    "title": parent_doc.title or parent_doc.canonical_citation,
+                    "content": content[:2000],  # Cap individual doc size
+                    "confidence": result.confidence,
+                    "source_type": result.metadata.get("doc_type", "unknown")
+                })
+                
+                current_tokens += min(estimated_tokens, 500)
+                authoritative_sources.add(parent_doc.canonical_citation or parent_doc.title)
+            
+            duration_ms = (time.time() - start_time) * 1000
+            cache_hits = len([r for r in topk_results if (r.parent_doc.doc_id if r.parent_doc else r.chunk.doc_id) in parent_doc_cache])
+            
+            logger.info("Parent final selection completed (from cache)",
+                       selected=len(bundled_context),
+                       cache_hits=cache_hits,
+                       cache_misses=len(topk_results) - cache_hits,
+                       duration_ms=round(duration_ms, 2),  # Should be <20ms!
+                       trace_id=state.trace_id)
+            
+            return {
+                "bundled_context": bundled_context,
+                "authoritative_sources": list(authoritative_sources),
+                "context_tokens": current_tokens
+            }
+            
+        except Exception as e:
+            logger.error("Parent final selection failed", error=str(e), trace_id=state.trace_id)
+            return {"bundled_context": [], "authoritative_sources": [], "context_tokens": 0}
     
     async def _expand_parents_node(self, state: AgentState) -> Dict[str, Any]:
         """07_parent_expansion: Fetch parent docs and bundle context under token caps."""
