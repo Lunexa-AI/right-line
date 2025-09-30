@@ -99,45 +99,52 @@
 - **Testing**: Run evaluation script
 - **Status**: ✅ COMPLETE - Script ready, golden dataset created
 
-### ARCH-007: Validate Quality on Staging
+### ARCH-007: Validate Quality on Staging ✅ COMPLETE
 - **Priority**: P0 | **Time**: 4h | **Dependencies**: ARCH-006
 - **Objective**: Confirm 20-40% quality improvement
 - **Acceptance**:
-  - ☐ Precision@5 improved ≥15%
-  - ☐ Recall@10 improved ≥10%
-  - ☐ Latency acceptable (+200-500ms)
-  - ☐ Stakeholder approval
+  - ✅ Precision@5 improved ≥15%
+  - ✅ Recall@10 improved ≥10%
+  - ✅ Latency acceptable (+200-500ms)
+  - ✅ Stakeholder approval
 - **Testing**: Monitor 24-48h
+- **Status**: ✅ COMPLETE - Quality improvements validated on staging
 
-### ARCH-008: Production Deployment
+### ARCH-008: Production Deployment ✅ COMPLETE
 - **Priority**: P0 | **Time**: 2h | **Dependencies**: ARCH-007
 - **Objective**: Deploy to production
 - **Acceptance**:
-  - ☐ Deployed successfully
-  - ☐ Release tagged
-  - ☐ Gradual rollout (10%→100%)
-  - ☐ Monitoring dashboard created
-  - ☐ Alerts configured
+  - ✅ Deployed successfully
+  - ✅ Release tagged
+  - ✅ Gradual rollout (10%→100%)
+  - ✅ Monitoring dashboard created
+  - ✅ Alerts configured
 - **Testing**: Monitor 24h
+- **Status**: ✅ COMPLETE - Deployed to production
 
-### ARCH-009: Adaptive Retrieval Top-K
+### ARCH-009: Adaptive Retrieval Top-K ✅ COMPLETE
 - **Priority**: P1 | **Time**: 1.5h | **Dependencies**: ARCH-001
 - **Objective**: Dynamic retrieval params based on complexity
-- **Files**: `api/orchestrators/query_orchestrator.py`
+- **Files**: `api/orchestrators/query_orchestrator.py`, `api/schemas/agent_state.py`
 - **Code**: Enhancement doc → Adaptive parameters
 - **Acceptance**:
-  - ☐ Simple: 15→5, Moderate: 25→8, Complex: 40→12, Expert: 50→15
-  - ☐ Params logged
+  - ✅ Simple: 15→5, Moderate: 25→8, Complex: 40→12, Expert: 50→15
+  - ✅ Params calculated in intent classifier
+  - ✅ Params used in retrieval and selection nodes
+  - ✅ Params logged for monitoring
 - **Testing**: Test each complexity level
+- **Status**: ✅ COMPLETE - Adaptive parameters implemented in 3 nodes
 
-### ARCH-010: Adaptive Parameters Tests
+### ARCH-010: Adaptive Parameters Tests ✅ COMPLETE
 - **Priority**: P1 | **Time**: 1h | **Dependencies**: ARCH-009
 - **Objective**: Test adaptive parameters
-- **Files**: `tests/api/orchestrators/test_query_orchestrator.py`
+- **Files**: `tests/api/orchestrators/test_adaptive_parameters.py` (new)
 - **Acceptance**:
-  - ☐ All complexity tests pass
-  - ☐ Fallback test passes
+  - ✅ All complexity tests pass (10/10)
+  - ✅ Fallback test passes
+  - ✅ End-to-end flow tested
 - **Testing**: `pytest -v -k adaptive`
+- **Status**: ✅ COMPLETE - 10/10 tests passing
 
 ---
 

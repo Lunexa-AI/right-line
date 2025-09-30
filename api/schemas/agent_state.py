@@ -103,6 +103,10 @@ class AgentState(BaseModel):
     costs: Dict[str, float] = Field(default_factory=dict, description="Per-node or model cost in USD")
     errors: List[str] = Field(default_factory=list, description="Non-fatal errors encountered during processing")
     
+    # Internal adaptive parameters
+    retrieval_top_k: Optional[int] = Field(default=None, description="Adaptive retrieval top_k parameter")
+    rerank_top_k: Optional[int] = Field(default=None, description="Adaptive rerank top_k parameter")
+    
     class Config:
         """Pydantic configuration."""
         # Enable JSON serialization of datetime

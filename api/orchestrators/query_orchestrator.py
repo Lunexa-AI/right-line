@@ -125,29 +125,45 @@ class QueryOrchestrator:
             return {"combined_results": getattr(state, 'combined_results', []), "retrieval_results": getattr(state, 'combined_results', [])}
 
     async def _select_topk_node(self, state: AgentState) -> Dict[str, Any]:
-        """06_select_topk: Select final top-K after rerank with thresholding."""
+        """06_select_topk: Select final top-K with adaptive parameters and quality threshold."""
         start_time = time.time()
         try:
             candidates = getattr(state, 'reranked_results', [])
             if not candidates:
                 # build from ids if necessary
-                id_set = set(getattr(state, 'reranked_chunk_ids', [])[:5])
+                id_set = set(getattr(state, 'reranked_chunk_ids', [])[:8])
                 candidates = [r for r in getattr(state, 'combined_results', []) if r.chunk_id in id_set]
-            # Threshold/limit
-            K = 5
-            top = []
-            for r in candidates:
-                top.append(r)
-                if len(top) >= K:
-                    break
+            
+            # Get adaptive top_k for final selection
+            rerank_top_k = getattr(state, 'rerank_top_k', None)
+            if rerank_top_k is None:
+                complexity = getattr(state, 'complexity', 'moderate')
+                rerank_top_k = {
+                    'simple': 5,
+                    'moderate': 8,
+                    'complex': 12,
+                    'expert': 15
+                }.get(complexity, 8)
+            
+            # Apply minimum score threshold (0.3)
+            quality_candidates = [c for c in candidates if c.score >= 0.3]
+            
+            # Select top_k
+            top = quality_candidates[:rerank_top_k]
+            
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("06_select_topk completed",
+            logger.info("06_select_topk completed with adaptive parameters",
                         selected=len(top),
-                        duration_ms=round(duration_ms, 2))
+                        target_top_k=rerank_top_k,
+                        candidates_after_threshold=len(quality_candidates),
+                        complexity=getattr(state, 'complexity', 'moderate'),
+                        adaptive_params_used=True,
+                        duration_ms=round(duration_ms, 2),
+                        trace_id=state.trace_id)
             return {"topk_results": top}
         except Exception as e:
-            logger.error("06_select_topk failed", error=str(e))
-            return {"topk_results": getattr(state, 'reranked_results', [])[:5]}
+            logger.error("06_select_topk failed", error=str(e), trace_id=state.trace_id)
+            return {"topk_results": getattr(state, 'reranked_results', [])[:8]}
 
     async def _answer_composer_node(self, state: AgentState) -> Dict[str, Any]:
         """09_answer_composer: Produce final answer text and confidence."""
@@ -384,6 +400,16 @@ class QueryOrchestrator:
                 "confidence": 0.8 if intent else 0.5
             }
             
+            # Calculate adaptive retrieval parameters based on complexity
+            complexity = intent_data.get("complexity", "moderate")
+            retrieval_params = {
+                "simple": {"retrieval_top_k": 15, "rerank_top_k": 5},
+                "moderate": {"retrieval_top_k": 25, "rerank_top_k": 8},
+                "complex": {"retrieval_top_k": 40, "rerank_top_k": 12},
+                "expert": {"retrieval_top_k": 50, "rerank_top_k": 15}
+            }
+            params = retrieval_params.get(complexity, retrieval_params["moderate"])
+            
             duration_ms = (time.time() - start_time) * 1000
             
             # LangSmith: Record output metadata
@@ -391,7 +417,8 @@ class QueryOrchestrator:
                 "intent_classification": intent_data,
                 "duration_ms": round(duration_ms, 2),
                 "reasoning_framework": intent_data.get("reasoning_framework", "irac"),
-                "complexity_assessment": intent_data.get("complexity", "moderate")
+                "complexity_assessment": intent_data.get("complexity", "moderate"),
+                "retrieval_params": params
             }
             
             logger.info("01_intent_classifier completed",
@@ -399,6 +426,8 @@ class QueryOrchestrator:
                        complexity=intent_data.get("complexity"),
                        user_type=intent_data.get("user_type"),
                        confidence=intent_data.get("confidence"),
+                       retrieval_top_k=params["retrieval_top_k"],
+                       rerank_top_k=params["rerank_top_k"],
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
@@ -410,7 +439,9 @@ class QueryOrchestrator:
                 "legal_areas": intent_data.get("legal_areas", []),
                 "reasoning_framework": intent_data.get("reasoning_framework", "irac"),
                 "jurisdiction": intent_data.get("jurisdiction", "ZW"),
-                "date_context": intent_data.get("date_context")
+                "date_context": intent_data.get("date_context"),
+                "retrieval_top_k": params["retrieval_top_k"],
+                "rerank_top_k": params["rerank_top_k"]
             }
             
         except Exception as e:
@@ -501,11 +532,23 @@ class QueryOrchestrator:
         tags=["retrieval", "bm25", "milvus", "parallel", "legal-ai"]
     )
     async def _retrieve_concurrent_node(self, state: AgentState) -> Dict[str, Any]:
-        """03_retrieval_parallel: Run BM25 and Milvus in parallel and merge."""
+        """03_retrieval_parallel: Run BM25 and Milvus with adaptive top_k."""
         start_time = time.time()
         
         try:
             query = state.rewritten_query or state.raw_query
+            
+            # Get adaptive top_k from state or calculate from complexity
+            retrieval_top_k = getattr(state, 'retrieval_top_k', None)
+            if retrieval_top_k is None:
+                # Fallback to complexity-based calculation
+                complexity = getattr(state, 'complexity', 'moderate')
+                retrieval_top_k = {
+                    'simple': 15,
+                    'moderate': 25,
+                    'complex': 40,
+                    'expert': 50
+                }.get(complexity, 25)
             
             # LangSmith: Log input artifacts
             logger.info(
@@ -513,14 +556,23 @@ class QueryOrchestrator:
                 query=query,
                 original_query=state.raw_query,
                 query_enhanced=(query != state.raw_query),
+                retrieval_top_k=retrieval_top_k,
+                complexity=getattr(state, 'complexity', 'moderate'),
                 trace_id=state.trace_id,
             )
             
-            logger.info("03_retrieval_parallel start", trace_id=state.trace_id)
+            logger.info("03_retrieval_parallel start with adaptive parameters",
+                       retrieval_top_k=retrieval_top_k,
+                       complexity=getattr(state, 'complexity', 'moderate'),
+                       trace_id=state.trace_id)
             
             # Use RetrievalEngine components directly to access both branches
             from api.tools.retrieval_engine import RetrievalEngine
             engine = RetrievalEngine()
+            
+            # Update retrievers with adaptive top_k
+            engine.milvus_retriever.top_k = retrieval_top_k
+            engine.bm25_retriever.top_k = retrieval_top_k
             
             # Launch BM25 and Milvus in parallel with timing
             bm25_start = time.time()
@@ -569,6 +621,8 @@ class QueryOrchestrator:
                        bm25_count=len(bm25_results),
                        milvus_count=len(milvus_results), 
                        combined_count=len(combined_results),
+                       retrieval_top_k=retrieval_top_k,
+                       adaptive_params_used=True,
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id,
                        top_confidence=combined_results[0].confidence if combined_results else 0)
