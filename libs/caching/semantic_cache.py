@@ -234,8 +234,8 @@ class SemanticCache:
             # Store exact match
             exact_key = self._get_exact_cache_key(query, user_type)
             
-            # Remove cache metadata before storing
-            clean_response = {k: v for k, v in response.items() if not k.startswith('_cache')}
+            # Remove all internal metadata (fields starting with _) before storing
+            clean_response = {k: v for k, v in response.items() if not k.startswith('_')}
             
             await self._redis_client.setex(
                 exact_key,
