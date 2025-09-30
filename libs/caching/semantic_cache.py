@@ -456,6 +456,56 @@ class SemanticCache:
         except Exception as e:
             logger.error("Error caching embedding", error=str(e))
     
+    async def get_intent_cache(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached intent classification.
+        
+        Args:
+            query: User query
+            
+        Returns:
+            Cached intent data or None
+        """
+        if self._redis_client is None:
+            return None
+        
+        key = f"cache:intent:{hashlib.md5(query.lower().encode()).hexdigest()}"
+        
+        try:
+            cached = await self._redis_client.get(key)
+            if cached:
+                logger.debug("Intent cache hit", query_preview=query[:50])
+                return json.loads(cached)
+        except Exception as e:
+            logger.error("Error getting intent cache", error=str(e))
+        
+        return None
+    
+    async def cache_intent(
+        self,
+        query: str,
+        intent_data: Dict[str, Any],
+        ttl: int = 7200  # 2 hours
+    ):
+        """
+        Cache intent classification.
+        
+        Args:
+            query: User query
+            intent_data: Intent classification result
+            ttl: TTL in seconds (default 2 hours)
+        """
+        if self._redis_client is None:
+            return
+        
+        key = f"cache:intent:{hashlib.md5(query.lower().encode()).hexdigest()}"
+        
+        try:
+            await self._redis_client.setex(key, ttl, json.dumps(intent_data))
+            logger.debug("Intent cached", query_preview=query[:50], ttl=ttl)
+        except Exception as e:
+            logger.error("Error caching intent", error=str(e))
+    
     def get_stats(self) -> CacheStats:
         """Get cache statistics."""
         return self._stats
