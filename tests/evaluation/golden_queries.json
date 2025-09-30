@@ -1,0 +1,122 @@
+[
+  {
+    "id": "employment_001",
+    "query": "What are the rights of employees under labour law?",
+    "expected_topics": ["employee rights", "labour act", "employment protection"],
+    "expected_doc_types": ["act", "constitution"],
+    "complexity": "moderate",
+    "min_precision": 0.6
+  },
+  {
+    "id": "employment_002",
+    "query": "Can an employer dismiss an employee without a hearing?",
+    "expected_topics": ["unfair dismissal", "procedural fairness", "labour act section 12"],
+    "expected_doc_types": ["act", "case_law"],
+    "complexity": "moderate",
+    "min_precision": 0.6
+  },
+  {
+    "id": "employment_003",
+    "query": "What is the notice period for termination of employment?",
+    "expected_topics": ["notice period", "termination", "labour act"],
+    "expected_doc_types": ["act"],
+    "complexity": "simple",
+    "min_precision": 0.8
+  },
+  {
+    "id": "constitutional_001",
+    "query": "What is the right to freedom of assembly?",
+    "expected_topics": ["freedom of assembly", "section 58", "constitutional rights"],
+    "expected_doc_types": ["constitution"],
+    "complexity": "moderate",
+    "min_precision": 0.7
+  },
+  {
+    "id": "constitutional_002",
+    "query": "Can the government restrict freedom of assembly?",
+    "expected_topics": ["limitations", "section 86", "proportionality"],
+    "expected_doc_types": ["constitution", "case_constitutional"],
+    "complexity": "complex",
+    "min_precision": 0.5
+  },
+  {
+    "id": "company_001",
+    "query": "How do I register a company in Zimbabwe?",
+    "expected_topics": ["company registration", "companies act", "procedure"],
+    "expected_doc_types": ["act", "si"],
+    "complexity": "simple",
+    "min_precision": 0.7
+  },
+  {
+    "id": "company_002",
+    "query": "What are the requirements for company directors?",
+    "expected_topics": ["directors", "companies act", "qualifications"],
+    "expected_doc_types": ["act"],
+    "complexity": "moderate",
+    "min_precision": 0.6
+  },
+  {
+    "id": "contract_001",
+    "query": "What makes a contract legally binding in Zimbabwe?",
+    "expected_topics": ["contract formation", "offer and acceptance", "consideration"],
+    "expected_doc_types": ["act"],
+    "complexity": "moderate",
+    "min_precision": 0.5
+  },
+  {
+    "id": "procedural_001",
+    "query": "How do I file a case in the High Court?",
+    "expected_topics": ["court procedures", "filing", "high court rules"],
+    "expected_doc_types": ["si", "procedure"],
+    "complexity": "simple",
+    "min_precision": 0.6
+  },
+  {
+    "id": "labour_001",
+    "query": "What are the penalties for unfair labour practices?",
+    "expected_topics": ["penalties", "labour act", "enforcement"],
+    "expected_doc_types": ["act"],
+    "complexity": "moderate",
+    "min_precision": 0.6
+  },
+  {
+    "id": "labour_002",
+    "query": "What is the minimum wage in Zimbabwe?",
+    "expected_topics": ["minimum wage", "labour act", "si"],
+    "expected_doc_types": ["si", "act"],
+    "complexity": "simple",
+    "min_precision": 0.7
+  },
+  {
+    "id": "labour_003",
+    "query": "What types of leave are employees entitled to?",
+    "expected_topics": ["leave", "annual leave", "sick leave", "labour act"],
+    "expected_doc_types": ["act"],
+    "complexity": "simple",
+    "min_precision": 0.7
+  },
+  {
+    "id": "rights_001",
+    "query": "What is the right to education in Zimbabwe?",
+    "expected_topics": ["right to education", "section 75", "constitution"],
+    "expected_doc_types": ["constitution"],
+    "complexity": "moderate",
+    "min_precision": 0.7
+  },
+  {
+    "id": "rights_002",
+    "query": "Can the police search my property without a warrant?",
+    "expected_topics": ["right to privacy", "search and seizure", "section 57"],
+    "expected_doc_types": ["constitution", "act"],
+    "complexity": "complex",
+    "min_precision": 0.5
+  },
+  {
+    "id": "property_001",
+    "query": "What are the rules for property inheritance?",
+    "expected_topics": ["inheritance", "administration of estates", "succession"],
+    "expected_doc_types": ["act"],
+    "complexity": "moderate",
+    "min_precision": 0.5
+  }
+]
