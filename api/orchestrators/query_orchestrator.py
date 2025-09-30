@@ -592,39 +592,162 @@ class QueryOrchestrator:
             
             return {"candidate_chunk_ids": [], "bm25_results": [], "milvus_results": [], "combined_results": [], "retrieval_results": []}
     
+    def _apply_diversity_filter(
+        self,
+        results: List[Any],
+        target_count: int
+    ) -> List[Any]:
+        """
+        Apply diversity filtering to prevent over-representation from single documents.
+        
+        Args:
+            results: Reranked results to filter
+            target_count: Target number of final results
+            
+        Returns:
+            Filtered results with diversity enforced (max 40% from one document)
+        """
+        if len(results) <= target_count:
+            return results
+        
+        selected = []
+        parent_counts = {}
+        max_per_parent = max(2, int(target_count * 0.4))  # Max 40% from one doc
+        
+        # First pass: enforce diversity constraint
+        for result in results:
+            parent_id = result.parent_doc.doc_id if result.parent_doc else result.chunk.doc_id
+            current_count = parent_counts.get(parent_id, 0)
+            
+            if current_count < max_per_parent:
+                selected.append(result)
+                parent_counts[parent_id] = current_count + 1
+                
+                if len(selected) >= target_count:
+                    break
+        
+        # Second pass: fill remaining slots if needed (relaxes diversity constraint)
+        if len(selected) < target_count:
+            remaining = [r for r in results if r not in selected]
+            selected.extend(remaining[:target_count - len(selected)])
+        
+        return selected[:target_count]
+    
     async def _rerank_node(self, state: AgentState) -> Dict[str, Any]:
-        """05_rerank: Rerank combined_results and select reranked_chunk_ids."""
+        """05_rerank: Use BGE cross-encoder for semantic reranking."""
         start_time = time.time()
         
         try:
-            logger.info("05_rerank start", 
-                       candidates=len(getattr(state, 'combined_results', [])),
-                       trace_id=state.trace_id)
-            
             retrieval_results = getattr(state, 'combined_results', [])
             if not retrieval_results:
-                logger.warning("No combined results available for reranking", trace_id=state.trace_id)
-                return {"reranked_chunk_ids": state.candidate_chunk_ids[:12], "reranked_results": []}
+                logger.warning("No results for reranking", trace_id=state.trace_id)
+                return {"reranked_chunk_ids": [], "reranked_results": [], "rerank_method": "no_results"}
             
-            # Get query for reranking
             query = state.rewritten_query or state.raw_query
             
-            # Lightweight rerank: sort by confidence/score descending and keep top 12
-            ranked = sorted(retrieval_results, key=lambda r: getattr(r, 'score', r.confidence), reverse=True)
-            reranked_results = ranked[:12]
-            reranked_chunk_ids = [r.chunk_id for r in reranked_results]
+            # Get complexity-based top_k
+            complexity = getattr(state, 'complexity', 'moderate')
+            top_k_map = {
+                'simple': 5,
+                'moderate': 8,
+                'complex': 12,
+                'expert': 15
+            }
+            target_top_k = top_k_map.get(complexity, 8)
+            
+            logger.info("Starting cross-encoder reranking",
+                       candidates=len(retrieval_results),
+                       target_top_k=target_top_k,
+                       complexity=complexity,
+                       trace_id=state.trace_id)
+            
+            # Use BGE cross-encoder reranker
+            from api.tools.reranker import get_reranker
+            reranker = await get_reranker()
+            
+            # Rerank with 2x buffer for quality filtering
+            reranked_results = await reranker.rerank(
+                query=query,
+                candidates=retrieval_results,
+                top_k=target_top_k * 2
+            )
+            
+            # Apply quality threshold (reranker score >= 0.3)
+            quality_filtered = [r for r in reranked_results if r.score >= 0.3]
+            
+            # Apply diversity filtering
+            final_results = self._apply_diversity_filter(
+                quality_filtered,
+                target_count=target_top_k
+            )
+            
+            reranked_chunk_ids = [r.chunk_id for r in final_results]
             
             duration_ms = (time.time() - start_time) * 1000
-            logger.info("05_rerank completed",
+            
+            # Calculate quality metrics
+            avg_score_before = sum(getattr(r, 'score', r.confidence) for r in retrieval_results) / len(retrieval_results)
+            avg_score_after = sum(r.score for r in final_results) / len(final_results) if final_results else 0.0
+            
+            # Calculate parent diversity (handle None parent_doc)
+            parent_ids = set()
+            for r in final_results:
+                try:
+                    pid = r.parent_doc.doc_id if (r.parent_doc and hasattr(r.parent_doc, 'doc_id')) else r.chunk.doc_id
+                    parent_ids.add(pid)
+                except (AttributeError, TypeError):
+                    # Fallback to chunk_id if we can't get parent
+                    parent_ids.add(r.chunk_id)
+            parent_diversity = len(parent_ids)
+            
+            # LangSmith metrics
+            logger.info(
+                "rerank_metrics",
+                method="bge_crossencoder",
+                candidates_in=len(retrieval_results),
+                reranked_out=len(reranked_results),
+                quality_filtered=len(quality_filtered),
+                diversity_filtered=len(final_results),
+                target_top_k=target_top_k,
+                complexity=complexity,
+                avg_score_before=round(avg_score_before, 3),
+                avg_score_after=round(avg_score_after, 3),
+                score_improvement=round(avg_score_after - avg_score_before, 3),
+                min_score_after=round(min(r.score for r in final_results), 3) if final_results else 0,
+                max_score_after=round(max(r.score for r in final_results), 3) if final_results else 0,
+                parent_diversity=parent_diversity,
+                duration_ms=round(duration_ms, 2)
+            )
+            
+            logger.info("Cross-encoder reranking completed",
                        reranked_count=len(reranked_chunk_ids),
+                       quality_filtered=len(quality_filtered),
+                       final_count=len(final_results),
+                       avg_score_improvement=round(avg_score_after - avg_score_before, 3),
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
-            return {"reranked_chunk_ids": reranked_chunk_ids, "reranked_results": reranked_results}
+            return {
+                "reranked_chunk_ids": reranked_chunk_ids,
+                "reranked_results": final_results,
+                "rerank_method": "bge_crossencoder"
+            }
             
         except Exception as e:
-            logger.error("05_rerank failed", error=str(e), trace_id=state.trace_id)
-            return {"reranked_chunk_ids": state.candidate_chunk_ids[:12], "reranked_results": []}
+            logger.error("Cross-encoder reranking failed, falling back to score sort",
+                        error=str(e), trace_id=state.trace_id)
+            
+            # Graceful fallback to score-based sorting
+            ranked = sorted(retrieval_results, 
+                           key=lambda r: getattr(r, 'score', r.confidence), 
+                           reverse=True)
+            fallback_results = ranked[:12]
+            
+            return {
+                "reranked_chunk_ids": [r.chunk_id for r in fallback_results],
+                "reranked_results": fallback_results,
+                "rerank_method": "fallback_score_sort"
+            }
     
     async def _expand_parents_node(self, state: AgentState) -> Dict[str, Any]:
         """07_parent_expansion: Fetch parent docs and bundle context under token caps."""

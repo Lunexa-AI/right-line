@@ -141,13 +141,13 @@ class BGEReranker:
             # Create reranked results with new scores
             reranked_candidates = []
             for i, (candidate, new_score) in enumerate(zip(candidates, scores)):
-                # Update existing result with new score and metadata
-                candidate.score = float(new_score)
-                candidate.source = f"{candidate.source}_reranked"
+                # Update confidence (score is read-only property that returns confidence)
+                candidate.confidence = float(new_score)
                 candidate.metadata.update({
-                    "original_score": candidate.score,
+                    "original_confidence": candidate.confidence,
                     "reranker_score": float(new_score),
                     "reranker_model": self.model_name,
+                    "source": f"{candidate.metadata.get('source', 'unknown')}_reranked"
                 })
                 reranked_candidates.append(candidate)
             

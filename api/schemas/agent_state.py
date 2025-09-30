@@ -56,6 +56,16 @@ class AgentState(BaseModel):
         default=None, description="Classified user intent"
     )
     intent_confidence: Optional[float] = Field(default=None, description="Confidence score for intent classification")
+    complexity: Optional[Literal["simple", "moderate", "complex", "expert"]] = Field(
+        default=None, description="Query complexity assessment"
+    )
+    user_type: Optional[Literal["professional", "citizen"]] = Field(
+        default=None, description="Detected user type for persona adaptation"
+    )
+    reasoning_framework: Optional[str] = Field(
+        default=None, description="Selected reasoning framework (irac, constitutional, statutory, precedent)"
+    )
+    legal_areas: List[str] = Field(default_factory=list, description="Legal areas covered in query")
     
     # Query processing
     rewritten_query: Optional[str] = Field(default=None, description="History-aware rewritten query")
