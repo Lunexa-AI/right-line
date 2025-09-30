@@ -136,9 +136,16 @@ ENHANCED_PROMPTS_ROLLOUT_PCT=20  # Start with 20% of professionals
 - Semantic cache implementation
 - Speculative parent prefetching
 - Parallel quality gates
-- Advanced intent classification
 
-**Week 4** 🟢 ENHANCED PROMPTING (Track 1)
+**Week 3-4** 🧠 MEMORY SYSTEMS (NEW)
+- Short-term memory (conversation context)
+- Long-term memory (user patterns)
+- Memory coordinator
+- Follow-up question handling
+- User profile building
+- Pronoun resolution
+
+**Week 5** 🟢 ENHANCED PROMPTING (Track 1)
 - A/B test enhanced prompts
 - Professional user rollout
 - Collect feedback
@@ -148,7 +155,7 @@ ENHANCED_PROMPTS_ROLLOUT_PCT=20  # Start with 20% of professionals
 
 ### Month 2: Advanced Features
 
-**Week 5-6** 🧠 REASONING LOOPS
+**Week 5-6** 🧠 REASONING LOOPS + ADVANCED INTENT
 - Self-correction implementation
 - Iterative retrieval
 - Refined synthesis
@@ -160,7 +167,7 @@ ENHANCED_PROMPTS_ROLLOUT_PCT=20  # Start with 20% of professionals
 - Token optimization
 - Quality metrics tracking
 
-**Week 8** 🛡️ PRODUCTION HARDENING
+**Week 7** 🛡️ PRODUCTION HARDENING
 - Graceful degradation
 - Circuit breakers
 - Load testing (1000 concurrent)
@@ -174,7 +181,7 @@ ENHANCED_PROMPTS_ROLLOUT_PCT=20  # Start with 20% of professionals
 
 | Category | Estimate | Timeline |
 |----------|----------|----------|
-| **Engineering Time** | 6 dev-weeks | 2 months (1 dev) |
+| **Engineering Time** | 7 dev-weeks | ~2 months (1 dev) |
 | **Infrastructure** | +$100-200/month | Ongoing (Redis + overhead) |
 | **Testing/QA** | 1 week | During implementation |
 | **Total Investment** | ~$30K labor + $200/month | One-time + recurring |

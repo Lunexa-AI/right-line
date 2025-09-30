@@ -1395,6 +1395,398 @@ def _classify_intent_heuristic_advanced(self, query: str) -> Optional[Dict[str, 
 
 ---
 
+---
+
+## Enhancement 6: Short-Term and Long-Term Memory
+
+**Goal**: Enable conversation continuity and personalized responses through memory systems
+
+### Architecture
+
+**Two-Tier Memory System**:
+
+1. **Short-Term Memory** (Conversation Context)
+   - Storage: Redis (fast, session-scoped)
+   - Scope: Current session (last 10-20 messages)
+   - TTL: 24 hours
+   - Use cases: Pronoun resolution, follow-up questions, conversation coherence
+
+2. **Long-Term Memory** (User Patterns)
+   - Storage: Firestore (persistent, user-scoped)
+   - Scope: User's complete history
+   - TTL: Permanent (with data retention policy)
+   - Use cases: Personalization, expertise detection, interest tracking
+
+### Short-Term Memory Implementation
+
+```python
+# libs/memory/short_term.py
+
+class ShortTermMemory:
+    """Manages conversation context within session."""
+    
+    def __init__(self, redis_client, max_messages: int = 10):
+        self.redis = redis_client
+        self.max_messages = max_messages
+    
+    async def add_message(
+        self,
+        session_id: str,
+        role: str,  # "user" or "assistant"
+        content: str,
+        metadata: Dict[str, Any] = None
+    ):
+        """Add message to session history with sliding window."""
+        key = f"session:{session_id}:messages"
+        
+        # Create message object
+        message = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.utcnow().isoformat(),
+            "metadata": metadata or {}
+        }
+        
+        # Add to Redis list (LPUSH for newest first)
+        await self.redis.lpush(key, json.dumps(message))
+        
+        # Trim to max_messages (keep only recent)
+        await self.redis.ltrim(key, 0, self.max_messages - 1)
+        
+        # Set TTL (24 hours)
+        await self.redis.expire(key, 86400)
+    
+    async def get_context(
+        self,
+        session_id: str,
+        max_tokens: int = 2000
+    ) -> List[Dict[str, Any]]:
+        """Get recent conversation context within token budget."""
+        key = f"session:{session_id}:messages"
+        
+        # Get all messages (newest first)
+        messages = await self.redis.lrange(key, 0, -1)
+        
+        # Parse and build context
+        context = []
+        current_tokens = 0
+        
+        for msg_json in messages:
+            message = json.loads(msg_json)
+            
+            # Estimate tokens
+            msg_tokens = len(message["content"]) // 4
+            
+            if current_tokens + msg_tokens > max_tokens:
+                break
+            
+            context.append(message)
+            current_tokens += msg_tokens
+        
+        # Reverse to chronological order
+        return list(reversed(context))
+    
+    async def get_last_n_exchanges(
+        self,
+        session_id: str,
+        n: int = 3
+    ) -> List[Dict[str, Any]]:
+        """Get last N query-response exchanges."""
+        messages = await self.get_context(session_id)
+        
+        # Group into exchanges
+        exchanges = []
+        current_exchange = {}
+        
+        for msg in messages:
+            if msg["role"] == "user":
+                if current_exchange:
+                    exchanges.append(current_exchange)
+                current_exchange = {"user": msg}
+            elif msg["role"] == "assistant":
+                current_exchange["assistant"] = msg
+        
+        if current_exchange:
+            exchanges.append(current_exchange)
+        
+        return exchanges[-n:]
+```
+
+### Long-Term Memory Implementation
+
+```python
+# libs/memory/long_term.py
+
+class LongTermMemory:
+    """Tracks user patterns and preferences over time."""
+    
+    def __init__(self, firestore_client):
+        self.firestore = firestore_client
+    
+    async def get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        """Get user's long-term profile."""
+        doc_ref = self.firestore.collection("users").document(user_id)
+        doc = await doc_ref.get()
+        
+        if not doc.exists:
+            # Create default profile
+            return {
+                "user_id": user_id,
+                "legal_interests": [],
+                "query_count": 0,
+                "expertise_level": "citizen",  # or "professional"
+                "typical_complexity": "moderate",
+                "preferred_response_length": "standard",
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
+            }
+        
+        return doc.to_dict()
+    
+    async def update_after_query(
+        self,
+        user_id: str,
+        query: str,
+        complexity: str,
+        legal_areas: List[str],
+        user_type: str
+    ):
+        """Update user profile after each query."""
+        doc_ref = self.firestore.collection("users").document(user_id)
+        
+        # Increment query count
+        # Add legal areas to interests (with frequency tracking)
+        # Update expertise level if patterns suggest
+        # Update typical complexity based on moving average
+        
+        await doc_ref.update({
+            "query_count": firestore.Increment(1),
+            "legal_interests": firestore.ArrayUnion(legal_areas),
+            "updated_at": datetime.utcnow().isoformat(),
+            f"area_frequency.{legal_areas[0]}": firestore.Increment(1),
+            "last_query_complexity": complexity,
+            "detected_user_type": user_type
+        })
+    
+    async def get_personalization_context(
+        self,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Get personalization context for query processing."""
+        profile = await self.get_user_profile(user_id)
+        
+        # Extract top interests
+        area_freq = profile.get("area_frequency", {})
+        top_interests = sorted(
+            area_freq.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:5]
+        
+        return {
+            "expertise_level": profile.get("expertise_level", "citizen"),
+            "typical_complexity": profile.get("typical_complexity", "moderate"),
+            "top_legal_interests": [area for area, count in top_interests],
+            "query_count": profile.get("query_count", 0),
+            "is_returning_user": profile.get("query_count", 0) > 5
+        }
+```
+
+### Memory Coordinator
+
+```python
+# libs/memory/coordinator.py
+
+class MemoryCoordinator:
+    """Coordinates short-term and long-term memory."""
+    
+    def __init__(self, redis_client, firestore_client):
+        self.short_term = ShortTermMemory(redis_client)
+        self.long_term = LongTermMemory(firestore_client)
+    
+    async def get_full_context(
+        self,
+        user_id: str,
+        session_id: str,
+        max_tokens: int = 2000
+    ) -> Dict[str, Any]:
+        """Get combined memory context."""
+        
+        # Allocate token budget
+        short_term_budget = int(max_tokens * 0.7)  # 70% to recent conversation
+        long_term_budget = int(max_tokens * 0.3)   # 30% to user profile
+        
+        # Fetch in parallel
+        short_term_task = self.short_term.get_context(session_id, short_term_budget)
+        long_term_task = self.long_term.get_personalization_context(user_id)
+        
+        short_term_context, long_term_context = await asyncio.gather(
+            short_term_task,
+            long_term_task
+        )
+        
+        return {
+            "conversation_history": short_term_context,
+            "user_profile": long_term_context,
+            "tokens_used": {
+                "short_term": sum(len(m["content"]) // 4 for m in short_term_context),
+                "long_term": len(str(long_term_context)) // 4
+            }
+        }
+    
+    async def update_memories(
+        self,
+        user_id: str,
+        session_id: str,
+        query: str,
+        response: str,
+        metadata: Dict[str, Any]
+    ):
+        """Update both memory systems after query."""
+        
+        # Update short-term (conversation)
+        await self.short_term.add_message(session_id, "user", query)
+        await self.short_term.add_message(session_id, "assistant", response)
+        
+        # Update long-term (patterns)
+        await self.long_term.update_after_query(
+            user_id=user_id,
+            query=query,
+            complexity=metadata.get("complexity", "moderate"),
+            legal_areas=metadata.get("legal_areas", []),
+            user_type=metadata.get("user_type", "citizen")
+        )
+```
+
+### Integration into Query Rewriter
+
+```python
+async def _rewrite_expand_node(self, state: AgentState) -> Dict[str, Any]:
+    """Enhanced with conversation context."""
+    
+    # Get memory context
+    memory = await self.memory_coordinator.get_full_context(
+        user_id=state.user_id,
+        session_id=state.session_id,
+        max_tokens=1500  # Budget for memory
+    )
+    
+    conversation_history = memory["conversation_history"]
+    user_profile = memory["user_profile"]
+    
+    # Use conversation history for pronoun resolution
+    query_with_context = await self._resolve_context_references(
+        query=state.raw_query,
+        conversation_history=conversation_history
+    )
+    
+    # Use user profile for personalization
+    if user_profile["is_returning_user"]:
+        # Adapt based on user's typical complexity
+        state.complexity = user_profile["typical_complexity"]
+        state.user_type = user_profile["expertise_level"]
+    
+    # Enhanced rewriting with context
+    rewritten_query = await self._rewrite_with_context(
+        query=query_with_context,
+        conversation=conversation_history,
+        user_interests=user_profile["top_legal_interests"]
+    )
+    
+    return {
+        "rewritten_query": rewritten_query,
+        "short_term_context": conversation_history[:3],  # Last 3 exchanges
+        "long_term_profile": user_profile
+    }
+```
+
+### Follow-Up Question Handling
+
+```python
+def _detect_follow_up(self, query: str, previous_query: Optional[str]) -> bool:
+    """Detect if this is a follow-up question."""
+    
+    follow_up_patterns = [
+        r"^(what about|how about|and if|but if|also|additionally)",
+        r"(it|that|this|those|these)\b",
+        r"(as you (said|mentioned)|as mentioned)",
+        r"^(yes,? |no,? |okay,? )",
+    ]
+    
+    query_lower = query.lower()
+    return any(re.search(pattern, query_lower) for pattern in follow_up_patterns)
+
+
+async def _resolve_context_references(
+    self,
+    query: str,
+    conversation_history: List[Dict[str, Any]]
+) -> str:
+    """Resolve pronouns and context references."""
+    
+    if not conversation_history:
+        return query
+    
+    # Get last user query and assistant response
+    last_exchange = conversation_history[-1] if conversation_history else {}
+    last_user_query = last_exchange.get("user", {}).get("content", "")
+    last_assistant_response = last_exchange.get("assistant", {}).get("content", "")
+    
+    # Simple pronoun resolution
+    query_lower = query.lower()
+    
+    # If query has pronouns and looks like follow-up
+    if self._detect_follow_up(query, last_user_query):
+        # Use mini LLM to resolve references
+        resolution_prompt = f"""Resolve context references in this follow-up query.
+
+Previous query: {last_user_query}
+Previous response: {last_assistant_response[:500]}
+
+Current query: {query}
+
+Rewrite the current query to be self-contained (resolve "it", "this", "that", etc).
+Return only the rewritten query, no explanation."""
+        
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_tokens=100)
+        response = await llm.ainvoke(resolution_prompt)
+        
+        return response.content.strip()
+    
+    return query
+```
+
+**Benefits**:
+- Conversation continuity (follow-up questions work seamlessly)
+- Personalized responses (adapt to user expertise and interests)
+- Faster intent classification (use user patterns)
+- Better query understanding (pronoun resolution)
+- User profiles build over time (improving personalization)
+
+**Storage Strategy**:
+- **Redis**: Short-term (fast, ephemeral)
+  - Session messages: `session:{session_id}:messages`
+  - TTL: 24 hours
+  - Sliding window (keep last 10-20 messages)
+
+- **Firestore**: Long-term (persistent, indexed)
+  - User profiles: `users/{user_id}`
+  - Query history: `users/{user_id}/queries/`
+  - Incremental updates (low write cost)
+
+**Token Budget Management**:
+- Short-term: 70% of memory budget (1400/2000 tokens)
+- Long-term: 30% of memory budget (600/2000 tokens)
+- Compression for old messages (50-70% reduction)
+
+**Privacy & Compliance**:
+- No PII in short-term cache (only session messages)
+- Long-term profiles anonymized (no raw queries stored, only patterns)
+- Configurable retention policies
+- User can request data deletion
+
+---
+
 ## Performance Targets
 
 ### Latency Targets (P95)
@@ -1481,7 +1873,26 @@ def _classify_intent_heuristic_advanced(self, query: str) -> Optional[Dict[str, 
 
 ---
 
-### Phase 3: Reasoning Loops (Week 4-5) 🧠
+### Phase 2B: Memory Systems (Week 3-4) 🧠
+
+**Priority: P1 - Conversation Intelligence**
+
+- [ ] **Week 3-4**: Memory implementation
+  - [ ] Design memory architecture
+  - [ ] Implement short-term memory (Redis)
+  - [ ] Implement long-term memory (Firestore)
+  - [ ] Create memory coordinator
+  - [ ] Integrate in query rewriter
+  - [ ] Integrate in intent classifier
+  - [ ] Build user profile system
+  - [ ] Test conversation continuity
+  - [ ] Deploy to staging
+
+**Expected Impact**: Conversation continuity, personalized responses, follow-up question handling
+
+---
+
+### Phase 3: Reasoning Loops (Week 5-6) 🧠
 
 **Priority: P1 - Quality Enhancement**
 
@@ -1501,7 +1912,7 @@ def _classify_intent_heuristic_advanced(self, query: str) -> Optional[Dict[str, 
 
 ---
 
-### Phase 4: Production Hardening (Week 6) 🛡️
+### Phase 4: Production Hardening (Week 7) 🛡️
 
 **Priority: P2 - Reliability**
 
