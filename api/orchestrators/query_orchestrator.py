@@ -12,6 +12,7 @@ import asyncio
 import os
 import time
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 import structlog
@@ -36,8 +37,40 @@ class QueryOrchestrator:
     """Main orchestrator for agentic query processing using LangGraph."""
     
     def __init__(self):
-        """Initialize the orchestrator with a compiled graph."""
+        """Initialize the orchestrator with a compiled graph and caching."""
         self.graph = self._build_graph()
+        
+        # Initialize semantic cache for performance optimization
+        self.cache = None
+        try:
+            from libs.caching.semantic_cache import SemanticCache
+            import os
+            
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            cache_enabled = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+            
+            if cache_enabled:
+                self.cache = SemanticCache(
+                    redis_url=redis_url,
+                    similarity_threshold=float(os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.95")),
+                    default_ttl=int(os.getenv("CACHE_DEFAULT_TTL", "3600"))
+                )
+                logger.info("Semantic cache initialized", redis_url=redis_url.split("@")[-1] if "@" in redis_url else redis_url)
+            else:
+                logger.info("Caching disabled by configuration")
+        except Exception as e:
+            logger.warning("Failed to initialize cache, caching disabled", error=str(e))
+            self.cache = None
+    
+    async def _ensure_cache_connected(self):
+        """Ensure cache is connected (lazy initialization)."""
+        if self.cache and self.cache._redis_client is None:
+            try:
+                await self.cache.connect()
+                logger.info("Cache connected on first use")
+            except Exception as e:
+                logger.warning("Failed to connect cache", error=str(e))
+                self.cache = None
         
     def _build_graph(self) -> StateGraph:
         """Build and compile the LangGraph state machine."""
@@ -379,6 +412,25 @@ class QueryOrchestrator:
                        query_preview=state.raw_query[:50],
                        trace_id=state.trace_id)
             
+            # Check intent cache first (performance optimization)
+            if self.cache:
+                try:
+                    await self._ensure_cache_connected()
+                    if self.cache:  # Might be None if connection failed
+                        cached_intent = await self.cache.get_intent_cache(state.raw_query)
+                        if cached_intent:
+                            duration_ms = (time.time() - start_time) * 1000
+                            logger.info("01_intent_classifier completed (from cache)",
+                                       intent=cached_intent.get("intent"),
+                                       complexity=cached_intent.get("complexity"),
+                                       cache_hit=True,
+                                       duration_ms=round(duration_ms, 2),
+                                       trace_id=state.trace_id)
+                            return cached_intent
+                except Exception as e:
+                    logger.warning("Intent cache check failed", error=str(e))
+            
+            # Cache miss - perform classification
             # Use simplified intent classification for now
             # Fast heuristics first
             intent = self._classify_intent_heuristic(state.raw_query)
@@ -431,7 +483,8 @@ class QueryOrchestrator:
                        duration_ms=round(duration_ms, 2),
                        trace_id=state.trace_id)
             
-            return {
+            # Prepare result
+            result = {
                 "intent": intent_data.get("intent", "rag_qa"),
                 "intent_confidence": intent_data.get("confidence", 0.8),
                 "complexity": intent_data.get("complexity", "moderate"),
@@ -443,6 +496,15 @@ class QueryOrchestrator:
                 "retrieval_top_k": params["retrieval_top_k"],
                 "rerank_top_k": params["rerank_top_k"]
             }
+            
+            # Cache the intent for future queries (2 hour TTL)
+            if self.cache:
+                try:
+                    await self.cache.cache_intent(state.raw_query, result, ttl=7200)
+                except Exception as e:
+                    logger.warning("Failed to cache intent", error=str(e))
+            
+            return result
             
         except Exception as e:
             logger.error("01_intent_classifier failed", error=str(e), trace_id=state.trace_id)
@@ -1312,7 +1374,7 @@ class QueryOrchestrator:
             return []
     
     async def run_query(self, state: AgentState) -> AgentState:
-        """Run a query through the orchestrator."""
+        """Run a query through the orchestrator with semantic caching."""
         config = RunnableConfig(
             configurable={"thread_id": state.session_id},
             metadata={"trace_id": state.trace_id}
@@ -1324,6 +1386,45 @@ class QueryOrchestrator:
                    query_preview=state.raw_query[:50])
         
         try:
+            # Check cache first (performance optimization)
+            if self.cache:
+                try:
+                    await self._ensure_cache_connected()
+                    
+                    if self.cache:  # Might be None if connection failed
+                        user_type = getattr(state, 'user_type', 'professional')
+                        cached_response = await self.cache.get_cached_response(
+                            query=state.raw_query,
+                            user_type=user_type,
+                            check_semantic=True  # Enable semantic matching
+                        )
+                        
+                        if cached_response:
+                            # Cache hit - populate state and return
+                            logger.info("Returning cached response",
+                                       trace_id=state.trace_id,
+                                       cache_hit_type=cached_response.get("_cache_hit", "unknown"),
+                                       cache_similarity=cached_response.get("_cache_similarity"))
+                            
+                            # Update state with cached data
+                            state.final_answer = cached_response.get("final_answer")
+                            state.synthesis = cached_response.get("synthesis", {})
+                            state.cited_sources = cached_response.get("cited_sources", [])
+                            
+                            # Add cache metadata to state
+                            state.safety_flags["from_cache"] = True
+                            state.safety_flags["cache_hit_type"] = cached_response.get("_cache_hit")
+                            
+                            # Record minimal timing (very fast!)
+                            state.node_timings["total_cached"] = 50  # Approximate cache hit time
+                            
+                            return state
+                except Exception as e:
+                    logger.warning("Cache check failed, continuing with full pipeline", error=str(e))
+            
+            # Cache miss - run full pipeline
+            logger.info("Cache miss, running full pipeline", trace_id=state.trace_id)
+            
             # Run the graph
             result = await self.graph.ainvoke(state, config=config)
             
@@ -1338,6 +1439,34 @@ class QueryOrchestrator:
                        trace_id=state.trace_id,
                        final_answer_length=len(result.final_answer or ""))
             
+            # Cache the response for future queries
+            if self.cache and result.final_answer:
+                try:
+                    cache_data = {
+                        "final_answer": result.final_answer,
+                        "synthesis": result.synthesis or {},
+                        "cited_sources": result.cited_sources,
+                        "_cached_at": datetime.utcnow().isoformat()
+                    }
+                    
+                    # Determine TTL based on complexity and confidence
+                    ttl_seconds = self._get_cache_ttl(result)
+                    
+                    user_type = getattr(result, 'user_type', 'professional')
+                    
+                    await self.cache.cache_response(
+                        query=state.raw_query,
+                        response=cache_data,
+                        user_type=user_type,
+                        ttl_seconds=ttl_seconds
+                    )
+                    
+                    logger.info("Response cached for future queries",
+                               trace_id=state.trace_id,
+                               ttl_seconds=ttl_seconds)
+                except Exception as e:
+                    logger.warning("Failed to cache response", error=str(e), trace_id=state.trace_id)
+            
             return result
             
         except Exception as e:
@@ -1345,6 +1474,28 @@ class QueryOrchestrator:
                         error=str(e), 
                         trace_id=state.trace_id)
             raise
+    
+    def _get_cache_ttl(self, state: AgentState) -> int:
+        """
+        Determine cache TTL based on query characteristics.
+        
+        Args:
+            state: Agent state with query metadata
+            
+        Returns:
+            TTL in seconds
+        """
+        complexity = getattr(state, 'complexity', 'moderate')
+        
+        # Longer TTL for simple queries (more stable), shorter for complex (may need updates)
+        ttl_map = {
+            'simple': 7200,    # 2 hours
+            'moderate': 3600,  # 1 hour
+            'complex': 1800,   # 30 minutes
+            'expert': 900      # 15 minutes
+        }
+        
+        return ttl_map.get(complexity, 3600)
     
     def _build_synthesis_prompt(self, state: AgentState) -> str:
         """Build synthesis prompt using new constitutional prompting architecture."""
