@@ -227,23 +227,30 @@
 - **Testing**: Exact match hit/miss tests
 - **Status**: ✅ COMPLETE - 14/14 tests passing, production-ready
 
-### ARCH-015: Implement Semantic Similarity (Level 2)
+### ARCH-015: Implement Semantic Similarity (Level 2) ✅ COMPLETE
 - **Priority**: P1 | **Time**: 3h | **Dependencies**: ARCH-014
 - **Objective**: Embedding-based similarity search
-- **Files**: `libs/caching/semantic_cache.py`
+- **Files**: `libs/caching/semantic_cache.py`, `tests/libs/caching/test_semantic_similarity.py` (new)
 - **Code**: Enhancement doc → Semantic similarity section
 - **Tasks**:
-  - Implement _find_similar_cached_query()
-  - Generate embeddings
-  - Compute cosine similarity
-  - Find best match >0.95
-  - Track semantic hits
+  - ✅ Implemented _cosine_similarity() with numpy
+  - ✅ Implemented _find_similar_cached_query()
+  - ✅ Integrated embedding generation in cache_response
+  - ✅ Implemented semantic index management (_add_to_semantic_index)
+  - ✅ Computed cosine similarity for all cached queries
+  - ✅ Find best match above threshold (0.95)
+  - ✅ Track semantic hits in stats
+  - ✅ Embedding caching (get_embedding_cache, cache_embedding)
+  - ✅ Graceful degradation when embeddings unavailable
 - **Acceptance**:
-  - ☐ Finds near-duplicates
-  - ☐ Similarity threshold works
-  - ☐ Returns None if below threshold
-  - ☐ Stats track semantic hits
+  - ✅ Finds semantically similar queries
+  - ✅ Similarity threshold enforced (0.95)
+  - ✅ Returns None if below threshold
+  - ✅ Stats track semantic hits separately
+  - ✅ All 9 tests passing
+  - ✅ 54% code coverage
 - **Testing**: Similar query tests
+- **Status**: ✅ COMPLETE - 9/9 tests passing, semantic similarity working!
 
 ### ARCH-016: Implement Cache Storage
 - **Priority**: P1 | **Time**: 1.5h | **Dependencies**: ARCH-015

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
+import numpy as np
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -112,10 +113,20 @@ class SemanticCache:
             logger.warning("Failed to connect to Redis, caching disabled")
             return
         
+        # Initialize embedding client for semantic search
+        if not use_fake:  # Only initialize for real usage, not tests
+            try:
+                from api.tools.retrieval_engine import EmbeddingClient
+                self._embedding_client = EmbeddingClient()
+                logger.info("Embedding client initialized for semantic caching")
+            except Exception as e:
+                logger.warning("Failed to initialize embedding client", error=str(e))
+        
         logger.info(
             "SemanticCache connected to Redis",
             similarity_threshold=self.similarity_threshold,
-            default_ttl=self.default_ttl
+            default_ttl=self.default_ttl,
+            embedding_client_available=self._embedding_client is not None
         )
     
     async def disconnect(self):
@@ -195,11 +206,27 @@ class SemanticCache:
         except Exception as e:
             logger.error("Error checking exact cache", error=str(e))
         
-        # Level 2: Semantic similarity
-        # (Will be implemented in ARCH-015)
-        if check_semantic:
-            # Placeholder for now
-            pass
+        # Level 2: Semantic similarity (if enabled and embedding client available)
+        if check_semantic and self._embedding_client is not None:
+            try:
+                similar_response = await self._find_similar_cached_query(query, user_type)
+                
+                if similar_response:
+                    self._stats.semantic_hits += 1
+                    logger.info(
+                        "Cache hit: semantic similarity",
+                        similarity=similar_response["similarity"],
+                        query_preview=query[:50],
+                        original_query=similar_response["original_query"][:50]
+                    )
+                    
+                    response = similar_response["response"]
+                    response["_cache_hit"] = "semantic"
+                    response["_cache_similarity"] = similar_response["similarity"]
+                    return response
+            
+            except Exception as e:
+                logger.error("Semantic similarity search failed", error=str(e))
         
         # Cache miss
         self._stats.misses += 1
@@ -243,17 +270,32 @@ class SemanticCache:
                 json.dumps(clean_response)
             )
             
-            # Store metadata
-            await self._redis_client.hset(
-                f"{exact_key}:meta",
-                mapping={
-                    "query": query,
-                    "user_type": user_type,
-                    "created_at": datetime.utcnow().isoformat(),
-                    "hit_count": "0"
-                }
-            )
+            # Generate embedding for semantic search (if client available)
+            embedding = None
+            if self._embedding_client is not None:
+                try:
+                    embeddings = await self._embedding_client.get_embeddings([query])
+                    embedding = embeddings[0] if embeddings else None
+                except Exception as e:
+                    logger.warning("Failed to generate embedding", error=str(e))
+            
+            # Store metadata (including embedding for semantic search)
+            metadata = {
+                "query": query,
+                "user_type": user_type,
+                "created_at": datetime.utcnow().isoformat(),
+                "hit_count": "0"
+            }
+            
+            if embedding:
+                metadata["embedding"] = json.dumps(embedding)
+            
+            await self._redis_client.hset(f"{exact_key}:meta", mapping=metadata)
             await self._redis_client.expire(f"{exact_key}:meta", ttl_seconds)
+            
+            # Add to semantic search index if embedding available
+            if embedding:
+                await self._add_to_semantic_index(exact_key, user_type)
             
             logger.info(
                 "Response cached",
@@ -264,6 +306,155 @@ class SemanticCache:
             
         except Exception as e:
             logger.error("Failed to cache response", error=str(e))
+    
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """
+        Compute cosine similarity between two vectors.
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Cosine similarity (0-1)
+        """
+        dot_product = np.dot(vec1, vec2)
+        norm_product = np.linalg.norm(vec1) * np.linalg.norm(vec2)
+        return float(dot_product / norm_product) if norm_product > 0 else 0.0
+    
+    async def _find_similar_cached_query(
+        self,
+        query: str,
+        user_type: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find semantically similar cached query using cosine similarity.
+        
+        Args:
+            query: User query
+            user_type: User type
+            
+        Returns:
+            Dict with response, similarity, and original_query, or None
+        """
+        if self._embedding_client is None:
+            return None
+        
+        try:
+            # Get query embedding
+            embeddings = await self._embedding_client.get_embeddings([query])
+            if not embeddings:
+                return None
+            
+            query_embedding = np.array(embeddings[0])
+            
+            # Get all cached keys for this user type from semantic index
+            index_key = f"semantic_index:{user_type}"
+            cached_keys = await self._redis_client.smembers(index_key)
+            
+            if not cached_keys:
+                return None
+            
+            # Compare embeddings to find best match
+            max_similarity = 0.0
+            best_match_key = None
+            best_match_meta = None
+            
+            for cached_key in cached_keys:
+                # Get cached embedding
+                cached_meta = await self._redis_client.hgetall(f"{cached_key}:meta")
+                if not cached_meta or "embedding" not in cached_meta:
+                    continue
+                
+                cached_embedding_json = cached_meta["embedding"]
+                cached_embedding = np.array(json.loads(cached_embedding_json))
+                
+                # Compute cosine similarity
+                similarity = self._cosine_similarity(query_embedding, cached_embedding)
+                
+                if similarity > max_similarity:
+                    max_similarity = similarity
+                    best_match_key = cached_key
+                    best_match_meta = cached_meta
+            
+            # Check if similarity exceeds threshold
+            if max_similarity >= self.similarity_threshold and best_match_key:
+                # Fetch cached response
+                cached_response = await self._redis_client.get(best_match_key)
+                if cached_response:
+                    # Increment hit count
+                    await self._redis_client.hincrby(f"{best_match_key}:meta", "hit_count", 1)
+                    
+                    return {
+                        "response": json.loads(cached_response),
+                        "similarity": max_similarity,
+                        "original_query": best_match_meta["query"]
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error("Semantic similarity search failed", error=str(e))
+            return None
+    
+    async def _add_to_semantic_index(self, cache_key: str, user_type: str):
+        """
+        Add cache entry to semantic search index.
+        
+        Args:
+            cache_key: Cache key to add to index
+            user_type: User type
+        """
+        index_key = f"semantic_index:{user_type}"
+        await self._redis_client.sadd(index_key, cache_key)
+    
+    async def get_embedding_cache(self, query: str) -> Optional[List[float]]:
+        """
+        Get cached query embedding.
+        
+        Args:
+            query: Query to get embedding for
+            
+        Returns:
+            Cached embedding or None
+        """
+        if self._redis_client is None:
+            return None
+        
+        key = f"cache:embedding:{hashlib.md5(query.encode()).hexdigest()}"
+        
+        try:
+            cached = await self._redis_client.get(key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.error("Error getting embedding cache", error=str(e))
+        
+        return None
+    
+    async def cache_embedding(
+        self,
+        query: str,
+        embedding: List[float],
+        ttl: int = 3600
+    ):
+        """
+        Cache query embedding.
+        
+        Args:
+            query: Query
+            embedding: Embedding vector
+            ttl: TTL in seconds (default 1 hour)
+        """
+        if self._redis_client is None:
+            return
+        
+        key = f"cache:embedding:{hashlib.md5(query.encode()).hexdigest()}"
+        
+        try:
+            await self._redis_client.setex(key, ttl, json.dumps(embedding))
+        except Exception as e:
+            logger.error("Error caching embedding", error=str(e))
     
     def get_stats(self) -> CacheStats:
         """Get cache statistics."""
