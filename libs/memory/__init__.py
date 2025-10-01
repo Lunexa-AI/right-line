@@ -10,5 +10,7 @@ Follows .cursorrules: async-first, token budget management, privacy-aware.
 """
 
 from libs.memory.short_term import ShortTermMemory
+from libs.memory.long_term import LongTermMemory
+from libs.memory.coordinator import MemoryCoordinator
 
-__all__ = ["ShortTermMemory"]
+__all__ = ["ShortTermMemory", "LongTermMemory", "MemoryCoordinator"]
