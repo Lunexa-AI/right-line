@@ -2248,6 +2248,186 @@ Return ONLY the rewritten query, no explanation."""
         
         return ttl_map.get(complexity, 3600)
     
+    @traceable(
+        run_type="llm",
+        name="08c_self_critic",
+        tags=["self-correction", "critique", "refinement", "legal-ai"]
+    )
+    async def _self_critic_node(self, state: AgentState) -> Dict[str, Any]:
+        """
+        ARCH-050: Self-critic node that analyzes quality issues and generates refinement instructions.
+        
+        This node critiques the synthesis and provides specific, actionable instructions
+        for refinement. It focuses on:
+        - Missing legal reasoning or citations
+        - Logical gaps or weak arguments
+        - Counterarguments that should be addressed
+        - Additional authorities that should be cited
+        - Structural improvements for clarity
+        
+        Args:
+            state: Agent state with final_answer and quality_issues
+            
+        Returns:
+            Dict with refinement_instructions, priority_fixes, and updated iteration count
+        """
+        start_time = time.time()
+        
+        try:
+            final_answer = getattr(state, 'final_answer', '')
+            quality_issues = getattr(state, 'quality_issues', [])
+            query = state.raw_query
+            iteration_count = getattr(state, 'refinement_iteration', 0)
+            
+            logger.info(
+                "08c_self_critic start - analyzing synthesis quality",
+                issues_count=len(quality_issues),
+                iteration=iteration_count,
+                answer_length=len(final_answer) if final_answer else 0,
+                trace_id=state.trace_id
+            )
+            
+            if not final_answer:
+                logger.warning("No answer to critique", trace_id=state.trace_id)
+                return {
+                    "refinement_instructions": ["Generate more comprehensive analysis"],
+                    "priority_fixes": ["Add legal reasoning"],
+                    "suggested_additions": [],
+                    "refinement_iteration": iteration_count + 1
+                }
+            
+            # Build self-criticism prompt
+            self_critic_prompt = f"""You are a legal analysis critic for Gweta, a Zimbabwean legal AI assistant. Your task is to provide specific, actionable refinement instructions for improving a legal analysis.
+
+**ORIGINAL QUERY**: 
+{query}
+
+**CURRENT SYNTHESIS** (that needs improvement):
+{final_answer[:1500]}{'...' if len(final_answer) > 1500 else ''}
+
+**IDENTIFIED QUALITY ISSUES**:
+{chr(10).join(f"- {issue}" for issue in quality_issues)}
+
+**YOUR TASK**: 
+Provide specific, actionable instructions for refining this legal analysis to address the quality issues above.
+
+Focus on:
+1. Missing legal reasoning or citations (cite specific Acts or sections)
+2. Logical gaps or weak arguments that need strengthening
+3. Counterarguments or alternative interpretations that should be addressed
+4. Additional statutory or case law authorities that should be cited
+5. Structural improvements for clarity (e.g., IRAC framework adherence)
+
+Return your critique as JSON with this exact structure:
+{{
+  "refinement_instructions": ["Specific instruction 1", "Specific instruction 2", "Specific instruction 3"],
+  "priority_fixes": ["Most critical fix 1", "Most critical fix 2"],
+  "suggested_additions": ["Additional legal authority 1", "Additional context 2"]
+}}
+
+Be specific and actionable. Focus on legal substance, not style.
+Return ONLY the JSON object, no other text."""
+            
+            from langchain_openai import ChatOpenAI
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            # Use gpt-4o-mini for cost-effective criticism
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0.2,  # Low temperature for consistent critique
+                max_tokens=600,   # Enough for detailed instructions
+                timeout=10.0
+            )
+            
+            template = ChatPromptTemplate.from_messages([
+                ("system", "You are a legal analysis quality critic. Provide constructive, actionable feedback."),
+                ("user", self_critic_prompt)
+            ])
+            
+            chain = template | llm
+            response = await chain.ainvoke({})
+            
+            # Parse JSON response
+            import json
+            import re
+            
+            try:
+                # Try to extract JSON if wrapped in markdown or text
+                content = response.content.strip()
+                
+                # Remove markdown code blocks if present
+                if content.startswith('```'):
+                    content = re.sub(r'^```(?:json)?\s*\n', '', content)
+                    content = re.sub(r'\n```\s*$', '', content)
+                
+                refinement_data = json.loads(content)
+                
+                # Validate structure
+                if not isinstance(refinement_data.get("refinement_instructions"), list):
+                    raise ValueError("Invalid refinement_instructions format")
+                    
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(
+                    "Self-critic returned invalid JSON, using fallback",
+                    error=str(e),
+                    trace_id=state.trace_id
+                )
+                # Fallback to structured instructions from quality issues
+                refinement_data = {
+                    "refinement_instructions": [
+                        f"Address quality issue: {issue}" for issue in quality_issues[:3]
+                    ],
+                    "priority_fixes": [
+                        "Improve citation density and legal grounding",
+                        "Strengthen logical reasoning and argumentation"
+                    ],
+                    "suggested_additions": [
+                        "Add relevant statutory references",
+                        "Include case law precedents if applicable"
+                    ]
+                }
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            instructions = refinement_data.get("refinement_instructions", [])
+            priority_fixes = refinement_data.get("priority_fixes", [])
+            suggested_additions = refinement_data.get("suggested_additions", [])
+            
+            logger.info(
+                "08c_self_critic completed",
+                instructions_count=len(instructions),
+                priority_fixes_count=len(priority_fixes),
+                suggested_additions_count=len(suggested_additions),
+                duration_ms=round(duration_ms, 2),
+                trace_id=state.trace_id
+            )
+            
+            return {
+                "refinement_instructions": instructions,
+                "priority_fixes": priority_fixes,
+                "suggested_additions": suggested_additions,
+                "refinement_iteration": iteration_count + 1
+            }
+            
+        except Exception as e:
+            logger.error(
+                "08c_self_critic failed",
+                error=str(e),
+                trace_id=state.trace_id
+            )
+            
+            # Graceful fallback with generic instructions
+            return {
+                "refinement_instructions": [
+                    "Improve legal analysis based on quality feedback",
+                    "Strengthen citations and legal reasoning",
+                    "Address identified gaps in the analysis"
+                ],
+                "priority_fixes": ["Improve overall quality"],
+                "suggested_additions": [],
+                "refinement_iteration": getattr(state, 'refinement_iteration', 0) + 1
+            }
+    
     def _build_synthesis_prompt(self, state: AgentState) -> str:
         """Build synthesis prompt using new constitutional prompting architecture."""
         from api.composer.prompts import get_prompt_template, build_synthesis_context

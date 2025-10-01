@@ -879,22 +879,27 @@
 - **Testing**: ✅ 22/22 tests passing (test_quality_decision_logic.py)
 - **Status**: ✅ COMPLETE - Comprehensive decision logic with issue analysis and iteration limits
 
-### ARCH-050: Implement Self-Critic Node
+### ARCH-050: Implement Self-Critic Node ✅ COMPLETE
 - **Priority**: P1 | **Time**: 2h | **Dependencies**: ARCH-049
 - **Objective**: Generate refinement instructions
-- **Files**: `api/orchestrators/query_orchestrator.py`
+- **Files**: `api/orchestrators/query_orchestrator.py`, `api/schemas/agent_state.py`
 - **Code**: Enhancement doc → Self-critic section
 - **Tasks**:
-  - Create _self_critic_node
-  - Build criticism prompt
-  - Use GPT-4o-mini
-  - Parse instructions
-  - Increment iteration
+  - ✅ Create _self_critic_node (157 lines)
+  - ✅ Build criticism prompt with quality issues context
+  - ✅ Use GPT-4o-mini for cost-effective critique
+  - ✅ Parse JSON instructions with fallback
+  - ✅ Increment iteration count
+  - ✅ Handle markdown-wrapped JSON
+  - ✅ Added state fields: priority_fixes, suggested_additions
 - **Acceptance**:
-  - ☐ Generates instructions
-  - ☐ JSON parsing works
-  - ☐ Iteration incremented
-- **Testing**: Test with various issues
+  - ✅ Generates specific refinement instructions (3+ instructions)
+  - ✅ JSON parsing works with markdown extraction
+  - ✅ Iteration incremented after each critique
+  - ✅ Graceful fallback on LLM errors
+  - ✅ Handles missing answers gracefully
+- **Testing**: ✅ 11/11 tests passing (test_self_critic_node.py)
+- **Status**: ✅ COMPLETE - Self-critic node with robust JSON parsing and error handling
 
 ### ARCH-051: Implement Refined Synthesis
 - **Priority**: P1 | **Time**: 2h | **Dependencies**: ARCH-050

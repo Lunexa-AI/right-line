@@ -123,6 +123,8 @@ class AgentState(BaseModel):
     quality_confidence: Optional[float] = Field(default=None, description="Quality confidence score (0.0-1.0)")
     quality_issues: List[str] = Field(default_factory=list, description="Quality issues identified by quality gate")
     refinement_instructions: List[str] = Field(default_factory=list, description="Instructions from self-critic for refinement")
+    priority_fixes: List[str] = Field(default_factory=list, description="Priority fixes from self-critic")
+    suggested_additions: List[str] = Field(default_factory=list, description="Suggested additions from self-critic")
     refinement_strategy: Optional[Literal["pass", "refine_synthesis", "retrieve_more", "fail"]] = Field(
         default=None, description="Decided refinement strategy"
     )
