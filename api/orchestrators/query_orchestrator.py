@@ -61,6 +61,45 @@ class QueryOrchestrator:
         except Exception as e:
             logger.warning("Failed to initialize cache, caching disabled", error=str(e))
             self.cache = None
+        
+        # Initialize memory coordinator for conversation intelligence
+        self.memory = None
+        self.memory_enabled = os.getenv("MEMORY_ENABLED", "true").lower() == "true"
+        
+        if self.memory_enabled:
+            logger.info("Memory enabled, will initialize on first use")
+        else:
+            logger.info("Memory disabled by configuration")
+    
+    async def _ensure_memory_connected(self):
+        """Ensure memory coordinator is initialized (lazy initialization)."""
+        if not self.memory_enabled or self.memory is not None:
+            return
+        
+        try:
+            from libs.memory.coordinator import MemoryCoordinator
+            from libs.firebase.client import get_firestore_async_client
+            
+            # Ensure cache is connected first (need Redis for short-term memory)
+            await self._ensure_cache_connected()
+            
+            if not self.cache or not self.cache._redis_client:
+                logger.warning("Cannot initialize memory without Redis")
+                return
+            
+            # Get Firestore client (already configured!)
+            firestore_client = get_firestore_async_client()
+            
+            # Create memory coordinator
+            self.memory = MemoryCoordinator(
+                redis_client=self.cache._redis_client,
+                firestore_client=firestore_client
+            )
+            logger.info("Memory coordinator initialized successfully with Firestore")
+            
+        except Exception as e:
+            logger.warning("Failed to initialize memory", error=str(e))
+            self.memory = None
     
     async def _ensure_cache_connected(self):
         """Ensure cache is connected (lazy initialization)."""
@@ -1634,6 +1673,25 @@ class QueryOrchestrator:
                                ttl_seconds=ttl_seconds)
                 except Exception as e:
                     logger.warning("Failed to cache response", error=str(e), trace_id=state.trace_id)
+            
+            # Update memory systems after successful query (ARCH-037)
+            if self.memory and result.final_answer:
+                try:
+                    await self.memory.update_memories(
+                        user_id=state.user_id,
+                        session_id=state.session_id,
+                        query=state.raw_query,
+                        response=result.final_answer,
+                        metadata={
+                            "complexity": getattr(result, 'complexity', 'moderate'),
+                            "legal_areas": getattr(result, 'legal_areas', []),
+                            "user_type": getattr(result, 'user_type', 'professional'),
+                            "intent": getattr(result, 'intent', 'rag_qa')
+                        }
+                    )
+                    logger.debug("Memories updated", trace_id=state.trace_id)
+                except Exception as e:
+                    logger.warning("Failed to update memories", error=str(e), trace_id=state.trace_id)
             
             return result
             

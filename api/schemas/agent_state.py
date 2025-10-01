@@ -111,6 +111,12 @@ class AgentState(BaseModel):
     parent_doc_cache: Dict[str, Any] = Field(default_factory=dict, description="Speculatively prefetched parent documents")
     prefetch_count: Optional[int] = Field(default=None, description="Number of documents prefetched")
     
+    # Memory context
+    short_term_context: List[Dict[str, Any]] = Field(default_factory=list, description="Conversation history (last N messages)")
+    long_term_profile: Dict[str, Any] = Field(default_factory=dict, description="User profile and preferences")
+    memory_tokens_used: int = Field(default=0, description="Tokens used by memory context")
+    conversation_topics: List[str] = Field(default_factory=list, description="Topics from conversation")
+    
     class Config:
         """Pydantic configuration."""
         # Enable JSON serialization of datetime
