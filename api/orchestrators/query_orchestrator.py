@@ -496,46 +496,76 @@ class QueryOrchestrator:
                     logger.warning("Failed to get user profile", error=str(e))
             
             # Cache miss - perform classification
-            # Use simplified intent classification for now
-            # Fast heuristics first
-            intent = self._classify_intent_heuristic(state.raw_query)
+            # ARCH-048: Use enhanced heuristics with confidence threshold
+            heuristic_result = self._classify_intent_heuristic(state.raw_query)
             jurisdiction = self._detect_jurisdiction(state.raw_query)
             date_context = self._extract_date_context(state.raw_query)
             
-            # If heuristics are ambiguous, fall back to mini-LLM
-            if intent is None:
-                intent = await self._classify_intent_llm(state.raw_query)
+            # If heuristics are confident (>=0.8), use them directly
+            if heuristic_result and heuristic_result.get("confidence", 0) >= 0.8:
+                logger.debug("Using heuristic classification",
+                           intent=heuristic_result.get("intent"),
+                           confidence=heuristic_result.get("confidence"),
+                           trace_id=state.trace_id)
+                intent_data = heuristic_result
+                
+                # Override with user profile if available and user is returning
+                if user_profile and user_profile.get('is_returning_user'):
+                    intent_data["complexity"] = user_profile.get('typical_complexity', intent_data.get("complexity"))
+                    intent_data["user_type"] = user_profile.get('expertise_level', intent_data.get("user_type"))
+                    intent_data["legal_areas"] = user_profile.get('top_legal_interests', intent_data.get("legal_areas", ["general"]))
             
-            # Use user profile for personalization if available
-            default_complexity = "moderate"
-            default_user_type = "professional"
+            # If heuristics are uncertain or low confidence, fall back to LLM
+            else:
+                logger.debug("Heuristic uncertain, using LLM fallback",
+                           heuristic_confidence=heuristic_result.get("confidence", 0) if heuristic_result else None,
+                           trace_id=state.trace_id)
+                
+                llm_intent = await self._classify_intent_llm(state.raw_query)
+                
+                # Use user profile for personalization if available
+                default_complexity = "moderate"
+                default_user_type = "professional"
+                
+                if user_profile:
+                    # Use user's typical complexity if they're a returning user
+                    if user_profile.get('is_returning_user'):
+                        default_complexity = user_profile.get('typical_complexity', 'moderate')
+                        default_user_type = user_profile.get('expertise_level', 'professional')
+                
+                # Create intent data structure from LLM result
+                intent_data = {
+                    "intent": llm_intent or "rag_qa",
+                    "complexity": default_complexity,
+                    "user_type": default_user_type,
+                    "jurisdiction": jurisdiction or "ZW",
+                    "legal_areas": user_profile.get('top_legal_interests', ["general"]) if user_profile else ["general"],
+                    "reasoning_framework": "irac",
+                    "confidence": 0.8 if llm_intent else 0.5
+                }
+                
+                # Calculate adaptive retrieval parameters based on complexity
+                complexity = intent_data.get("complexity", "moderate")
+                retrieval_params = {
+                    "simple": {"retrieval_top_k": 15, "rerank_top_k": 5},
+                    "moderate": {"retrieval_top_k": 25, "rerank_top_k": 8},
+                    "complex": {"retrieval_top_k": 40, "rerank_top_k": 12},
+                    "expert": {"retrieval_top_k": 50, "rerank_top_k": 15}
+                }
+                params = retrieval_params.get(complexity, retrieval_params["moderate"])
+                intent_data["retrieval_top_k"] = params["retrieval_top_k"]
+                intent_data["rerank_top_k"] = params["rerank_top_k"]
             
-            if user_profile:
-                # Use user's typical complexity if they're a returning user
-                if user_profile.get('is_returning_user'):
-                    default_complexity = user_profile.get('typical_complexity', 'moderate')
-                    default_user_type = user_profile.get('expertise_level', 'professional')
+            # Add jurisdiction and date context
+            intent_data["jurisdiction"] = intent_data.get("jurisdiction") or jurisdiction or "ZW"
+            intent_data["date_context"] = date_context
             
-            # Create intent data structure
-            intent_data = {
-                "intent": intent or "rag_qa",
-                "complexity": default_complexity,
-                "user_type": default_user_type,
-                "jurisdiction": jurisdiction or "ZW",
-                "legal_areas": user_profile.get('top_legal_interests', ["general"]) if user_profile else ["general"],
-                "reasoning_framework": "irac",
-                "confidence": 0.8 if intent else 0.5
-            }
-            
-            # Calculate adaptive retrieval parameters based on complexity
+            # Extract params for logging
             complexity = intent_data.get("complexity", "moderate")
-            retrieval_params = {
-                "simple": {"retrieval_top_k": 15, "rerank_top_k": 5},
-                "moderate": {"retrieval_top_k": 25, "rerank_top_k": 8},
-                "complex": {"retrieval_top_k": 40, "rerank_top_k": 12},
-                "expert": {"retrieval_top_k": 50, "rerank_top_k": 15}
+            params = {
+                "retrieval_top_k": intent_data.get("retrieval_top_k", 25),
+                "rerank_top_k": intent_data.get("rerank_top_k", 8)
             }
-            params = retrieval_params.get(complexity, retrieval_params["moderate"])
             
             duration_ms = (time.time() - start_time) * 1000
             
@@ -1549,48 +1579,201 @@ Return ONLY the rewritten query, no explanation."""
             logger.warning("Failed to resolve context references", error=str(e))
             return query
     
-    def _classify_intent_heuristic(self, query: str) -> Optional[str]:
-        """Fast heuristic intent classification."""
-        query_lower = query.lower().strip()
+    def _classify_intent_heuristic(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Advanced heuristic intent classification with complexity assessment.
         
-        # Conversational patterns (use word boundaries to avoid false matches)
+        Returns a dictionary with intent, complexity, user_type, confidence,
+        reasoning_framework, and retrieval parameters, or None if uncertain.
+        
+        ARCH-047: Enhanced heuristic classifier with better pattern matching
+        and complexity assessment.
+        """
         import re
+        
+        query_lower = query.lower().strip()
+        intent = None
+        complexity = "moderate"
+        user_type = "citizen"  # Default assumption
+        confidence = 0.0
+        reasoning_framework = "irac"
+        legal_areas = []
+        
+        # User type detection (professional vs citizen)
+        professional_indicators = [
+            r"\bact\b.*\[chapter", r"section \d+\(", r"\bsi \d+/", 
+            r"\bv\.", r"\bsc \d+/", r"constitutional court",
+            r"precedent", r"ratio decidendi", r"obiter dicta",
+            r"statutory interpretation", r"\birac\b", r"legal framework",
+            r"pursuant to", r"notwithstanding", r"hereinafter"
+        ]
+        
+        if any(re.search(pattern, query_lower) for pattern in professional_indicators):
+            user_type = "professional"
+        
+        # Conversational patterns (simple queries)
         conversational_patterns = [
-            r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bthanks\b", r"\bthank you\b", 
-            r"\bbye\b", r"\bgoodbye\b", r"\bhow are you\b", r"\bgood morning\b", 
+            r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bthanks\b", 
+            r"\bthank you\b", r"\bbye\b", r"\bgoodbye\b", 
+            r"\bhow are you\b", r"\bgood morning\b", 
             r"\bgood afternoon\b", r"\bgood evening\b"
         ]
         if any(re.search(pattern, query_lower) for pattern in conversational_patterns):
-            return "conversational"
+            return {
+                "intent": "conversational",
+                "complexity": "simple",
+                "user_type": "citizen",
+                "confidence": 0.95,
+                "reasoning_framework": "none",
+                "legal_areas": [],
+                "retrieval_top_k": 0,
+                "rerank_top_k": 0
+            }
         
-        # Summarization patterns  
+        # Summarization patterns
         summarize_patterns = [
             "summarize", "summary", "tl;dr", "tldr", "explain differently",
             "what did you say", "what did you just say", "repeat that",
             "can you explain", "break it down", "in simple terms"
         ]
         if any(pattern in query_lower for pattern in summarize_patterns):
-            return "summarize"
+            return {
+                "intent": "summarize",
+                "complexity": "simple",
+                "user_type": user_type,
+                "confidence": 0.9,
+                "reasoning_framework": "none",
+                "legal_areas": [],
+                "retrieval_top_k": 0,
+                "rerank_top_k": 0
+            }
+        
+        # Constitutional interpretation detection
+        if any(word in query_lower for word in ["constitution", "constitutional", "fundamental right", "bill of rights"]):
+            intent = "rag_qa"  # Use existing intent type
+            reasoning_framework = "constitutional"
+            complexity = "complex"  # Constitutional questions are inherently complex
+            confidence = 0.9
+            legal_areas = ["constitutional_law"]
+        
+        # Statutory analysis detection
+        elif re.search(r"(act|statute|section|chapter \d+)", query_lower):
+            intent = "rag_qa"
+            reasoning_framework = "statutory"
+            confidence = 0.85
+            
+            # Assess complexity based on query characteristics even for statutory queries
+            word_count = len(query.split())
+            has_multiple_concepts = any(conn in query_lower for conn in [" and ", " or ", "versus", "compare", "between", "differences"])
+            
+            if word_count >= 25 or has_multiple_concepts:
+                complexity = "complex"
+            else:
+                complexity = "moderate" if user_type == "citizen" else "complex"
+            
+            # Extract legal areas from common statutory domains
+            if any(word in query_lower for word in ["labour", "employment", "worker"]):
+                legal_areas = ["labour_law"]
+            elif any(word in query_lower for word in ["company", "director", "shareholder"]):
+                legal_areas = ["company_law"]
+            elif any(word in query_lower for word in ["criminal", "offence", "penalty"]):
+                legal_areas = ["criminal_law"]
+            else:
+                legal_areas = ["general"]
+        
+        # Procedural inquiry detection (check before case law to avoid "file a case" confusion)
+        elif any(word in query_lower for word in ["procedure", "file", "court process", "how to", "steps"]):
+            intent = "rag_qa"
+            reasoning_framework = "irac"
+            complexity = "simple"
+            confidence = 0.8
+            legal_areas = ["procedure"]
+        
+        # Case law research detection
+        elif any(word in query_lower for word in ["precedent", "judgment", "court held", "ruling", "held in"]):
+            intent = "rag_qa"
+            reasoning_framework = "precedent"
+            complexity = "complex"
+            confidence = 0.85
+            legal_areas = ["case_law"]
+        
+        # Rights inquiry (citizen-focused)
+        elif any(word in query_lower for word in ["my rights", "can i", "am i allowed", "do i have to"]):
+            intent = "rag_qa"
+            reasoning_framework = "irac"
+            complexity = "simple"
+            user_type = "citizen"
+            confidence = 0.85
+            legal_areas = ["general"]
         
         # Disambiguation patterns
-        disambiguate_patterns = [
-            "what do you mean", "clarify", "i don't understand", "unclear",
-            "what about", "but what if", "however", "on the other hand"
-        ]
-        if any(pattern in query_lower for pattern in disambiguate_patterns):
-            return "disambiguate"
+        elif any(pattern in query_lower for pattern in ["what do you mean", "clarify", "i don't understand", "unclear"]):
+            intent = "disambiguate"
+            complexity = "simple"
+            confidence = 0.8
+            legal_areas = []
         
-        # Legal question patterns - if it contains legal keywords, it's likely RAG Q&A
-        legal_keywords = [
-            "act", "law", "legal", "statute", "regulation", "chapter", "section",
-            "court", "judge", "penalty", "fine", "employment", "labour", "contract",
-            "company", "registration", "license", "permit", "rights", "obligations"
-        ]
-        if any(keyword in query_lower for keyword in legal_keywords):
-            return "rag_qa"
+        # Default to RAG Q&A
+        else:
+            # Check if query contains legal keywords
+            legal_keywords = [
+                "act", "law", "legal", "statute", "regulation", "chapter", "section",
+                "court", "judge", "penalty", "fine", "employment", "labour", "contract",
+                "company", "registration", "license", "permit", "rights", "obligations",
+                "wage", "salary", "tax", "duty", "liability", "damages", "compensation"
+            ]
+            if any(keyword in query_lower for keyword in legal_keywords):
+                intent = "rag_qa"
+                reasoning_framework = "irac"
+                
+                # Assess complexity based on query characteristics
+                word_count = len(query.split())
+                has_multiple_concepts = any(conn in query_lower for conn in [" and ", " or ", "versus", "compare", "between"])
+                has_legal_terms = sum(1 for term in legal_keywords if term in query_lower)
+                
+                if word_count >= 25 or (has_multiple_concepts and has_legal_terms >= 3):
+                    complexity = "complex"
+                elif word_count > 15 or has_legal_terms >= 2:
+                    complexity = "moderate"
+                else:
+                    complexity = "simple"
+                
+                confidence = 0.7
+                
+                # Extract legal areas from keywords
+                if any(word in query_lower for word in ["labour", "employment", "worker", "salary", "wage"]):
+                    legal_areas = ["labour_law"]
+                elif any(word in query_lower for word in ["company", "director", "shareholder", "corporation"]):
+                    legal_areas = ["company_law"]
+                elif any(word in query_lower for word in ["criminal", "offence", "penalty"]):
+                    legal_areas = ["criminal_law"]
+                elif any(word in query_lower for word in ["contract", "agreement", "breach", "damages"]):
+                    legal_areas = ["contract_law"]
+                else:
+                    legal_areas = ["general"]
+            else:
+                # Unclear - return None to trigger LLM fallback
+                return None
         
-        # If unclear, let LLM decide
-        return None
+        # Set retrieval parameters based on complexity
+        retrieval_params = {
+            "simple": {"retrieval_top_k": 15, "rerank_top_k": 5},
+            "moderate": {"retrieval_top_k": 25, "rerank_top_k": 8},
+            "complex": {"retrieval_top_k": 40, "rerank_top_k": 12},
+            "expert": {"retrieval_top_k": 50, "rerank_top_k": 15}
+        }
+        params = retrieval_params.get(complexity, retrieval_params["moderate"])
+        
+        return {
+            "intent": intent,
+            "complexity": complexity,
+            "user_type": user_type,
+            "confidence": confidence,
+            "reasoning_framework": reasoning_framework,
+            "legal_areas": legal_areas or ["general"],
+            "retrieval_top_k": params["retrieval_top_k"],
+            "rerank_top_k": params["rerank_top_k"]
+        }
     
     def _detect_jurisdiction(self, query: str) -> Optional[str]:
         """Detect jurisdiction from query."""
