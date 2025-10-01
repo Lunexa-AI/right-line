@@ -2587,6 +2587,198 @@ Return ONLY the JSON object, no other text."""
             # Return empty dict to keep original answer
             return {}
     
+    async def _generate_gap_filling_query(
+        self,
+        original_query: str,
+        quality_issues: List[str],
+        current_sources: List[Dict[str, Any]]
+    ) -> str:
+        """
+        ARCH-053: Generate targeted query to fill gaps in current sources.
+        
+        Analyzes quality issues and current sources to generate a query that
+        targets missing information, uncovered legal areas, or insufficient citations.
+        
+        Args:
+            original_query: The user's original query
+            quality_issues: List of identified quality issues
+            current_sources: Currently bundled context documents
+            
+        Returns:
+            Targeted gap-filling query string
+        """
+        try:
+            # Analyze quality issues to identify gaps
+            issues_lower = [issue.lower() for issue in quality_issues]
+            
+            # Extract what's missing
+            missing_keywords = []
+            if any("citation" in issue or "source" in issue for issue in issues_lower):
+                missing_keywords.append("legal citations and statutory references")
+            if any("coverage" in issue or "incomplete" in issue for issue in issues_lower):
+                missing_keywords.append("comprehensive coverage")
+            if any("case law" in issue or "precedent" in issue for issue in issues_lower):
+                missing_keywords.append("case law precedents")
+            if any("constitutional" in issue for issue in issues_lower):
+                missing_keywords.append("constitutional provisions")
+            
+            # Get covered document types to avoid duplication
+            covered_types = set()
+            covered_titles = []
+            for source in current_sources[:5]:  # Check top 5 sources
+                doc_type = source.get('source_type', 'unknown')
+                covered_types.add(doc_type)
+                title = source.get('title', '')
+                if title:
+                    covered_titles.append(title[:50])  # First 50 chars
+            
+            # Build gap-filling query
+            if missing_keywords:
+                gap_query = f"{original_query} - specifically focusing on {', '.join(missing_keywords)}"
+            else:
+                gap_query = f"{original_query} - additional legal sources and authorities"
+            
+            # Add guidance to retrieve different types if possible
+            if 'statute' in covered_types and 'case_law' not in covered_types:
+                gap_query += " including case law and judicial precedents"
+            elif 'case_law' in covered_types and 'statute' not in covered_types:
+                gap_query += " including statutory provisions and regulations"
+            
+            logger.info(
+                "Gap-filling query generated",
+                original_query_length=len(original_query),
+                gap_query_length=len(gap_query),
+                missing_areas=len(missing_keywords),
+                covered_types=list(covered_types)
+            )
+            
+            return gap_query
+            
+        except Exception as e:
+            logger.warning("Gap query generation failed, using original", error=str(e))
+            # Fallback to original query with "additional sources" hint
+            return f"{original_query} - additional legal sources"
+    
+    @traceable(
+        run_type="tool",
+        name="08d_iterative_retrieval",
+        tags=["self-correction", "retrieval", "gap-filling", "legal-ai"]
+    )
+    async def _iterative_retrieval_node(self, state: AgentState) -> Dict[str, Any]:
+        """
+        ARCH-052: Iterative retrieval node that fetches additional sources based on gaps.
+        
+        This node is triggered when quality issues indicate insufficient sources.
+        It generates a gap-filling query and retrieves additional documents that
+        weren't captured in the initial retrieval.
+        
+        Args:
+            state: Agent state with quality_issues and current bundled_context
+            
+        Returns:
+            Dict with updated combined_results and reranked_results for re-processing
+        """
+        start_time = time.time()
+        
+        try:
+            original_query = state.raw_query
+            quality_issues = getattr(state, 'quality_issues', [])
+            current_sources = getattr(state, 'bundled_context', [])
+            iteration_count = getattr(state, 'refinement_iteration', 0)
+            
+            logger.info(
+                "08d_iterative_retrieval start - fetching additional sources",
+                current_sources_count=len(current_sources),
+                issues_count=len(quality_issues),
+                iteration=iteration_count,
+                trace_id=state.trace_id
+            )
+            
+            # Generate targeted query for missing information
+            gap_query = await self._generate_gap_filling_query(
+                original_query,
+                quality_issues,
+                current_sources
+            )
+            
+            logger.debug(
+                "Gap query generated",
+                original=original_query[:50],
+                gap_query=gap_query[:100],
+                trace_id=state.trace_id
+            )
+            
+            # Run retrieval with gap query
+            from api.tools.retrieval_engine import RetrievalEngine
+            
+            async with RetrievalEngine() as engine:
+                # Use Milvus for semantic retrieval with gap query
+                additional_docs = await engine.milvus_retriever.aget_relevant_documents(
+                    gap_query,
+                    k=15  # Get 15 additional documents
+                )
+            
+            # Convert LangChain documents to lightweight result objects
+            additional_results = []
+            for doc in additional_docs:
+                # Extract retrieval result from metadata if available
+                if "retrieval_result" in doc.metadata:
+                    additional_results.append(doc.metadata["retrieval_result"])
+                else:
+                    # Create lightweight result object with essential fields
+                    result_obj = type('RetrievalResult', (), {
+                        'chunk_id': doc.metadata.get("chunk_id", "unknown"),
+                        'parent_doc_id': doc.metadata.get("parent_doc_id", "unknown"),
+                        'content': doc.page_content,
+                        'score': doc.metadata.get("score", 0.5),
+                        'confidence': doc.metadata.get("confidence", 0.5),
+                        'metadata': doc.metadata
+                    })()
+                    additional_results.append(result_obj)
+            
+            # Deduplicate with existing results
+            existing_chunk_ids = set()
+            for r in getattr(state, 'combined_results', []):
+                chunk_id = getattr(r, 'chunk_id', None) if hasattr(r, 'chunk_id') else r.get('chunk_id')
+                if chunk_id:
+                    existing_chunk_ids.add(chunk_id)
+            
+            new_results = []
+            for r in additional_results:
+                chunk_id = getattr(r, 'chunk_id', None) if hasattr(r, 'chunk_id') else r.get('chunk_id')
+                if chunk_id and chunk_id not in existing_chunk_ids:
+                    new_results.append(r)
+                    existing_chunk_ids.add(chunk_id)
+            
+            # Merge with existing results
+            combined_results = list(getattr(state, 'combined_results', [])) + new_results
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            logger.info(
+                "08d_iterative_retrieval completed",
+                additional_retrieved=len(additional_results),
+                new_unique=len(new_results),
+                total_sources=len(combined_results),
+                duration_ms=round(duration_ms, 2),
+                trace_id=state.trace_id
+            )
+            
+            # Return updated results - they will be re-ranked in the next node
+            return {
+                "combined_results": combined_results,
+                "refinement_iteration": iteration_count + 1
+            }
+            
+        except Exception as e:
+            logger.error(
+                "08d_iterative_retrieval failed",
+                error=str(e),
+                trace_id=state.trace_id
+            )
+            # Return empty dict to proceed with existing sources
+            return {}
+    
     def _build_synthesis_prompt(self, state: AgentState) -> str:
         """Build synthesis prompt using new constitutional prompting architecture."""
         from api.composer.prompts import get_prompt_template, build_synthesis_context
