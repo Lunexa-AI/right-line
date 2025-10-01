@@ -901,21 +901,29 @@
 - **Testing**: ✅ 11/11 tests passing (test_self_critic_node.py)
 - **Status**: ✅ COMPLETE - Self-critic node with robust JSON parsing and error handling
 
-### ARCH-051: Implement Refined Synthesis
+### ARCH-051: Implement Refined Synthesis ✅ COMPLETE
 - **Priority**: P1 | **Time**: 2h | **Dependencies**: ARCH-050
 - **Objective**: Re-synthesize with improvements
 - **Files**: `api/orchestrators/query_orchestrator.py`
 - **Code**: Enhancement doc → Refined synthesis
 - **Tasks**:
-  - Create _refined_synthesis_node
-  - Use refinement instructions
-  - Generate improved answer
-  - Mark as refinement
+  - ✅ Create _refined_synthesis_node (159 lines)
+  - ✅ Build refined synthesis prompt with all refinement guidance
+  - ✅ Include priority fixes, specific instructions, suggested additions
+  - ✅ Use GPT-4o for high-quality refined synthesis
+  - ✅ Complexity-based token limits (1000-2500)
+  - ✅ Generate improved answer addressing all instructions
+  - ✅ Mark synthesis with refinement metadata
+  - ✅ Graceful error handling (return empty to keep original)
 - **Acceptance**:
-  - ☐ Uses instructions
-  - ☐ Produces improved synthesis
-  - ☐ Metadata shows refinement
-- **Testing**: Verify quality improvement
+  - ✅ Uses refinement instructions, priority fixes, and suggested additions
+  - ✅ Produces improved synthesis with refinement guidance
+  - ✅ Metadata shows refinement status, iteration, and lengths
+  - ✅ Truncates long previous answers (500 chars)
+  - ✅ Limits context to 12 documents
+  - ✅ Returns empty dict on error to keep original
+- **Testing**: ✅ 10/10 tests passing (test_refined_synthesis_node.py)
+- **Status**: ✅ COMPLETE - Refined synthesis with comprehensive prompt construction and error handling
 
 ### ARCH-052: Implement Iterative Retrieval
 - **Priority**: P1 | **Time**: 2h | **Dependencies**: ARCH-049

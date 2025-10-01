@@ -2428,6 +2428,165 @@ Return ONLY the JSON object, no other text."""
                 "refinement_iteration": getattr(state, 'refinement_iteration', 0) + 1
             }
     
+    @traceable(
+        run_type="llm",
+        name="08e_refined_synthesis",
+        tags=["self-correction", "refinement", "synthesis", "legal-ai"]
+    )
+    async def _refined_synthesis_node(self, state: AgentState) -> Dict[str, Any]:
+        """
+        ARCH-051: Refined synthesis node that regenerates answer using refinement instructions.
+        
+        This node takes the self-critic's instructions and generates an improved synthesis
+        that addresses the identified quality issues. It uses the same context documents
+        but adds the refinement instructions to guide the LLM.
+        
+        Args:
+            state: Agent state with refinement_instructions, priority_fixes, and bundled_context
+            
+        Returns:
+            Dict with improved final_answer and synthesis metadata
+        """
+        start_time = time.time()
+        
+        try:
+            refinement_instructions = getattr(state, 'refinement_instructions', [])
+            priority_fixes = getattr(state, 'priority_fixes', [])
+            suggested_additions = getattr(state, 'suggested_additions', [])
+            original_answer = getattr(state, 'final_answer', '')
+            bundled_context = getattr(state, 'bundled_context', [])
+            query = state.raw_query
+            iteration_count = getattr(state, 'refinement_iteration', 0)
+            
+            logger.info(
+                "08e_refined_synthesis start - regenerating with improvements",
+                instructions_count=len(refinement_instructions),
+                priority_fixes_count=len(priority_fixes),
+                iteration=iteration_count,
+                trace_id=state.trace_id
+            )
+            
+            if not refinement_instructions:
+                logger.warning(
+                    "No refinement instructions, returning original answer",
+                    trace_id=state.trace_id
+                )
+                return {}  # Keep original answer
+            
+            # Build refined synthesis prompt with instructions
+            from api.composer.prompts import get_prompt_template, build_synthesis_context
+            
+            user_type = getattr(state, 'user_type', 'professional')
+            complexity = getattr(state, 'complexity', 'moderate')
+            reasoning_framework = getattr(state, 'reasoning_framework', 'irac')
+            legal_areas = getattr(state, 'legal_areas', [])
+            
+            # Prepare context documents
+            context_docs = []
+            for i, ctx in enumerate(bundled_context[:12], 1):
+                context_docs.append({
+                    "doc_key": ctx.get('parent_doc_id', f'doc_{i}'),
+                    "title": ctx.get('title', 'Unknown Document'),
+                    "content": ctx.get('content', '')[:2000],
+                    "doc_type": ctx.get('source_type', 'unknown'),
+                    "authority_level": "high" if ctx.get('confidence', 0) > 0.8 else "medium"
+                })
+            
+            # Build base synthesis context
+            synthesis_context = build_synthesis_context(
+                query=query,
+                context_documents=context_docs,
+                user_type=user_type,
+                complexity=complexity,
+                legal_areas=legal_areas,
+                reasoning_framework=reasoning_framework
+            )
+            
+            # Create refinement guidance section
+            refinement_guidance = "**REFINEMENT INSTRUCTIONS** (address these critical improvements):\n"
+            
+            if priority_fixes:
+                refinement_guidance += "\n**Priority Fixes:**\n"
+                refinement_guidance += "\n".join(f"- {fix}" for fix in priority_fixes)
+                refinement_guidance += "\n"
+            
+            if refinement_instructions:
+                refinement_guidance += "\n**Specific Instructions:**\n"
+                refinement_guidance += "\n".join(f"- {inst}" for inst in refinement_instructions)
+                refinement_guidance += "\n"
+            
+            if suggested_additions:
+                refinement_guidance += "\n**Suggested Additions:**\n"
+                refinement_guidance += "\n".join(f"- {add}" for add in suggested_additions)
+                refinement_guidance += "\n"
+            
+            # Add previous synthesis as reference (truncated)
+            refinement_guidance += f"\n**PREVIOUS ANALYSIS** (for reference on what to improve):\n"
+            refinement_guidance += f"{original_answer[:500]}{'...' if len(original_answer) > 500 else ''}\n"
+            refinement_guidance += "\n**YOUR TASK:** Provide an improved legal analysis that addresses ALL the refinement instructions above while maintaining professional quality and proper citations.\n"
+            
+            # Get appropriate synthesis template
+            template = get_prompt_template(f"synthesis_{user_type}")
+            
+            # Add refinement guidance to the synthesis context
+            # We'll append it to the query to ensure it's prominent
+            enhanced_query = f"{query}\n\n{refinement_guidance}"
+            synthesis_context["query"] = enhanced_query
+            
+            # Use GPT-4o for high-quality refined synthesis
+            from langchain_openai import ChatOpenAI
+            
+            # Determine max tokens based on complexity
+            max_tokens_map = {
+                'simple': 1000,
+                'moderate': 1500,
+                'complex': 2000,
+                'expert': 2500
+            }
+            max_tokens = max_tokens_map.get(complexity, 1500)
+            
+            llm = ChatOpenAI(
+                model="gpt-4o",
+                temperature=0.15,  # Slightly higher for creative refinement
+                max_tokens=max_tokens,
+                timeout=60.0
+            )
+            
+            # Execute refined synthesis (non-streaming for simplicity)
+            messages = template.format_messages(**synthesis_context)
+            response = await llm.ainvoke(messages)
+            refined_answer = response.content
+            
+            duration_ms = (time.time() - start_time) * 1000
+            
+            logger.info(
+                "08e_refined_synthesis completed",
+                answer_length=len(refined_answer),
+                original_length=len(original_answer),
+                improvement_applied=True,
+                duration_ms=round(duration_ms, 2),
+                trace_id=state.trace_id
+            )
+            
+            return {
+                "final_answer": refined_answer,
+                "synthesis": {
+                    "refined": True,
+                    "iteration": iteration_count,
+                    "original_length": len(original_answer),
+                    "refined_length": len(refined_answer)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(
+                "08e_refined_synthesis failed, keeping original answer",
+                error=str(e),
+                trace_id=state.trace_id
+            )
+            # Return empty dict to keep original answer
+            return {}
+    
     def _build_synthesis_prompt(self, state: AgentState) -> str:
         """Build synthesis prompt using new constitutional prompting architecture."""
         from api.composer.prompts import get_prompt_template, build_synthesis_context
