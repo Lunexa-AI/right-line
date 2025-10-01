@@ -478,6 +478,23 @@ class QueryOrchestrator:
                 except Exception as e:
                     logger.warning("Intent cache check failed", error=str(e))
             
+            # Get user profile for personalization (ARCH-036)
+            user_profile = None
+            if self.memory:
+                try:
+                    await self._ensure_memory_connected()
+                    if self.memory:
+                        full_context = await self.memory.get_full_context(
+                            user_id=state.user_id,
+                            session_id=state.session_id,
+                            max_tokens=500  # Small budget for intent classification
+                        )
+                        user_profile = full_context.get('user_profile', {})
+                        logger.debug("User profile retrieved for intent classification",
+                                    query_count=user_profile.get('query_count', 0))
+                except Exception as e:
+                    logger.warning("Failed to get user profile", error=str(e))
+            
             # Cache miss - perform classification
             # Use simplified intent classification for now
             # Fast heuristics first
@@ -489,13 +506,23 @@ class QueryOrchestrator:
             if intent is None:
                 intent = await self._classify_intent_llm(state.raw_query)
             
+            # Use user profile for personalization if available
+            default_complexity = "moderate"
+            default_user_type = "professional"
+            
+            if user_profile:
+                # Use user's typical complexity if they're a returning user
+                if user_profile.get('is_returning_user'):
+                    default_complexity = user_profile.get('typical_complexity', 'moderate')
+                    default_user_type = user_profile.get('expertise_level', 'professional')
+            
             # Create intent data structure
             intent_data = {
                 "intent": intent or "rag_qa",
-                "complexity": "moderate",
-                "user_type": "professional",
+                "complexity": default_complexity,
+                "user_type": default_user_type,
                 "jurisdiction": jurisdiction or "ZW",
-                "legal_areas": ["general"],
+                "legal_areas": user_profile.get('top_legal_interests', ["general"]) if user_profile else ["general"],
                 "reasoning_framework": "irac",
                 "confidence": 0.8 if intent else 0.5
             }
@@ -575,10 +602,27 @@ class QueryOrchestrator:
         tags=["rewrite", "query-processing", "legal-ai"]
     )
     async def _rewrite_expand_node(self, state: AgentState) -> Dict[str, Any]:
-        """02_query_rewriter: Rewrite query with legal precision and generate hypotheticals."""
+        """02_query_rewriter: Rewrite query with legal precision, conversation context, and generate hypotheticals."""
         start_time = time.time()
         
         try:
+            # Get memory context if available (ARCH-035: Memory in query rewriter)
+            memory_context = None
+            if self.memory:
+                try:
+                    await self._ensure_memory_connected()
+                    if self.memory:
+                        memory_context = await self.memory.get_full_context(
+                            user_id=state.user_id,
+                            session_id=state.session_id,
+                            max_tokens=1000  # Limited budget for rewriter
+                        )
+                        logger.info("Memory context retrieved for query rewriting",
+                                   conversation_msgs=len(memory_context.get('conversation_history', [])),
+                                   trace_id=state.trace_id)
+                except Exception as e:
+                    logger.warning("Failed to get memory for query rewriting", error=str(e))
+            
             # LangSmith: Log input artifacts (avoid positional dict that breaks logging formatting)
             logger.info(
                 "query_rewriter_input",
@@ -586,13 +630,22 @@ class QueryOrchestrator:
                 intent=getattr(state, 'intent', None),
                 complexity=getattr(state, 'complexity', 'moderate'),
                 user_type=getattr(state, 'user_type', 'professional'),
+                has_memory_context=memory_context is not None,
                 trace_id=state.trace_id,
             )
             
             logger.info("02_query_rewriter start", trace_id=state.trace_id)
             
+            # Resolve context references if this is a follow-up (ARCH-043)
+            query_to_rewrite = state.raw_query
+            if memory_context and memory_context.get('conversation_history'):
+                query_to_rewrite = await self._resolve_context_references(
+                    state.raw_query,
+                    memory_context['conversation_history']
+                )
+            
             # History-aware rewrite (simplified for stability)
-            rewritten_query = await self._rewrite_query(state)
+            rewritten_query = await self._rewrite_query_with_context(state, query_to_rewrite, memory_context)
             
             # Generate hypothetical documents (simplified for now)
             hypothetical_docs = [f"Hypothetical legal document for: {rewritten_query}"]
@@ -1192,7 +1245,7 @@ class QueryOrchestrator:
         tags=["synthesis", "legal-analysis", "constitutional", "legal-ai"]
     )
     async def _synthesize_stream_node(self, state: AgentState) -> Dict[str, Any]:
-        """08_synthesis: Generate comprehensive legal analysis with constitutional awareness."""
+        """08_synthesis: Generate comprehensive legal analysis with constitutional awareness and memory context."""
         start_time = time.time()
         
         try:
@@ -1200,6 +1253,24 @@ class QueryOrchestrator:
             complexity = getattr(state, 'complexity', 'moderate')
             user_type = getattr(state, 'user_type', 'professional')
             reasoning_framework = getattr(state, 'reasoning_framework', 'irac')
+            
+            # Get memory context if available (ARCH-041: Memory-aware synthesis)
+            memory_context = None
+            if self.memory:
+                try:
+                    await self._ensure_memory_connected()
+                    if self.memory:
+                        memory_context = await self.memory.get_full_context(
+                            user_id=state.user_id,
+                            session_id=state.session_id,
+                            max_tokens=1500  # Leave room for other context
+                        )
+                        logger.info("Memory context retrieved for synthesis",
+                                   conversation_msgs=len(memory_context.get('conversation_history', [])),
+                                   memory_tokens=memory_context.get('tokens_used', {}).get('total', 0),
+                                   trace_id=state.trace_id)
+                except Exception as e:
+                    logger.warning("Failed to get memory context", error=str(e))
             
             # LangSmith: Log input artifacts
             logger.info(
@@ -1211,6 +1282,7 @@ class QueryOrchestrator:
                 user_type=user_type,
                 reasoning_framework=reasoning_framework,
                 legal_areas=getattr(state, 'legal_areas', []),
+                has_memory_context=memory_context is not None,
                 trace_id=state.trace_id,
             )
             
@@ -1238,7 +1310,18 @@ class QueryOrchestrator:
                     "authority_level": "high" if ctx.get('confidence', 0) > 0.8 else "medium"
                 })
             
-            # Build comprehensive context
+            # Add conversation context to synthesis if available (ARCH-041)
+            conversation_context = ""
+            if memory_context and memory_context.get('conversation_history'):
+                recent_exchanges = memory_context['conversation_history'][-2:]  # Last 2 exchanges
+                if recent_exchanges:
+                    conversation_context = "\n\nRecent Conversation Context:\n"
+                    for msg in recent_exchanges:
+                        role = msg.get('role', 'unknown').capitalize()
+                        content = msg.get('content', '')[:200]  # First 200 chars
+                        conversation_context += f"{role}: {content}\n"
+            
+            # Build comprehensive context with memory
             synthesis_context = build_synthesis_context(
                 query=state.raw_query,
                 context_documents=context_docs,
@@ -1247,6 +1330,10 @@ class QueryOrchestrator:
                 legal_areas=getattr(state, 'legal_areas', []),
                 reasoning_framework=reasoning_framework
             )
+            
+            # Enhance with conversation context if available
+            if conversation_context and 'context' in synthesis_context:
+                synthesis_context['context'] = synthesis_context['context'] + conversation_context
             
             # Create LLM with appropriate configuration
             max_tokens = get_max_tokens_for_complexity(complexity)
@@ -1350,6 +1437,118 @@ class QueryOrchestrator:
         """Conditional routing based on intent."""
         return state.intent or "rag_qa"
     
+    def _detect_follow_up(self, query: str, previous_query: Optional[str]) -> bool:
+        """
+        Detect if query is a follow-up to previous conversation.
+        
+        Args:
+            query: Current query
+            previous_query: Previous query (if any)
+            
+        Returns:
+            True if this appears to be a follow-up question
+        """
+        import re
+        
+        query_lower = query.lower()
+        
+        # Follow-up patterns
+        follow_up_patterns = [
+            r"^(what about|how about|and if|but if|also|additionally)",
+            r"\b(it|that|this|those|these)\b",
+            r"(as you (said|mentioned)|as mentioned)",
+            r"^(yes,?\s|no,?\s|okay,?\s)",
+            r"(tell me more|explain|clarify|elaborate)",
+            r"(the same|similar)"
+        ]
+        
+        # Check if query matches any follow-up pattern
+        for pattern in follow_up_patterns:
+            if re.search(pattern, query_lower):
+                return True
+        
+        return False
+    
+    async def _resolve_context_references(
+        self,
+        query: str,
+        conversation_history: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Resolve pronouns and context references in query.
+        
+        Args:
+            query: Query with potential pronouns/references
+            conversation_history: Recent conversation messages
+            
+        Returns:
+            Query with resolved references
+        """
+        if not conversation_history:
+            return query
+        
+        # Check if this looks like a follow-up
+        previous_query = None
+        if len(conversation_history) > 0:
+            for msg in reversed(conversation_history):
+                if msg.get("role") == "user":
+                    previous_query = msg.get("content")
+                    break
+        
+        if not self._detect_follow_up(query, previous_query):
+            return query
+        
+        # Get last exchange for context
+        last_user_query = ""
+        last_assistant_response = ""
+        
+        for i in range(len(conversation_history) - 1, -1, -1):
+            msg = conversation_history[i]
+            if msg.get("role") == "assistant" and not last_assistant_response:
+                last_assistant_response = msg.get("content", "")[:500]  # First 500 chars
+            elif msg.get("role") == "user" and not last_user_query:
+                last_user_query = msg.get("content", "")
+            
+            if last_user_query and last_assistant_response:
+                break
+        
+        if not last_user_query:
+            return query
+        
+        # Use mini LLM to resolve references
+        try:
+            from langchain_openai import ChatOpenAI
+            
+            resolution_prompt = f"""Resolve context references in this follow-up query.
+
+Previous query: {last_user_query}
+Previous response summary: {last_assistant_response}
+
+Current query: {query}
+
+Rewrite the current query to be self-contained (resolve "it", "this", "that", "what about", etc.).
+Return ONLY the rewritten query, no explanation."""
+            
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                max_tokens=100,
+                timeout=3.0
+            )
+            
+            response = await llm.ainvoke(resolution_prompt)
+            resolved = response.content.strip()
+            
+            logger.info("Resolved follow-up query",
+                       original=query[:50],
+                       resolved=resolved[:50])
+            
+            return resolved
+            
+        except Exception as e:
+            logger.warning("Failed to resolve context references", error=str(e))
+            return query
+    
     def _classify_intent_heuristic(self, query: str) -> Optional[str]:
         """Fast heuristic intent classification."""
         query_lower = query.lower().strip()
@@ -1446,6 +1645,39 @@ class QueryOrchestrator:
         except Exception as e:
             logger.warning("LLM intent classification failed", error=str(e))
             return "rag_qa"
+    
+    async def _rewrite_query_with_context(self, state: AgentState, query: str, memory_context: Optional[Dict] = None) -> str:
+        """Rewrite query with conversation context and legal enhancement."""
+        try:
+            enhanced_query = query
+            
+            # Add conversation context hints if available
+            if memory_context:
+                user_profile = memory_context.get('user_profile', {})
+                top_interests = user_profile.get('top_legal_interests', [])
+                
+                # Add relevant context based on user interests
+                if top_interests and len(top_interests) > 0:
+                    main_interest = top_interests[0]
+                    if main_interest not in enhanced_query.lower():
+                        # Subtle context hint
+                        enhanced_query = f"{query} (user context: {main_interest})"
+            
+            # Add legal context based on query content
+            if "rights" in query.lower() or "constitution" in query.lower():
+                enhanced_query += " constitutional law Zimbabwe fundamental rights"
+            elif "act" in query.lower() or "law" in query.lower():
+                enhanced_query += " Zimbabwe legislation statutory provisions"
+            
+            # Add jurisdiction
+            if state.jurisdiction:
+                enhanced_query += f" [Jurisdiction: {state.jurisdiction}]"
+            
+            return enhanced_query
+            
+        except Exception as e:
+            logger.warning("Query rewriting failed", error=str(e))
+            return query
     
     async def _rewrite_query(self, state: AgentState) -> str:
         """Rewrite query with conversation context (simplified for testing)."""
