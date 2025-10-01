@@ -2116,6 +2116,116 @@ Return ONLY the rewritten query, no explanation."""
                         trace_id=state.trace_id)
             raise
     
+    def _decide_refinement_strategy(self, state: AgentState) -> str:
+        """
+        ARCH-049: Decide whether to refine synthesis or request more sources.
+        
+        This method analyzes quality gate results and decides the next action:
+        - "pass": Quality is good, proceed to finalization
+        - "refine_synthesis": Synthesis has coherence/logic issues, re-synthesize
+        - "retrieve_more": Insufficient sources, retrieve additional documents
+        - "fail": Max iterations reached or unrecoverable error
+        
+        Args:
+            state: Agent state with quality results and iteration count
+            
+        Returns:
+            Strategy decision: "pass", "refine_synthesis", "retrieve_more", or "fail"
+        """
+        quality_passed = getattr(state, 'quality_passed', False)
+        quality_confidence = getattr(state, 'quality_confidence', None)
+        quality_issues = getattr(state, 'quality_issues', [])
+        complexity = getattr(state, 'complexity', 'moderate')
+        iteration_count = getattr(state, 'refinement_iteration', 0)
+        
+        # Handle missing quality data - default to pass to avoid blocking
+        if quality_confidence is None:
+            logger.info(
+                "No quality data available, proceeding",
+                trace_id=state.trace_id
+            )
+            return "pass"
+        
+        # Max 2 iterations to prevent infinite loops
+        if iteration_count >= 2:
+            logger.warning(
+                "Max refinement iterations reached, proceeding with current answer",
+                iteration_count=iteration_count,
+                trace_id=state.trace_id
+            )
+            return "fail"  # Changed from "pass" to "fail" to add warning
+        
+        # If quality is good, proceed
+        if quality_passed and quality_confidence > 0.8:
+            logger.info(
+                "Quality passed with high confidence, proceeding",
+                quality_confidence=quality_confidence,
+                trace_id=state.trace_id
+            )
+            return "pass"
+        
+        # Analyze quality issues to determine strategy
+        issues_lower = [issue.lower() for issue in quality_issues]
+        
+        # Check for coherence/logic issues (suggests refinement)
+        has_coherence_issues = any(
+            keyword in issue for issue in issues_lower
+            for keyword in ["coherence", "logic", "reasoning", "structure", "organization"]
+        )
+        
+        # Check for source/coverage issues (suggests more retrieval)
+        has_source_issues = any(
+            keyword in issue for issue in issues_lower
+            for keyword in ["insufficient", "missing", "incomplete", "coverage", "source"]
+        )
+        
+        # Priority 1: If insufficient sources detected, retrieve more (checked first)
+        if has_source_issues:
+            logger.info(
+                "Insufficient sources detected, running iterative retrieval",
+                issues_count=len(quality_issues),
+                trace_id=state.trace_id
+            )
+            return "retrieve_more"
+        
+        # Priority 2: If borderline quality with coherence issues, refine synthesis
+        if 0.5 < quality_confidence < 0.8 and has_coherence_issues:
+            logger.info(
+                "Quality borderline with coherence issues, running self-criticism and refinement",
+                quality_confidence=quality_confidence,
+                issues_count=len(quality_issues),
+                trace_id=state.trace_id
+            )
+            return "refine_synthesis"
+        
+        # For expert complexity, be stricter about quality
+        if complexity == "expert" and quality_confidence < 0.7:
+            logger.info(
+                "Expert complexity with low confidence, attempting refinement",
+                complexity=complexity,
+                quality_confidence=quality_confidence,
+                trace_id=state.trace_id
+            )
+            return "refine_synthesis"
+        
+        # For moderate confidence with some issues, try refinement
+        if 0.6 <= quality_confidence < 0.8 and quality_issues:
+            logger.info(
+                "Moderate confidence with issues, attempting refinement",
+                quality_confidence=quality_confidence,
+                trace_id=state.trace_id
+            )
+            return "refine_synthesis"
+        
+        # Default: proceed even if quality is lower (for simple queries or final attempt)
+        logger.info(
+            "Quality below threshold but proceeding to avoid over-iteration",
+            quality_confidence=quality_confidence,
+            quality_passed=quality_passed,
+            trace_id=state.trace_id
+        )
+        return "pass"
+    
     def _get_cache_ttl(self, state: AgentState) -> int:
         """
         Determine cache TTL based on query characteristics.

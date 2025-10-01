@@ -117,6 +117,16 @@ class AgentState(BaseModel):
     memory_tokens_used: int = Field(default=0, description="Tokens used by memory context")
     conversation_topics: List[str] = Field(default_factory=list, description="Topics from conversation")
     
+    # Self-correction and refinement (ARCH-049, ARCH-050, ARCH-051)
+    refinement_iteration: int = Field(default=0, description="Number of refinement iterations performed")
+    quality_passed: Optional[bool] = Field(default=None, description="Whether quality gate passed")
+    quality_confidence: Optional[float] = Field(default=None, description="Quality confidence score (0.0-1.0)")
+    quality_issues: List[str] = Field(default_factory=list, description="Quality issues identified by quality gate")
+    refinement_instructions: List[str] = Field(default_factory=list, description="Instructions from self-critic for refinement")
+    refinement_strategy: Optional[Literal["pass", "refine_synthesis", "retrieve_more", "fail"]] = Field(
+        default=None, description="Decided refinement strategy"
+    )
+    
     class Config:
         """Pydantic configuration."""
         # Enable JSON serialization of datetime

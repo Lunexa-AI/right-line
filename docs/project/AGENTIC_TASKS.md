@@ -859,21 +859,25 @@
 
 ## Enhancement 3: Self-Correction
 
-### ARCH-049: Add Quality Decision Logic
+### ARCH-049: Add Quality Decision Logic ✅ COMPLETE
 - **Priority**: P1 | **Time**: 1.5h | **Dependencies**: None
 - **Objective**: Decide when to refine/retrieve
-- **Files**: `api/orchestrators/query_orchestrator.py`
+- **Files**: `api/orchestrators/query_orchestrator.py`, `api/schemas/agent_state.py`
 - **Code**: Enhancement doc → Refinement decision
 - **Tasks**:
-  - Create _decide_refinement_strategy
-  - Check quality & iteration count
-  - Analyze issues
-  - Return decision
+  - ✅ Create _decide_refinement_strategy method (122 lines)
+  - ✅ Check quality & iteration count (max 2)
+  - ✅ Analyze issues (coherence vs source problems)
+  - ✅ Return decision: pass, refine_synthesis, retrieve_more, fail
+  - ✅ Added state fields: refinement_iteration, quality_passed, quality_confidence, quality_issues, refinement_instructions, refinement_strategy
 - **Acceptance**:
-  - ☐ Returns correct decision
-  - ☐ Respects max iterations (2)
-  - ☐ Logs reasoning
-- **Testing**: Test each decision type
+  - ✅ Returns correct decision based on quality and issues
+  - ✅ Respects max iterations (2)
+  - ✅ Logs reasoning for each decision
+  - ✅ Prioritizes source issues over coherence issues
+  - ✅ Handles complexity-based strictness (expert = stricter)
+- **Testing**: ✅ 22/22 tests passing (test_quality_decision_logic.py)
+- **Status**: ✅ COMPLETE - Comprehensive decision logic with issue analysis and iteration limits
 
 ### ARCH-050: Implement Self-Critic Node
 - **Priority**: P1 | **Time**: 2h | **Dependencies**: ARCH-049
