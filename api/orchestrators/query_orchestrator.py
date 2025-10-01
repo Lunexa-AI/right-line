@@ -128,6 +128,12 @@ class QueryOrchestrator:
         graph.add_node("07_parent_expansion", self._expand_parents_node)
         graph.add_node("08_synthesis", self._synthesize_stream_node)
         graph.add_node("08b_quality_gate", self._quality_gate_node)
+        
+        # ARCH-054: Self-correction nodes
+        graph.add_node("08c_self_critic", self._self_critic_node)
+        graph.add_node("08d_iterative_retrieval", self._iterative_retrieval_node)
+        graph.add_node("08e_refined_synthesis", self._refined_synthesis_node)
+        
         graph.add_node("09_answer_composer", self._answer_composer_node)
         graph.add_node("session_search", self._session_search_node)
         graph.add_node("conversational_tool", self._conversational_tool_node)
@@ -164,7 +170,28 @@ class QueryOrchestrator:
         
         # Continue to synthesis
         graph.add_edge("07b_parent_select", "08_synthesis")
-        graph.add_edge("08_synthesis", "09_answer_composer")
+        
+        # ARCH-054: Add quality gate after synthesis (before answer composer)
+        graph.add_edge("08_synthesis", "08b_quality_gate")
+        
+        # ARCH-054: Conditional routing based on quality results
+        graph.add_conditional_edges(
+            "08b_quality_gate",
+            self._decide_refinement_strategy,
+            {
+                "pass": "09_answer_composer",              # Quality good, finalize
+                "refine_synthesis": "08c_self_critic",     # Coherence issues, run self-critic
+                "retrieve_more": "08d_iterative_retrieval", # Source gaps, get more docs
+                "fail": "09_answer_composer"               # Max iterations, finalize with warning
+            }
+        )
+        
+        # ARCH-054: Self-correction flow for refinement
+        graph.add_edge("08c_self_critic", "08e_refined_synthesis")
+        graph.add_edge("08e_refined_synthesis", "09_answer_composer")
+        
+        # ARCH-054: Iterative retrieval loops back to reranking
+        graph.add_edge("08d_iterative_retrieval", "05_rerank")
         
         # Terminal edges
         graph.add_edge("conversational_tool", END)
