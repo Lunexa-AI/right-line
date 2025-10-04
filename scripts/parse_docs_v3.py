@@ -7,10 +7,14 @@ by the PageIndex Cloud API (not SDK).
 
 Output:
 * Parent-document JSON objects uploaded to `corpus/docs/{doc_type}/{doc_id}.json`.
-* Master manifest `corpus/processed/legislation_docs.jsonl`.
+* Master manifest `corpus/processed/{doc_source}_docs.jsonl`.
 
 Usage:
-    python scripts/parse_docs_v3.py [--max-docs 5] [--poll-interval 8] [--verbose]
+    # Parse legislation
+    python scripts/parse_docs_v3.py --doc-source legislation [--max-docs 5] [--poll-interval 8]
+    
+    # Parse judgments
+    python scripts/parse_docs_v3.py --doc-source judgments [--max-docs 5] [--poll-interval 8]
 """
 from __future__ import annotations
 
@@ -64,16 +68,38 @@ LEGISLATION_PREFIXES = [
     "corpus/sources/legislation/constitution/",  # Add Constitution documents
 ]
 
+JUDGMENT_PREFIXES = [
+    "corpus/sources/judgements/",  # All judgments in flat structure
+]
 
-def list_pdfs(r2, bucket: str) -> List[Dict[str, Any]]:
+
+def list_pdfs(r2, bucket: str, doc_source: str = "legislation") -> List[Dict[str, Any]]:
+    """List PDFs from R2 based on document source type.
+    
+    Args:
+        r2: boto3 R2 client
+        bucket: R2 bucket name
+        doc_source: 'legislation' or 'judgments'
+        
+    Returns:
+        List of PDF metadata dicts with key, size, last_modified
+    """
     out: List[Dict[str, Any]] = []
     paginator = r2.get_paginator("list_objects_v2")
-    for prefix in LEGISLATION_PREFIXES:
+    
+    # Select prefixes based on document source
+    if doc_source == "judgments":
+        prefixes = JUDGMENT_PREFIXES
+    else:  # Default to legislation for backward compatibility
+        prefixes = LEGISLATION_PREFIXES
+    
+    for prefix in prefixes:
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 if obj["Key"].endswith(".pdf"):
                     out.append({"key": obj["Key"], "size": obj["Size"], "last_modified": obj["LastModified"]})
-    logger.info("Found %d PDFs across legislation prefixes", len(out))
+    
+    logger.info("Found %d PDFs for doc_source=%s", len(out), doc_source)
     return out
 
 
@@ -205,8 +231,19 @@ def _sanitize_tree(tree_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     return list(normalized_map.values())
 
-def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_markdown: str = "", ocr_pages: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Extract comprehensive metadata from filename and PageIndex tree."""
+def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_markdown: str = "", ocr_pages: List[Dict[str, Any]] = None, doc_source: str = "legislation") -> Dict[str, Any]:
+    """Extract comprehensive metadata from filename and PageIndex tree.
+    
+    Args:
+        filename: R2 key or filename
+        tree_nodes: PageIndex tree structure
+        full_markdown: Full OCR markdown text
+        ocr_pages: OCR page data
+        doc_source: 'legislation' or 'judgments'
+        
+    Returns:
+        Dict with extracted metadata
+    """
     metadata = {
         "title": os.path.basename(filename).replace(".pdf", ""),
         "jurisdiction": "ZW",
@@ -218,7 +255,15 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
         "version_date": None,
         "akn_uri": None,
         "canonical_citation": None,
-        "subject_category": None
+        "subject_category": None,
+        # Judgment-specific fields
+        "case_name": None,
+        "citation": None,
+        "court": None,
+        "court_code": None,
+        "case_number": None,
+        "judgment_date": None,
+        "judges": None,
     }
     
     # Enhanced doc_type detection: Path + Content Analysis
@@ -271,55 +316,100 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
     metadata["doc_type"] = detected_type
     metadata["subject_category"] = detected_category
     
-    # Parse AKN URI from filename: akn_zw_act_1860_28_eng_2016-12-31.pdf
-    akn_pattern = r"akn_([a-z]{2})_([a-z]+)_(\d{4})_(\d+)_([a-z]{3})_(\d{4}-\d{2}-\d{2})"
-    match = re.search(akn_pattern, filename)
-    if match:
-        jurisdiction, akn_doc_type, year, number, lang, version = match.groups()
-        metadata.update({
-            "jurisdiction": jurisdiction.upper(),
-            "doc_type": akn_doc_type,  # Override with AKN type if available
-            "act_year": year,
-            "act_number": number,
-            "language": lang,
-            "version_date": version,
-            "akn_uri": f"/akn/{jurisdiction}/{akn_doc_type}/{year}/{number}/{lang}@{version}"
-        })
-        
-        # Update subject category based on AKN doc type
-        if akn_doc_type in ["act", "ordinance", "si"]:
-            metadata["subject_category"] = "legislation"
-        elif akn_doc_type in ["judgment", "case"]:
-            metadata["subject_category"] = "case_law"
+    # Parse filename based on document source
+    if doc_source == "judgments":
+        # Judgment filename pattern: {court}_{year}_{num}_{lang}_{date}_{case-slug}_{hash8}.pdf
+        # Example: zwsc_2025_67_eng_2025-07-30_petrozim_line_private_limited_v_hova_abcf6dbd.pdf
+        judgment_pattern = r"([a-z]+)_(\d{4})_(\d+)_([a-z]{3})_(\d{4}-\d{2}-\d{2})_(.+?)_([a-f0-9]{8})\.pdf"
+        match = re.search(judgment_pattern, os.path.basename(filename))
+        if match:
+            court_code, year, number, lang, j_date, case_slug, hash8 = match.groups()
+            # Convert case slug to readable case name
+            case_name = case_slug.replace("_", " ").title()
+            
+            # Map court code to full court name
+            court_map = {
+                "zwsc": "Supreme Court of Zimbabwe",
+                "zwcc": "Constitutional Court of Zimbabwe",
+                "zwhhc": "High Court of Zimbabwe (Harare)",
+                "zwbhc": "High Court of Zimbabwe (Bulawayo)",
+                "zwchhc": "High Court of Zimbabwe (Chinhoyi)",
+                "zwmthc": "High Court of Zimbabwe (Mutare)",
+                "zwmsvhc": "High Court of Zimbabwe (Masvingo)",
+                "zwlc": "Labour Court of Zimbabwe",
+            }
+            court_full = court_map.get(court_code.lower(), court_code.upper())
+            
+            # Build citation
+            citation = f"[{year}] {court_code.upper()} {number}"
+            
+            metadata.update({
+                "doc_type": "judgment",
+                "subject_category": "case_law",
+                "case_name": case_name,
+                "citation": citation,
+                "court": court_full,
+                "court_code": court_code.upper(),
+                "case_number": f"{number} of {year}",
+                "judgment_date": j_date,
+                "language": lang,
+                "act_year": year,  # Store year for consistency
+                "akn_uri": f"/akn/zw/judgment/{court_code}/{year}/{number}/{lang}@{j_date}",
+                "title": case_name,  # Use case name as title
+                "canonical_citation": f"{case_name} {citation} ({j_date})"
+            })
+    else:
+        # Legislation: Parse AKN URI from filename: akn_zw_act_1860_28_eng_2016-12-31.pdf
+        akn_pattern = r"akn_([a-z]{2})_([a-z]+)_(\d{4})_(\d+)_([a-z]{3})_(\d{4}-\d{2}-\d{2})"
+        match = re.search(akn_pattern, filename)
+        if match:
+            jurisdiction, akn_doc_type, year, number, lang, version = match.groups()
+            metadata.update({
+                "jurisdiction": jurisdiction.upper(),
+                "doc_type": akn_doc_type,  # Override with AKN type if available
+                "act_year": year,
+                "act_number": number,
+                "language": lang,
+                "version_date": version,
+                "akn_uri": f"/akn/{jurisdiction}/{akn_doc_type}/{year}/{number}/{lang}@{version}"
+            })
+            
+            # Update subject category based on AKN doc type
+            if akn_doc_type in ["act", "ordinance", "si"]:
+                metadata["subject_category"] = "legislation"
+            elif akn_doc_type in ["judgment", "case"]:
+                metadata["subject_category"] = "case_law"
     
-    # Helper to normalize a heading string into a clean title
-    def _clean_title(raw_title: str) -> str:
-        t = (raw_title or "").strip()
-        # Remove leading numbering like '1. '
-        t = re.sub(r"^\d+\.\s+", "", t)
-        # Remove trailing Chapter suffix
-        t = re.sub(r"\s*Chapter\s+\d+:\d+\s*$", "", t, flags=re.IGNORECASE)
-        return t.strip()
+    # Skip legislation-specific title extraction for judgments
+    if doc_source != "judgments":
+        # Helper to normalize a heading string into a clean title
+        def _clean_title(raw_title: str) -> str:
+            t = (raw_title or "").strip()
+            # Remove leading numbering like '1. '
+            t = re.sub(r"^\d+\.\s+", "", t)
+            # Remove trailing Chapter suffix
+            t = re.sub(r"\s*Chapter\s+\d+:\d+\s*$", "", t, flags=re.IGNORECASE)
+            return t.strip()
 
-    # Prefer titles from the structural tree that look like legislation headings
-    def _pick_title_from_tree(nodes: List[Dict[str, Any]]) -> Optional[str]:
-        for node in nodes:
-            title = (node.get("title") or "").strip()
-            if not title:
-                continue
-            # Accept if contains key legal doc keywords (enhanced for Constitution)
-            if (re.search(r"\b(Act|Ordinance|Constitution)\b", title) or 
-                title.startswith("Statutory Instrument") or
-                "constitution of zimbabwe" in title.lower()):
-                return _clean_title(title)
-        return None
+        # Prefer titles from the structural tree that look like legislation headings
+        def _pick_title_from_tree(nodes: List[Dict[str, Any]]) -> Optional[str]:
+            for node in nodes:
+                title = (node.get("title") or "").strip()
+                if not title:
+                    continue
+                # Accept if contains key legal doc keywords (enhanced for Constitution)
+                if (re.search(r"\b(Act|Ordinance|Constitution)\b", title) or 
+                    title.startswith("Statutory Instrument") or
+                    "constitution of zimbabwe" in title.lower()):
+                    return _clean_title(title)
+            return None
 
-    tree_title = _pick_title_from_tree(tree_nodes) if tree_nodes else None
-    if tree_title:
-        metadata["title"] = tree_title
+        tree_title = _pick_title_from_tree(tree_nodes) if tree_nodes else None
+        if tree_title:
+            metadata["title"] = tree_title
 
-    # Extract title and chapter from OCR pages
-    if ocr_pages and (not metadata["title"] or not metadata["chapter"]):
+    # Extract title and chapter from OCR pages (legislation only)
+    if doc_source != "judgments" and ocr_pages and (not metadata["title"] or not metadata["chapter"]):
         for page in ocr_pages[:3]:
             page_text = page.get("markdown", "") or page.get("text", "")
             # Prefer line-anchored detection
@@ -342,7 +432,7 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
                     if m_ch:
                         metadata["chapter"] = m_ch.group(1)
     
-    # Fallback: Extract from full markdown (and override filename placeholder if detected)
+    # Fallback: Extract from full markdown (legislation only)
     def _is_placeholder_title(title_value: Optional[str]) -> bool:
         if not title_value:
             return True
@@ -353,7 +443,7 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
             return True
         return False
 
-    if full_markdown:
+    if doc_source != "judgments" and full_markdown:
         # Prefer line-anchored detection to avoid cross-line matches (e.g., leading 'Zimbabwe')
         extracted_title: Optional[str] = None
         for line in full_markdown.splitlines():
@@ -432,15 +522,15 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
                 candidate = m_short.group(2).strip() + " " + m_short.group(3).capitalize()
                 metadata["title"] = _clean_title(candidate)
     
-    # Final fallback: Extract from PageIndex tree
-    if not metadata["title"] and tree_nodes:
+    # Final fallback: Extract from PageIndex tree (legislation only)
+    if doc_source != "judgments" and not metadata["title"] and tree_nodes:
         root_node = tree_nodes[0]
         title = root_node.get("title", "")
         if title and title != "Untitled" and not title.startswith("1."):
             metadata["title"] = title
     
-    # Build canonical citation with Constitution handling
-    if metadata["title"]:
+    # Build canonical citation (legislation only - judgments already have it)
+    if doc_source != "judgments" and metadata["title"]:
         if metadata["doc_type"] == "constitution":
             # Constitution doesn't use Chapter numbers
             metadata["canonical_citation"] = metadata["title"]
@@ -449,11 +539,25 @@ def extract_akn_metadata(filename: str, tree_nodes: List[Dict[str, Any]], full_m
         else:
             metadata["canonical_citation"] = metadata["title"]
     
-    # Add constitutional authority metadata
+    # Add authority metadata
     if metadata["doc_type"] == "constitution":
         metadata["authority_level"] = "supreme"
         metadata["binding_scope"] = "all_courts"
         metadata["hierarchy_rank"] = 1
+    elif metadata["doc_type"] == "judgment":
+        # Judgments have binding precedent based on court hierarchy
+        if "constitutional court" in (metadata.get("court") or "").lower():
+            metadata["authority_level"] = "supreme"
+            metadata["binding_scope"] = "all_courts"
+            metadata["hierarchy_rank"] = 1
+        elif "supreme court" in (metadata.get("court") or "").lower():
+            metadata["authority_level"] = "high"
+            metadata["binding_scope"] = "all_courts"
+            metadata["hierarchy_rank"] = 2
+        else:  # High Courts, Labour Court
+            metadata["authority_level"] = "medium"
+            metadata["binding_scope"] = "persuasive"
+            metadata["hierarchy_rank"] = 3
     elif metadata["doc_type"] == "act":
         metadata["authority_level"] = "high"
         metadata["binding_scope"] = "general"
@@ -517,6 +621,97 @@ def _enhance_tree_with_ocr_content(tree_nodes: List[Dict[str, Any]], ocr_nodes: 
     logger.info(f"Enhanced tree: {nodes_with_text} nodes now have text content")
     
     return enhanced_tree
+
+def _restructure_judgment_tree(markdown: str, doc_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Create a meaningful tree structure for judgments from markdown.
+    
+    Judgment structure:
+    1. Case Header (parties, citation, court, judges, counsel)
+    2. Facts / Background
+    3. Issues
+    4. Arguments / Submissions
+    5. Judgment / Holding / Reasoning
+    6. Order / Conclusion
+    """
+    if not markdown:
+        return []
+    
+    nodes = []
+    lines = markdown.split('\n')
+    
+    # Extract header info (first ~20% of document or until substantial text)
+    header_lines = []
+    substantial_text_start = 0
+    for i, line in enumerate(lines[:min(50, len(lines))]):
+        if i < 15:  # Always include first 15 lines in header
+            header_lines.append(line)
+        else:
+            # Check if we've hit substantial judgment text
+            if len(line.strip()) > 100 or any(keyword in line.lower() for keyword in ['held:', 'judgment:', 'facts:', 'issue:', 'background:']):
+                substantial_text_start = i
+                break
+            header_lines.append(line)
+    
+    if not substantial_text_start:
+        substantial_text_start = len(header_lines)
+    
+    # Node 1: Case Header
+    header_text = '\n'.join(header_lines).strip()
+    nodes.append({
+        "title": "Case Header",
+        "node_id": "header",
+        "page_index": 1,
+        "text": header_text
+    })
+    
+    # Process remaining content for judgment sections
+    remaining_text = '\n'.join(lines[substantial_text_start:]).strip()
+    
+    # Split by common judgment section markers
+    sections = []
+    current_section = {"title": "Judgment", "text": []}
+    
+    section_markers = [
+        (r'^(FACTS?|BACKGROUND)[\s:]*', 'Facts'),
+        (r'^(ISSUES?|QUESTIONS?)[\s:]*', 'Issues'),
+        (r'^(ARGUMENTS?|SUBMISSIONS?)[\s:]*', 'Arguments'),
+        (r'^(HELD|HOLDING|JUDGMENT|DECISION|RULING)[\s:]*', 'Holding'),
+        (r'^(ORDER|CONCLUSION|DISPOSITION)[\s:]*', 'Order'),
+        (r'^(REASONING|ANALYSIS)[\s:]*', 'Reasoning'),
+    ]
+    
+    for line in remaining_text.split('\n'):
+        matched = False
+        for pattern, section_name in section_markers:
+            if re.match(pattern, line.strip(), re.IGNORECASE):
+                # Save current section if it has content
+                if current_section['text']:
+                    sections.append(current_section)
+                # Start new section
+                current_section = {"title": section_name, "text": [line]}
+                matched = True
+                break
+        
+        if not matched:
+            current_section['text'].append(line)
+    
+    # Add final section
+    if current_section['text']:
+        sections.append(current_section)
+    
+    # Convert sections to nodes
+    for idx, section in enumerate(sections):
+        text_content = '\n'.join(section['text']).strip()
+        if text_content and len(text_content) > 20:  # Only add if substantial
+            nodes.append({
+                "title": section['title'],
+                "node_id": f"section_{idx}",
+                "page_index": 1,
+                "text": text_content
+            })
+    
+    return nodes
+
 
 def _merge_tree_and_ocr_nodes(tree_nodes: List[Dict[str, Any]], ocr_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -668,7 +863,7 @@ def poll_pageindex(doc_id: str, api_key: str, poll_interval: int = 8) -> Dict[st
 # Main processing
 # ---------------------------------------------------------------------------
 
-def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_interval: int) -> Optional[Dict[str, Any]]:
+def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_interval: int, doc_source: str = "legislation") -> Optional[Dict[str, Any]]:
     key = pdf_info["key"]
     obj = r2.get_object(Bucket=bucket, Key=key)
     pdf_bytes = obj["Body"].read()
@@ -679,10 +874,16 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
 
     result = poll_pageindex(remote_doc_id, api_key, poll_interval)
 
-    # Extract comprehensive metadata with OCR data
-    metadata = extract_akn_metadata(key, result["tree"], result["markdown"])
+    # Extract comprehensive metadata with OCR data (pass doc_source)
+    metadata = extract_akn_metadata(key, result["tree"], result["markdown"], doc_source=doc_source)
     # Use a stable document ID derived solely from the R2 PDF key so re-parses don't duplicate
     canonical_id = sha256_16(key)
+    
+    # For judgments, restructure tree to have meaningful sections
+    if doc_source == "judgments":
+        logger.info("Restructuring judgment tree for meaningful sections")
+        result["tree"] = _restructure_judgment_tree(result["markdown"], metadata)
+        logger.info("Restructured tree has %d sections", len(result["tree"]))
 
     # Count nodes
     def count_nodes(nodes):
@@ -707,6 +908,9 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
         "akn_uri": metadata["akn_uri"],
         "canonical_citation": metadata["canonical_citation"],
         "subject_category": metadata["subject_category"],
+        "authority_level": metadata.get("authority_level"),
+        "binding_scope": metadata.get("binding_scope"),
+        "hierarchy_rank": metadata.get("hierarchy_rank"),
         "pageindex_doc_id": remote_doc_id,
         "content_tree": result["tree"],
         "pageindex_markdown": result["markdown"],
@@ -717,6 +921,19 @@ def process_pdf(r2, bucket: str, pdf_info: Dict[str, Any], api_key: str, poll_in
             "processed_at": datetime.datetime.utcnow().isoformat() + "Z"
         },
     }
+    
+    # Add judgment-specific fields if applicable
+    if doc_source == "judgments":
+        parent_doc.update({
+            "case_name": metadata["case_name"],
+            "citation": metadata["citation"],
+            "court": metadata["court"],
+            "court_code": metadata["court_code"],
+            "case_number": metadata["case_number"],
+            "judgment_date": metadata["judgment_date"],
+            "judges": metadata["judges"],
+        })
+    
     return parent_doc
 
 
@@ -781,6 +998,9 @@ def check_document_already_parsed(r2_client, bucket: str, doc_id: str, doc_type:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--doc-source", type=str, default="legislation", 
+                       choices=["legislation", "judgments"],
+                       help="Document source: 'legislation' or 'judgments' (default: legislation)")
     parser.add_argument("--max-docs", type=int, default=None)
     parser.add_argument("--poll-interval", type=int, default=8, help="Seconds between PageIndex status checks")
     parser.add_argument("--verbose", action="store_true")
@@ -799,13 +1019,15 @@ def main():
 
     bucket = os.environ["CLOUDFLARE_R2_BUCKET_NAME"]
     r2 = get_r2_client()
+    
+    logger.info(f"Processing documents from source: {args.doc_source}")
 
     if args.pdf_keys:
         pdf_keys = [k.strip() for k in args.pdf_keys.split(',')]
         pdfs = [{"key": k} for k in pdf_keys]
         logger.info(f"Processing {len(pdfs)} specific PDFs from --pdf-keys")
     else:
-        pdfs = list_pdfs(r2, bucket)
+        pdfs = list_pdfs(r2, bucket, doc_source=args.doc_source)
         if args.max_docs:
             pdfs = pdfs[: args.max_docs]
 
@@ -819,13 +1041,17 @@ def main():
             pdf_key = pdf["key"]
             pdf_name = os.path.basename(pdf_key).replace('.pdf', '')
             
-            # Extract doc_type from path
-            if "/acts/" in pdf_key:
+            # Extract doc_type from path based on source
+            if args.doc_source == "judgments":
+                doc_type = "judgment"
+            elif "/acts/" in pdf_key:
                 doc_type = "act"
             elif "/statutory_instruments/" in pdf_key:
                 doc_type = "si"
             elif "/ordinances/" in pdf_key:
                 doc_type = "ordinance"
+            elif "/constitution/" in pdf_key:
+                doc_type = "constitution"
             else:
                 doc_type = "unknown"
             
@@ -838,7 +1064,7 @@ def main():
                 skipped_count += 1
                 continue
             
-            doc = process_pdf(r2, bucket, pdf, api_key, args.poll_interval)
+            doc = process_pdf(r2, bucket, pdf, api_key, args.poll_interval, doc_source=args.doc_source)
             if doc:
                 parsed.append(doc)
                 upload_parent_doc(r2, bucket, doc)
@@ -853,7 +1079,8 @@ def main():
         return
 
     # APPEND to existing manifest instead of overwriting
-    manifest_key = "corpus/processed/legislation_docs.jsonl"
+    # Use source-specific manifest key
+    manifest_key = f"corpus/processed/{args.doc_source}_docs.jsonl"
     
     # Load existing manifest if it exists
     existing_docs = []
@@ -895,7 +1122,8 @@ def main():
     
     manifest_metadata = {
         "content_type": "application/jsonl",
-        "description": "Complete processed legislation documents manifest (append-safe)",
+        "description": f"Complete processed {args.doc_source} documents manifest (append-safe)",
+        "doc_source": args.doc_source,
         "document_count": str(len(all_docs)),
         "new_documents_added": str(len(new_docs)),
         "total_tree_nodes": str(total_nodes),
