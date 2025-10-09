@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 import boto3
 import httpx
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Import reranker for quality improvement
@@ -610,8 +610,8 @@ class OpenAIReranker:
 class MilvusRetriever(BaseRetriever):
     """LangChain BaseRetriever wrapper for Milvus vector search."""
     
-    class Config:
-        arbitrary_types_allowed = True
+    # Allow dynamic attributes (e.g., setting top_k at runtime) and arbitrary types
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra='allow')
     
     def __init__(self, milvus_client, embedding_client, query_processor, top_k=20):
         super().__init__()
@@ -695,8 +695,8 @@ class MilvusRetriever(BaseRetriever):
 class BM25Retriever(BaseRetriever):
     """LangChain BaseRetriever wrapper for BM25 sparse search."""
     
-    class Config:
-        arbitrary_types_allowed = True
+    # Allow dynamic attributes (e.g., setting top_k at runtime) and arbitrary types
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra='allow')
     
     def __init__(self, bm25_provider, top_k=50):
         super().__init__()
@@ -791,22 +791,23 @@ class RetrievalEngine:
             c=60  # RRF constant (same as original config.rrf_k)
         )
         
-        # Create CrossEncoder reranker
-        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-        from langchain.retrievers.document_compressors import CrossEncoderReranker
-        cross_encoder = HuggingFaceCrossEncoder(
-            model_name="cross-encoder/ms-marco-TinyBERT-L-2-v2"
-        )
-        self.reranker = CrossEncoderReranker(
-            model=cross_encoder
-        )
-        
-        # Create ContextualCompressionRetriever with reranking
-        from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
-        self._compression_retriever = ContextualCompressionRetriever(
-            base_retriever=self._ensemble_retriever,
-            base_compressor=self.reranker
-        )
+        # Create reranker only if enabled to avoid heavy optional deps in local runs
+        self.reranker = None
+        if ENABLE_RERANK:
+            from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+            from langchain.retrievers.document_compressors import CrossEncoderReranker
+            from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+            cross_encoder = HuggingFaceCrossEncoder(
+                model_name="cross-encoder/ms-marco-TinyBERT-L-2-v2"
+            )
+            self.reranker = CrossEncoderReranker(model=cross_encoder)
+            self._compression_retriever = ContextualCompressionRetriever(
+                base_retriever=self._ensemble_retriever,
+                base_compressor=self.reranker
+            )
+        else:
+            # Default to ensemble retriever when reranking is disabled
+            self._compression_retriever = self._ensemble_retriever
         
         # Create parent document fetcher as RunnableLambda
         from langchain_core.runnables import RunnableLambda, RunnablePassthrough

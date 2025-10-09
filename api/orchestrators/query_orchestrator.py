@@ -461,7 +461,7 @@ class QueryOrchestrator:
             # LangSmith: Log error
             logger.info(
                 "quality_gate_error",
-                {"error": str(e), "fallback_used": True}
+                error=str(e), fallback_used=True
             )
             
             return {"quality_passed": False, "quality_issues": [f"Quality check failed: {str(e)}"]}
@@ -653,11 +653,6 @@ class QueryOrchestrator:
                 "reasoning_framework": "irac"
             }
     
-    @traceable(
-        run_type="llm",
-        name="02_query_rewriter", 
-        tags=["rewrite", "query-processing", "legal-ai"]
-    )
     async def _rewrite_expand_node(self, state: AgentState) -> Dict[str, Any]:
         """02_query_rewriter: Rewrite query with legal precision, conversation context, and generate hypotheticals."""
         start_time = time.time()
@@ -735,12 +730,14 @@ class QueryOrchestrator:
             }
             
         except Exception as e:
-            logger.error("02_query_rewriter failed", error=str(e), trace_id=state.trace_id)
+            import traceback
+            tb_str = traceback.format_exc()
+            logger.error("02_query_rewriter failed", error=str(e), traceback=tb_str[:500], trace_id=state.trace_id)
             
             # LangSmith: Log error
             logger.info(
                 "query_rewriter_error",
-                {"error": str(e), "fallback_to_original": True}
+                error=str(e), fallback_to_original=True
             )
             
             # Fallback to original query
@@ -790,9 +787,9 @@ class QueryOrchestrator:
             from api.tools.retrieval_engine import RetrievalEngine
             engine = RetrievalEngine()
             
-            # Update retrievers with adaptive top_k
-            engine.milvus_retriever.top_k = retrieval_top_k
-            engine.bm25_retriever.top_k = retrieval_top_k
+            # Update retrievers with adaptive top_k using object.__setattr__ for Pydantic compatibility
+            object.__setattr__(engine.milvus_retriever, 'top_k', retrieval_top_k)
+            object.__setattr__(engine.bm25_retriever, 'top_k', retrieval_top_k)
             
             # Launch BM25 and Milvus in parallel with timing
             bm25_start = time.time()
@@ -861,7 +858,7 @@ class QueryOrchestrator:
             # LangSmith: Log error
             logger.info(
                 "retrieval_error",
-                {"error": str(e), "fallback_used": True}
+                error=str(e), fallback_used=True
             )
             
             return {"candidate_chunk_ids": [], "bm25_results": [], "milvus_results": [], "combined_results": [], "retrieval_results": []}

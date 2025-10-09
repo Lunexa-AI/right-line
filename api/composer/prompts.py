@@ -299,7 +299,7 @@ Verify strict citation and grounding standards:
 - 100% of quotes must be verifiable in source documents
 - 0% tolerance for statements not supported by provided context
 
-Return JSON with pass/fail decision and specific issues identified."""),
+Return JSON format with exact fields: {{"grounding_passed": boolean, "citation_density": float, "unsupported_statements": [...], "missing_citations": [...], "incorrect_citations": [...], "overall_quality": "..."}}"""),
     ("user", """**LEGAL ANALYSIS TO VERIFY**:
 {answer}
 
@@ -326,7 +326,9 @@ Classify which sources are actually relevant for the specific query:
 **AUTHORITY WEIGHTING**:
 Apply constitutional hierarchy - prefer higher authority sources.
 
-Only recommend essential, highly_relevant, and moderately_relevant sources."""),
+Only recommend essential, highly_relevant, and moderately_relevant sources.
+
+Return JSON with: {{"source_classifications": [...], "recommended_sources": [...]}}"""),
     ("user", """**USER QUERY**: {query}
 
 **RETRIEVED SOURCES**:

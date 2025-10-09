@@ -103,13 +103,11 @@ class QualityGateOrchestrator:
             # Log input artifacts
             logger.info(
                 "quality_check_input",
-                {
-                    "answer_length": len(answer),
-                    "context_docs": len(context_documents),
-                    "query": query,
-                    "user_type": user_type,
-                    "complexity": complexity
-                }
+                answer_length=len(answer),
+                context_docs=len(context_documents),
+                query=query,
+                user_type=user_type,
+                complexity=complexity
             )
             
             # Run quality gates in parallel for efficiency
@@ -161,8 +159,8 @@ class QualityGateOrchestrator:
             
             duration_ms = (time.time() - start_time) * 1000
             
-        # Log comprehensive results
-        logger.info("Quality check orchestrator completed",
+            # Log comprehensive results
+            logger.info("Quality check orchestrator completed",
                    overall_passed=passed,
                    confidence=confidence,
                    issues_count=len(issues),
@@ -392,16 +390,11 @@ Analyze this legal analysis for logical coherence and reasoning quality:
 - poor: Significant logical issues
 - unacceptable: Fundamentally flawed reasoning
 
-Return JSON: {{"coherence_passed": boolean, "reasoning_quality": "...", "logical_issues": [...], "missing_reasoning": [...], "counterargument_gaps": [...]}}
+Return JSON format with these exact fields: {{"coherence_passed": boolean, "reasoning_quality": "...", "logical_issues": [...], "missing_reasoning": [...], "counterargument_gaps": [...]}}
 
-JSON only. No explanations."""
+Respond with JSON only. No explanations."""
             
-            template = ChatPromptTemplate.from_messages([
-                ("system", coherence_prompt),
-                ("user", f"Query: {query}\n\nLegal Analysis:\n{answer}\n\nEvaluate logical coherence.")
-            ])
-            
-            # Create verification LLM
+            # Use a simple prompt without variables since we build it inline
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.0,
@@ -409,9 +402,17 @@ JSON only. No explanations."""
                 model_kwargs={"response_format": {"type": "json_object"}}
             )
             
-            # Execute coherence check
-            chain = template | llm
-            response = await chain.ainvoke({})
+            # Execute coherence check directly with full prompt
+            prompt = f"""{coherence_prompt}
+
+Query: {query}
+
+Legal Analysis:
+{answer}
+
+Evaluate logical coherence and return JSON."""
+            
+            response = await llm.ainvoke(prompt)
             
             # Parse result
             coherence_data = json.loads(response.content)
@@ -421,7 +422,7 @@ JSON only. No explanations."""
             # Log results to LangSmith
             logger.info(
                 "coherence_check_result",
-                coherence_data
+                **coherence_data
             )
             
             return result
