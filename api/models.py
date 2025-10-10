@@ -110,11 +110,11 @@ class QueryResponse(BaseModel):
     """
     
     tldr: str = Field(
-        max_length=220,
+        max_length=2000,  # Increased for comprehensive legal summaries
         description="Brief summary of the legal information",
         example="Minimum wage in Zimbabwe is USD $175 per month. Employers must pay this or higher amount.",
     )
-    key_points: List[str] = Field(..., max_length=10, description="Key points summarizing the answer.", example=["The minimum wage is $1.50 per hour for domestic workers."])
+    key_points: List[str] = Field(..., max_length=20, description="Key points summarizing the answer.", example=["The minimum wage is $1.50 per hour for domestic workers."])
     citations: List[Citation] = Field(..., description="List of citations used to generate the answer.")
     suggestions: List[str] = Field(..., max_length=5, description="Suggested follow-up questions.", example=["What are the working hours for domestic workers?"])
     confidence: float = Field(..., description="Confidence score of the answer (0.0 to 1.0).", example=0.95)
@@ -128,22 +128,10 @@ class QueryResponse(BaseModel):
         example="req_1234567890",
     )
     processing_time_ms: Optional[int] = Field(None, description="Time taken to process the query in milliseconds.", example=543)
+    full_analysis: Optional[str] = Field(None, max_length=10000, description="Full legal analysis with IRAC structure", example="Full IRAC legal analysis...")
     
-    @field_validator("key_points")
-    @classmethod
-    def key_points_must_not_be_empty(cls, v: List[str]) -> List[str]:
-        """Validate that key points are not empty."""
-        if not v:
-            raise ValueError("Key points must not be empty")
-        return v
-
-    @field_validator("suggestions")
-    @classmethod
-    def suggestions_must_not_be_empty(cls, v: List[str]) -> List[str]:
-        """Validate that suggestions are not empty."""
-        if not v:
-            raise ValueError("Suggestions must not be empty")
-        return v
+    # Note: We allow empty key_points and suggestions arrays for production
+    # Better to show nothing than generic placeholders
 
 
 class HealthResponse(BaseModel):

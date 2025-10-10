@@ -26,6 +26,7 @@ from libs.firebase.client import get_firestore_async_client
 from libs.firestore.feedback import save_feedback_to_firestore
 from api.orchestrators.query_orchestrator import get_orchestrator
 from api.schemas.agent_state import create_initial_state
+from api.middleware.rate_limiter import query_rate_limiter
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -59,6 +60,9 @@ async def query_legal_information(
           -d '{"text": "What is the minimum wage in Zimbabwe?"}'
         ```
     """
+    # Rate limiting check
+    await query_rate_limiter.check_rate_limit(request)
+    
     request_id = getattr(request.state, "request_id", "unknown")
     start_time = time.time()
     
@@ -75,78 +79,59 @@ async def query_legal_information(
     )
     
     try:
-        # Use RAG system for query processing
-        try:
-            # Step 1: Retrieve relevant chunks from Milvus
-            logger.info("Starting RAG retrieval", query=query_request.text[:100])
-            retrieval_results, retrieval_confidence = await search_legal_documents(
-                query=query_request.text,
-                top_k=10,
-                date_filter=query_request.date_ctx,
-                min_score=0.1
-            )
-            
-            logger.info(
-                "RAG retrieval completed",
-                results_count=len(retrieval_results),
-                confidence=retrieval_confidence
-            )
-            
-            # Step 2: Compose answer from retrieved chunks
-            composed_answer = await compose_legal_answer(
-                results=retrieval_results,
-                query=query_request.text,
-                confidence=retrieval_confidence,
-                lang=query_request.lang_hint or "en",
-                use_openai=True  # Enable OpenAI enhancement
-            )
-            
-            # Step 3: Convert ComposedAnswer to QueryResponse format
-            # Convert citations from retrieval format to API format
-            api_citations = []
-            for citation in composed_answer.citations:
-                api_citations.append(Citation(
-                    title=citation.get("title", "Legal Document"),
-                    url=citation.get("source_url", ""),
-                    page=None,  # Not available in current format
-                    sha=None    # Not available in current format
-                ))
-            
-            response = QueryResponse(
-                tldr=composed_answer.tldr,
-                key_points=composed_answer.key_points,
-                citations=api_citations,
-                suggestions=composed_answer.suggestions,
-                confidence=composed_answer.confidence,
-                source=composed_answer.source,
-                request_id=request_id,
-                processing_time_ms=None  # Will be set below
-            )
-            
-        except Exception as rag_error:
-            # Fallback to simple error response if RAG fails
-            logger.warning(
-                "RAG system failed, using fallback response",
-                error=str(rag_error)
-            )
-            response = QueryResponse(
-                tldr="I'm having trouble accessing legal information right now. Please try again later.",
-                key_points=[
-                    "System temporarily unavailable",
-                    "Please try again in a few minutes", 
-                    "For urgent matters, contact legal counsel"
-                ],
-                citations=[],
-                suggestions=[
-                    "Try asking again",
-                    "Contact legal support",
-                    "Check system status"
-                ],
-                confidence=0.1,
-                source="fallback",
-                request_id=request_id,
-                processing_time_ms=None
-            )
+        # Use LangGraph orchestrator for query processing
+        logger.info("Starting LangGraph orchestrator", query=query_request.text[:100])
+        
+        # Get the orchestrator and create initial state
+        orchestrator = get_orchestrator()
+        state = create_initial_state(
+            user_id=user_id,
+            session_id=session_id or f"web-{uuid.uuid4().hex[:8]}",
+            raw_query=query_request.text,
+        )
+        state.request_id = request_id
+        
+        # Run the orchestrator pipeline
+        result_state = await orchestrator.run_query(state)
+        
+        # Extract the synthesis and results from the orchestrator state
+        synthesis_obj = getattr(result_state, "synthesis", {}) or {}
+        final_answer = getattr(result_state, "final_answer", None) or synthesis_obj.get("tldr", "")
+        
+        # Build citations from the synthesis object
+        api_citations = []
+        for citation in synthesis_obj.get("citations", []):
+            api_citations.append(Citation(
+                title=citation.get("title", "Legal Document"),
+                url=citation.get("url", citation.get("source_url", "")),
+                page=citation.get("page"),
+                sha=citation.get("sha")
+            ))
+        
+        # Calculate confidence from the orchestrator results
+        confidence = synthesis_obj.get("confidence", 0.5)
+        if getattr(result_state, "reranked_results", None):
+            confidence = max(confidence, 0.7)
+        elif getattr(result_state, "combined_results", None):
+            confidence = max(confidence, 0.6)
+        
+        # Build the response using orchestrator outputs
+        tldr_text = synthesis_obj.get("tldr", final_answer if final_answer else "No summary available")
+        # For production legal system, we use a reasonable 2000 char limit for comprehensive answers
+        if len(tldr_text) > 2000:
+            tldr_text = tldr_text[:1997] + "..."
+        
+        response = QueryResponse(
+            tldr=tldr_text,
+            key_points=synthesis_obj.get("key_points", []),  # Only show actual key points from synthesis
+            citations=api_citations,
+            suggestions=synthesis_obj.get("suggestions", []),  # Only show actual suggestions from synthesis
+            confidence=confidence,
+            source=synthesis_obj.get("source", "hybrid"),
+            request_id=request_id,
+            processing_time_ms=None,  # Will be set below
+            full_analysis=final_answer  # Include full IRAC analysis for legal professionals
+        )
         
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)
@@ -267,6 +252,8 @@ async def stream_legal_query(
         - warning: Quality gate warnings
         - final: Complete response summary
     """
+    # Rate limiting check  
+    await query_rate_limiter.check_rate_limit(request)
     
     async def generate_sse_stream() -> AsyncGenerator[str, None]:
         """Generate Server-Sent Events for the query processing pipeline."""

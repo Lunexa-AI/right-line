@@ -96,6 +96,25 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
+    # Add request size limiter middleware
+    @app.middleware("http")
+    async def limit_request_size(request: Request, call_next):
+        """Limit request body size to prevent abuse."""
+        max_size = 1024 * 1024  # 1MB
+        
+        if request.method in ["POST", "PUT", "PATCH"]:
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > max_size:
+                return ORJSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "error_code": "REQUEST_TOO_LARGE",
+                        "message": f"Request body too large. Maximum size: {max_size} bytes"
+                    }
+                )
+        
+        return await call_next(request)
+    
     # Add request logging middleware
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -155,13 +174,19 @@ app.include_router(analytics_router.router, prefix="/api", tags=["Analytics"])
 app.include_router(whatsapp_router.router, prefix="/api", tags=["WhatsApp"])
 
 # Debug endpoints (development only)
-app.include_router(debug_router.router, prefix="/api/v1/debug", tags=["Debug"])
-
-
-@app.get("/debug", include_in_schema=False)
-async def debug_frontend():
-    """Serve debug frontend for API testing."""
-    return FileResponse("/Users/simbarashe.timire/repos/right-line/debug_simple.html")
+if get_settings().is_development:
+    app.include_router(debug_router.router, prefix="/api/v1/debug", tags=["Debug"])
+    
+    @app.get("/debug", include_in_schema=False)
+    async def debug_frontend():
+        """Serve debug frontend for API testing."""
+        import os
+        debug_html = os.path.join(os.path.dirname(__file__), "..", "debug_simple.html")
+        if os.path.exists(debug_html):
+            return FileResponse(debug_html)
+        return {"message": "Debug HTML not found"}
+else:
+    logger.info("Debug endpoints disabled in production")
 
 
 @app.get("/", include_in_schema=False)
