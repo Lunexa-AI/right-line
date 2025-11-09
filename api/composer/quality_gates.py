@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import structlog
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from api.llm.gpt5_wrapper import get_gpt5_model
 from langsmith import Client, traceable
 from pydantic import BaseModel, Field
 
@@ -234,12 +235,12 @@ class AttributionVerifier:
                 context_text += f"Doc Key: {doc.get('doc_key', 'unknown')}\n"
                 context_text += f"Content: {doc.get('content', '')[:500]}...\n\n"
             
-            # Create verification LLM
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
+            # Create verification LLM using GPT-5-mini via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="medium",
                 max_tokens=800,
-                model_kwargs={"response_format": {"type": "json_object"}}
+                verbosity="low"
             )
             
             # Execute verification
@@ -297,12 +298,12 @@ class SourceRelevanceFilter:
                 sources_text += f"Doc Key: {source.get('doc_key', 'unknown')}\n"
                 sources_text += f"Content: {source.get('content', '')[:400]}...\n\n"
             
-            # Create filtering LLM
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
+            # Create filtering LLM using GPT-5-mini via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="low",
                 max_tokens=600,
-                model_kwargs={"response_format": {"type": "json_object"}}
+                verbosity="low"
             )
             
             # Execute filtering
@@ -394,12 +395,12 @@ Return JSON format with these exact fields: {{"coherence_passed": boolean, "reas
 
 Respond with JSON only. No explanations."""
             
-            # Use a simple prompt without variables since we build it inline
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
+            # Use GPT-5-mini for coherence checking via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="medium",
                 max_tokens=500,
-                model_kwargs={"response_format": {"type": "json_object"}}
+                verbosity="low"
             )
             
             # Execute coherence check directly with full prompt

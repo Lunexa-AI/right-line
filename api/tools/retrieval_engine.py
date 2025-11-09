@@ -383,8 +383,6 @@ class MilvusClient:
                             chunk_id=str(hit.get("chunk_id", "")),
                             chunk_text="",  # Will be populated from R2 or parent expansion
                             doc_id=hit.get("parent_doc_id", ""),
-                            chunk_object_key=metadata.get("chunk_object_key", ""),
-                            parent_doc_id=hit.get("parent_doc_id", ""),
                             doc_type=metadata.get("doc_type", "unknown"),
                             metadata=metadata,
                             entities={}
@@ -1096,7 +1094,7 @@ class RetrievalEngine:
                     chunk_id=chunk_result.chunk_id,
                     chunk_text=parent_content,  # Use PageIndex markdown content
                     doc_id=chunk_result.doc_id,
-                    chunk_object_key=chunk_result.chunk.chunk_object_key,
+                    # chunk_object_key is stored in metadata, not directly on chunk
                     parent_doc_id=chunk_result.chunk.parent_doc_id,
                     doc_type=chunk_result.chunk.doc_type,
                     metadata=chunk_result.chunk.metadata,

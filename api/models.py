@@ -110,8 +110,8 @@ class QueryResponse(BaseModel):
     """
     
     tldr: str = Field(
-        max_length=2000,  # Increased for comprehensive legal summaries
-        description="Brief summary of the legal information",
+        max_length=8000,  # Generous limit for comprehensive legal analysis
+        description="Comprehensive legal analysis summary",
         example="Minimum wage in Zimbabwe is USD $175 per month. Employers must pay this or higher amount.",
     )
     key_points: List[str] = Field(..., max_length=20, description="Key points summarizing the answer.", example=["The minimum wage is $1.50 per hour for domestic workers."])
@@ -128,7 +128,7 @@ class QueryResponse(BaseModel):
         example="req_1234567890",
     )
     processing_time_ms: Optional[int] = Field(None, description="Time taken to process the query in milliseconds.", example=543)
-    full_analysis: Optional[str] = Field(None, max_length=10000, description="Full legal analysis with IRAC structure", example="Full IRAC legal analysis...")
+    full_analysis: Optional[str] = Field(None, max_length=20000, description="Full detailed legal analysis with complete reasoning", example="Full IRAC legal analysis...")
     
     # Note: We allow empty key_points and suggestions arrays for production
     # Better to show nothing than generic placeholders

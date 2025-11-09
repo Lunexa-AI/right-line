@@ -22,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tracers import LangChainTracer
 from langchain_openai import ChatOpenAI
 from langsmith import Client, traceable
+from api.llm.gpt5_wrapper import get_gpt5_model
 
 from api.schemas.agent_state import AgentState, update_intent_routing, update_query_processing, update_retrieval_results, update_final_output
 
@@ -816,6 +817,30 @@ class QueryOrchestrator:
                     combined_map[key] = r
             combined_results = list(combined_map.values())
             
+            # 🔧 FIX: Populate chunk content from R2 before reranking
+            logger.info("Populating chunk content from R2", chunk_count=len(combined_results))
+            chunk_keys = [r.metadata.get("chunk_object_key") for r in combined_results if r.metadata.get("chunk_object_key")]
+            
+            if chunk_keys:
+                try:
+                    # Fetch content in batches
+                    chunk_contents = await engine._fetch_chunk_contents_batch(chunk_keys)
+                    
+                    # Update RetrievalResult objects with populated content
+                    content_map = {chunk.chunk_id: chunk for chunk in chunk_contents if chunk}
+                    for result in combined_results:
+                        if result.chunk_id in content_map:
+                            # Update the chunk_text with actual content
+                            populated_chunk = content_map[result.chunk_id]
+                            result.chunk.chunk_text = populated_chunk.chunk_text
+                    
+                    populated_count = sum(1 for r in combined_results if r.chunk.chunk_text.strip())
+                    logger.info("Content population completed", 
+                               populated_count=populated_count, 
+                               total_count=len(combined_results))
+                except Exception as e:
+                    logger.warning("Failed to populate chunk content from R2", error=str(e))
+            
             candidate_chunk_ids = [r.chunk_id for r in combined_results]
             
             duration_ms = (time.time() - start_time) * 1000
@@ -1132,6 +1157,15 @@ class QueryOrchestrator:
                     # Fallback: use attached parent if available
                     parent_doc = result.parent_doc
                     
+                # 🔧 DEBUG: Log parent selection details
+                logger.info("Parent selection debug", 
+                           chunk_id=result.chunk_id,
+                           parent_id=parent_id,
+                           parent_doc_found=bool(parent_doc),
+                           parent_doc_type=type(parent_doc).__name__ if parent_doc else None,
+                           cache_size=len(parent_doc_cache),
+                           trace_id=state.trace_id)
+                    
                 if not parent_doc:
                     continue
                 
@@ -1139,11 +1173,23 @@ class QueryOrchestrator:
                 content = parent_doc.pageindex_markdown or ""
                 estimated_tokens = len(content) // 4
                 
+                # 🔧 DEBUG: Log token calculation details
+                logger.info("Token calculation debug",
+                           chunk_id=result.chunk_id,
+                           content_length=len(content),
+                           estimated_tokens=estimated_tokens,
+                           current_tokens=current_tokens,
+                           max_tokens=MAX_CONTEXT_TOKENS,
+                           would_exceed=current_tokens + estimated_tokens > MAX_CONTEXT_TOKENS,
+                           trace_id=state.trace_id)
+                
                 # Check token budget
                 if current_tokens + estimated_tokens > MAX_CONTEXT_TOKENS:
                     logger.info("Token cap reached during parent selection",
                                trace_id=state.trace_id,
-                               current_tokens=current_tokens)
+                               current_tokens=current_tokens,
+                               estimated_tokens=estimated_tokens,
+                               max_tokens=MAX_CONTEXT_TOKENS)
                     break
                 
                 # Add to context
@@ -1391,11 +1437,12 @@ class QueryOrchestrator:
             
             # Create LLM with appropriate configuration
             max_tokens = get_max_tokens_for_complexity(complexity)
-            llm = ChatOpenAI(
-                model="gpt-4o",
-                temperature=0.1,
+            # Use GPT-5 Pro via Responses API for highest quality legal synthesis
+            llm = get_gpt5_model(
+                model_name="gpt-5-pro",
+                reasoning_effort="high",
                 max_tokens=max_tokens,
-                streaming=True
+                verbosity="high" if complexity in ["complex", "expert"] else "medium"
             )
             
             # Execute synthesis with LangSmith tracing
@@ -1459,12 +1506,12 @@ class QueryOrchestrator:
             # LangSmith: Log error with context
             logger.info(
                 "synthesis_error",
-                {
-                    "error": str(e),
-                    "fallback_used": True,
-                    "context_available": len(getattr(state, 'bundled_context', [])),
-                    "query": state.raw_query[:100]
-                }
+                error=str(e),
+                fallback_used=True,
+                context_available=len(getattr(state, 'bundled_context', [])),
+                query=state.raw_query[:100],
+                trace_id=state.trace_id,
+                complexity=complexity
             )
             
             return {
@@ -1583,11 +1630,12 @@ Current query: {query}
 Rewrite the current query to be self-contained (resolve "it", "this", "that", "what about", etc.).
 Return ONLY the rewritten query, no explanation."""
             
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
+            # Use GPT-5-mini for intent classification via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="low",
                 max_tokens=100,
-                timeout=3.0
+                verbosity="low"
             )
             
             response = await llm.ainvoke(resolution_prompt)
@@ -1817,12 +1865,12 @@ Return ONLY the rewritten query, no explanation."""
             from langchain_openai import ChatOpenAI
             from api.composer.prompts import get_prompt_template
             
-            # Use mini model for fast classification
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
+            # Use GPT-5-mini for fast entity detection via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="low",
                 max_tokens=50,
-                timeout=5.0
+                verbosity="low"
             )
             
             # Get the intent router prompt
@@ -1921,12 +1969,12 @@ Return ONLY the rewritten query, no explanation."""
             from langchain_openai import ChatOpenAI
             from api.composer.prompts import get_prompt_template
             
-            # Use mini model for fast generation
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.7,  # Higher temp for diversity
+            # Use GPT-5-mini for query expansion via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="low",
                 max_tokens=120,
-                timeout=2.0
+                verbosity="low"
             )
             
             # Get the Multi-HyDE prompt
@@ -1988,12 +2036,12 @@ Return ONLY the rewritten query, no explanation."""
             from langchain_openai import ChatOpenAI
             from api.composer.prompts import get_prompt_template
             
-            # Use mini model for fast decomposition
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.0,
+            # Use GPT-5-mini for query decomposition via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="low",
                 max_tokens=150,
-                timeout=2.0
+                verbosity="low"
             )
             
             # Get the sub-question prompt
@@ -2355,12 +2403,12 @@ Return ONLY the JSON object, no other text."""
             from langchain_openai import ChatOpenAI
             from langchain_core.prompts import ChatPromptTemplate
             
-            # Use gpt-4o-mini for cost-effective criticism
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.2,  # Low temperature for consistent critique
-                max_tokens=600,   # Enough for detailed instructions
-                timeout=10.0
+            # Use GPT-5-mini for self-criticism via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-mini",
+                reasoning_effort="medium",
+                max_tokens=600,
+                verbosity="medium"
             )
             
             template = ChatPromptTemplate.from_messages([
@@ -2569,11 +2617,12 @@ Return ONLY the JSON object, no other text."""
             }
             max_tokens = max_tokens_map.get(complexity, 1500)
             
-            llm = ChatOpenAI(
-                model="gpt-4o",
-                temperature=0.15,  # Slightly higher for creative refinement
+            # Use GPT-5 Pro for highest quality refinement via Responses API
+            llm = get_gpt5_model(
+                model_name="gpt-5-pro",
+                reasoning_effort="high",
                 max_tokens=max_tokens,
-                timeout=60.0
+                verbosity="high"
             )
             
             # Execute refined synthesis (non-streaming for simplicity)

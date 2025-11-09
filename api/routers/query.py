@@ -117,20 +117,32 @@ async def query_legal_information(
         
         # Build the response using orchestrator outputs
         tldr_text = synthesis_obj.get("tldr", final_answer if final_answer else "No summary available")
-        # For production legal system, we use a reasonable 2000 char limit for comprehensive answers
-        if len(tldr_text) > 2000:
-            tldr_text = tldr_text[:1997] + "..."
+        
+        # Remove markdown formatting (** for bold) since frontend doesn't parse it
+        tldr_text = tldr_text.replace("**", "")
+        
+        # For production legal system, use a generous limit for comprehensive legal answers
+        # 8000 chars allows for detailed analysis while preventing abuse
+        if len(tldr_text) > 8000:
+            tldr_text = tldr_text[:7997] + "..."
+        
+        # Clean up markdown from key_points and suggestions
+        key_points = synthesis_obj.get("key_points", [])
+        key_points = [point.replace("**", "") for point in key_points]
+        
+        suggestions = synthesis_obj.get("suggestions", [])
+        suggestions = [sugg.replace("**", "") for sugg in suggestions]
         
         response = QueryResponse(
             tldr=tldr_text,
-            key_points=synthesis_obj.get("key_points", []),  # Only show actual key points from synthesis
+            key_points=key_points,  # Cleaned key points without markdown
             citations=api_citations,
-            suggestions=synthesis_obj.get("suggestions", []),  # Only show actual suggestions from synthesis
+            suggestions=suggestions,  # Cleaned suggestions without markdown
             confidence=confidence,
             source=synthesis_obj.get("source", "hybrid"),
             request_id=request_id,
             processing_time_ms=None,  # Will be set below
-            full_analysis=final_answer  # Include full IRAC analysis for legal professionals
+            full_analysis=final_answer.replace("**", "") if final_answer else None  # Remove markdown, include full analysis
         )
         
         # Calculate response time

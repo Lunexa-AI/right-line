@@ -274,8 +274,6 @@ class ProductionBM25Provider(SparseProvider):
                     chunk_id=metadata["chunk_id"],
                     chunk_text="",  # Will be fetched from R2 by RetrievalEngine
                     doc_id=metadata["parent_doc_id"],  # Use parent_doc_id as doc_id for consistency
-                    chunk_object_key=metadata["chunk_object_key"],
-                    parent_doc_id=metadata["parent_doc_id"],
                     doc_type=metadata["doc_type"],
                     metadata=metadata.get("metadata", {}),
                     entities={}
